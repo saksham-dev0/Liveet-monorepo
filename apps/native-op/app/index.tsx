@@ -20,17 +20,12 @@ export default function Index() {
   };
 
   return (
-    <View
-      style={{
-        flex: 1,
-        justifyContent: "center",
-        alignItems: "center",
-        gap: 12,
-      }}
-    >
-      <Text>Convex is wired into this app.</Text>
+    <View className="flex-1 items-center justify-center gap-3 bg-white">
+      <Text className="text-lg font-semibold text-center text-blue-600">
+        Convex is wired into this app.
+      </Text>
       <Button title="Call example Convex function" onPress={callExampleFunction} />
-      {status && <Text>{status}</Text>}
+      {status && <Text className="mt-2 text-base text-gray-700">{status}</Text>}
     </View>
   );
 }
