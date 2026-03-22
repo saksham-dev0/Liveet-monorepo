@@ -4,11 +4,16 @@ import { useAuth } from "@clerk/clerk-expo";
 import { useRouter } from "expo-router";
 import { useConvex } from "convex/react";
 import { useEffect, useState } from "react";
-import { colors, radii, card as cardStyle, cardShadow } from "../../constants/theme";
+import { colors, radii, card as cardStyle, cardShadow } from "../../../constants/theme";
 
 const MENU_ITEMS = [
   { icon: "person-outline" as const, label: "Personal info", href: "#" },
   { icon: "bed-outline" as const, label: "Room configuration", href: "room-config" },
+  {
+    icon: "home-outline" as const,
+    label: "Property listing",
+    href: "list-property",
+  },
   { icon: "card-outline" as const, label: "Payment methods", href: "#" },
   { icon: "shield-checkmark-outline" as const, label: "Security", href: "#" },
   { icon: "notifications-outline" as const, label: "Notifications", href: "#" },
@@ -39,6 +44,10 @@ export default function ProfileScreen() {
         pathname: "/(onboarding)/property/room-config",
         params: { propertyId, fromProfile: "true" },
       } as any);
+      return;
+    }
+    if (href === "list-property" && propertyId) {
+      router.push("/(app)/list-property");
     }
   };
 
@@ -68,12 +77,15 @@ export default function ProfileScreen() {
         </View>
 
         <View style={[s.card, s.menuCard]}>
-          {MENU_ITEMS.map((item, i) => (
+          {MENU_ITEMS.filter(
+            (item) =>
+              item.href !== "list-property" || propertyId != null,
+          ).map((item, i, arr) => (
             <TouchableOpacity
-              key={i}
+              key={`${item.href}-${i}`}
               style={[
                 s.menuRow,
-                i === MENU_ITEMS.length - 1 && s.menuRowLast,
+                i === arr.length - 1 && s.menuRowLast,
               ]}
               activeOpacity={0.7}
               onPress={() => handleMenuPress(item.href)}

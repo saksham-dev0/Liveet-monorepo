@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
-  Pressable,
   StyleSheet,
   Text,
   TextInput,
@@ -37,33 +36,6 @@ type CardModel = {
   occupancyText: string;
   location: string;
 };
-
-const SAMPLE_CARDS: CardModel[] = [
-  {
-    id: "sample-1",
-    name: "Naomi Watts",
-    role: "Liked property",
-    rentText: "\u20B935K",
-    occupancyText: "Female only",
-    location: "San Francisco",
-  },
-  {
-    id: "sample-2",
-    name: "Ricardo Montalban",
-    role: "Liked property",
-    rentText: "\u20B940K",
-    occupancyText: "Female only",
-    location: "San Francisco",
-  },
-  {
-    id: "sample-3",
-    name: "Hailey Stein",
-    role: "Liked property",
-    rentText: "\u20B928K",
-    occupancyText: "Female only",
-    location: "San Francisco",
-  },
-];
 
 function formatAmount(n: number): string {
   // Display thousands in a compact way (e.g. 35000 -> "35K").
@@ -160,10 +132,8 @@ export default function FavoritesScreen() {
     };
   }, [convex]);
 
-  const cards = useMemo(() => {
-    if (liked.length) return liked.map(toCardModel);
-    return SAMPLE_CARDS;
-  }, [liked]);
+  const cards = useMemo(() => liked.map(toCardModel), [liked]);
+  const showEmpty = !loading && liked.length === 0;
 
   return (
     <View style={[s.root, { paddingTop: insets.top }]}>
@@ -212,14 +182,26 @@ export default function FavoritesScreen() {
       </View>
 
       {/* Section */}
-      <View style={s.sectionHeaderRow}>
-        <Text style={s.sectionTitle}>Recent activity</Text>
-      </View>
+      {!loading && liked.length > 0 && (
+        <View style={s.sectionHeaderRow}>
+          <Text style={s.sectionTitle}>Recent activity</Text>
+        </View>
+      )}
 
       {/* List */}
       {loading && !liked.length ? (
         <View style={s.loadingWrap}>
           <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      ) : showEmpty ? (
+        <View style={s.emptyWrap}>
+          <View style={s.emptyIconCircle}>
+            <Ionicons name="heart-outline" size={40} color={colors.muted} />
+          </View>
+          <Text style={s.emptyTitle}>Nothing liked yet</Text>
+          <Text style={s.emptySubtitle}>
+            When you save properties, they will show up here.
+          </Text>
         </View>
       ) : (
         <FlatList
@@ -268,7 +250,7 @@ export default function FavoritesScreen() {
                 <TouchableOpacity
                   style={[s.actionBtn, s.actionBtnOutline]}
                   activeOpacity={0.7}
-                  onPress={() => {}}
+                  onPress={() => router.push(`/(app)/favorites/move-in/${item.id}`)}
                 >
                   <Ionicons
                     name="checkmark-circle-outline"
@@ -381,6 +363,37 @@ const s = StyleSheet.create({
   sectionTitle: { fontSize: 14, fontWeight: "700", color: colors.muted },
 
   loadingWrap: { flex: 1, alignItems: "center", justifyContent: "center" },
+
+  emptyWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 28,
+    paddingBottom: 40,
+  },
+  emptyIconCircle: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    backgroundColor: colors.inputBg,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 20,
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: colors.navy,
+    textAlign: "center",
+    marginBottom: 8,
+  },
+  emptySubtitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: colors.muted,
+    textAlign: "center",
+    lineHeight: 20,
+  },
 
   listContent: {
     paddingBottom: 22,

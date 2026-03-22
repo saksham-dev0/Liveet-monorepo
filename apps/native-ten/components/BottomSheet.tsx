@@ -9,6 +9,7 @@ import {
   DimensionValue,
   Dimensions,
 } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ThemedText } from "./themed-text";
 import { useThemeColor } from "../hooks/use-theme";
@@ -165,6 +166,7 @@ export function BottomSheet({
       <Animated.View
         style={[
           styles.container,
+          styles.sheetElevation,
           { backgroundColor: cardBg, maxHeight, paddingBottom: Math.max(bottom, 24) },
           sheetAnimatedStyle,
         ]}
@@ -184,10 +186,18 @@ export function BottomSheet({
                   {title}
                 </ThemedText>
                 {resolvedShowClose && (
-                  <Pressable onPress={handleDismiss} hitSlop={8}>
-                    <ThemedText style={[styles.closeButton, { color: mutedColor }]}>
-                      ✕
-                    </ThemedText>
+                  <Pressable
+                    onPress={handleDismiss}
+                    hitSlop={8}
+                    style={({ pressed }) => [
+                      styles.closeBtn,
+                      { backgroundColor: "rgba(107, 114, 128, 0.12)" },
+                      pressed && styles.closeBtnPressed,
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Close"
+                  >
+                    <Ionicons name="close" size={22} color={mutedColor} />
                   </Pressable>
                 )}
               </View>
@@ -231,18 +241,20 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingTop: 12,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 10,
     paddingBottom: 24,
     paddingHorizontal: 20,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(15, 23, 42, 0.08)",
   },
   handle: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
+    width: 40,
+    height: 5,
+    borderRadius: 3,
     alignSelf: "center",
-    marginBottom: 14,
+    marginBottom: 16,
   },
   header: {
     flexDirection: "row",
@@ -251,14 +263,33 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   title: {
-    fontSize: 20,
-    fontWeight: "700",
-    flex: 1,
-  },
-  closeButton: {
     fontSize: 18,
-    fontWeight: "500",
+    fontWeight: "800",
+    flex: 1,
+    letterSpacing: -0.3,
   },
+  closeBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  closeBtnPressed: {
+    opacity: 0.75,
+  },
+  sheetElevation: Platform.select({
+    ios: {
+      shadowColor: "#0f172a",
+      shadowOffset: { width: 0, height: -8 },
+      shadowOpacity: 0.18,
+      shadowRadius: 24,
+    },
+    android: {
+      elevation: 28,
+    },
+    default: {},
+  }),
   footer: {
     marginTop: 12,
   },

@@ -1,6 +1,16 @@
-import React from "react";
-import { View, StyleSheet, ScrollView, Pressable, Text } from "react-native";
+import React, { useCallback, useState } from "react";
+import {
+  View,
+  StyleSheet,
+  ScrollView,
+  Pressable,
+  Text,
+  TouchableOpacity,
+} from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
+import { useConvex } from "convex/react";
+import { useFocusEffect } from "@react-navigation/native";
 
 const SPENDING_DATA = [
   { week: "Week 1", value: 200 },
@@ -52,39 +62,69 @@ const TRANSACTIONS = [
   },
 ];
 
-const SUMMARY_CARDS = [
-  {
-    label: "Spent",
-    amount: "$1,240",
-    dotColor: "#F87171",
-    bgColor: "#1E293B",
-    icon: "receipt-outline" as const,
-  },
-  {
-    label: "Saved",
-    amount: "$3,500",
-    dotColor: "#34D399",
-    bgColor: "#1E293B",
-    icon: "briefcase-outline" as const,
-  },
-  {
-    label: "Invested",
-    amount: "$8,200",
-    dotColor: "#60A5FA",
-    bgColor: "#1E293B",
-    icon: "trending-up-outline" as const,
-  },
-  {
-    label: "Income",
-    amount: "$5,800",
-    dotColor: "#A78BFA",
-    bgColor: "#1E293B",
-    icon: "cash-outline" as const,
-  },
-];
+/** Placeholder until rent collection is modeled in Convex */
+const SAMPLE_PENDING_COLLECTION = "$8,200";
+const SAMPLE_RECEIVED_COLLECTION = "$5,800";
+
+const DASHBOARD_STAT_CARDS = [
+  { label: "Occupied" },
+  { label: "Vacant" },
+  { label: "Pending collection" },
+  { label: "Received collection" },
+] as const;
 
 export default function TestScreen() {
+  const router = useRouter();
+  const convex = useConvex();
   const maxBarValue = Math.max(...SPENDING_DATA.map((d) => d.value));
+
+  const [listingChecklistComplete, setListingChecklistComplete] = useState<
+    boolean | null
+  >(null);
+  const [dashboardStats, setDashboardStats] = useState<{
+    occupiedUnits: number;
+    vacantUnits: number;
+  } | null>(null);
+
+  const refreshListingStatus = useCallback(async () => {
+    try {
+      const data = await (convex as any).query(
+        "onboarding:getPropertyListingEditorData",
+        {},
+      );
+      setListingChecklistComplete(data?.listingChecklistComplete === true);
+    } catch {
+      setListingChecklistComplete(false);
+    }
+  }, [convex]);
+
+  const refreshDashboardStats = useCallback(async () => {
+    try {
+      const data = await (convex as any).query(
+        "properties:getDashboardPropertyStats",
+        {},
+      );
+      setDashboardStats(
+        data
+          ? {
+              occupiedUnits: data.occupiedUnits,
+              vacantUnits: data.vacantUnits,
+            }
+          : { occupiedUnits: 0, vacantUnits: 0 },
+      );
+    } catch {
+      setDashboardStats({ occupiedUnits: 0, vacantUnits: 0 });
+    }
+  }, [convex]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void refreshListingStatus();
+      void refreshDashboardStats();
+    }, [refreshListingStatus, refreshDashboardStats]),
+  );
+
+  const showListPropertyCard = listingChecklistComplete !== true;
 
   return (
     <View style={styles.root}>
@@ -139,19 +179,52 @@ export default function TestScreen() {
             </Pressable>
           </View>
 
-          {/* Stats row */}
+          {/* Stats row — occupied/vacant from Convex; collection amounts sample */}
           <View style={styles.heroStatsRow}>
-            {SUMMARY_CARDS.map((card, index) => (
-              <React.Fragment key={card.label}>
-                {index > 0 && <View style={styles.heroStatDivider} />}
-                <View style={styles.heroStat}>
-                  <Text style={styles.heroStatLabel}>{card.label}</Text>
-                  <Text style={styles.heroStatValue}>{card.amount}</Text>
-                </View>
-              </React.Fragment>
-            ))}
+            {DASHBOARD_STAT_CARDS.map((card, index) => {
+              const amount =
+                index === 0
+                  ? String(dashboardStats?.occupiedUnits ?? 0)
+                  : index === 1
+                    ? String(dashboardStats?.vacantUnits ?? 0)
+                    : index === 2
+                      ? SAMPLE_PENDING_COLLECTION
+                      : SAMPLE_RECEIVED_COLLECTION;
+              return (
+                <React.Fragment key={card.label}>
+                  {index > 0 && <View style={styles.heroStatDivider} />}
+                  <View style={styles.heroStat}>
+                    <Text style={styles.heroStatLabel}>{card.label}</Text>
+                    <Text style={styles.heroStatValue}>{amount}</Text>
+                  </View>
+                </React.Fragment>
+              );
+            })}
           </View>
         </View>
+
+        {/* List property CTA — hidden once listing checklist is complete; edit from Profile */}
+        {showListPropertyCard && (
+          <View style={styles.card}>
+            <View style={styles.listPropertyHeader}>
+              <View style={styles.listPropertyIconWrap}>
+                <Ionicons name="home-outline" size={22} color="#1E293B" />
+              </View>
+              <Text style={styles.listPropertyBody}>
+                Add complete details of the property to list your property for the
+                tenants.
+              </Text>
+            </View>
+            <TouchableOpacity
+              activeOpacity={0.9}
+              style={styles.listPropertyButton}
+              onPress={() => router.push("/(app)/list-property")}
+            >
+              <Text style={styles.listPropertyButtonText}>List your property</Text>
+              <Ionicons name="arrow-forward" size={18} color="#1a1a1a" />
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Spending Chart */}
         <View style={styles.card}>
@@ -221,11 +294,11 @@ export default function TestScreen() {
         <View style={styles.footer}>
           <View style={styles.footerDividerRow}>
             <View style={styles.footerLine} />
-            <Text style={styles.footerBrand}>SoyFin</Text>
+            <Text style={styles.footerBrand}>Liveet</Text>
             <View style={styles.footerLine} />
           </View>
           <Text style={styles.footerTagline}>
-            your money, finally making sense
+            Manage your property operations with ease
           </Text>
         </View>
       </ScrollView>
@@ -395,6 +468,43 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     color: "#1a1a1a",
     marginBottom: 16,
+  },
+  listPropertyHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    marginBottom: 18,
+  },
+  listPropertyIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: "#F3F4F6",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  listPropertyBody: {
+    flex: 1,
+    fontSize: 15,
+    lineHeight: 22,
+    color: "#6B7280",
+  },
+  listPropertyButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    alignSelf: "stretch",
+    minHeight: 52,
+    backgroundColor: "#D4F542",
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderRadius: 14,
+  },
+  listPropertyButtonText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#1a1a1a",
+    marginRight: 8,
   },
   chartContainer: {
     flexDirection: "row",
