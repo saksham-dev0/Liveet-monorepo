@@ -90,6 +90,7 @@ export default function PropertyBasicScreen() {
   const [city, setCity] = useState("");
   const [state, setState] = useState("");
   const [line1, setLine1] = useState("");
+  const [description, setDescription] = useState("");
   const [citySheetOpen, setCitySheetOpen] = useState(false);
   const [stateSheetOpen, setStateSheetOpen] = useState(false);
   const [cities, setCities] = useState<{ _id: string; name: string }[]>([]);
@@ -118,6 +119,7 @@ export default function PropertyBasicScreen() {
           setCity(property.city ?? "");
           setState(property.state ?? "");
           setLine1(property.line1 ?? "");
+          setDescription(property.description ?? "");
         }
       } catch {
         // ignore
@@ -160,6 +162,7 @@ export default function PropertyBasicScreen() {
           city: city.trim() || undefined,
           state: state.trim() || undefined,
           line1: line1.trim() || undefined,
+          description: description.trim() || undefined,
         },
       );
       const nextPropertyId = result?.propertyId ?? propertyId;
@@ -279,6 +282,17 @@ export default function PropertyBasicScreen() {
           onChangeText={setLine1}
         />
 
+        <Text style={label}>Description for tenants (optional)</Text>
+        <TextInput
+          style={[input, styles.descriptionInput]}
+          placeholder="Amenities, house rules, neighborhood, etc."
+          placeholderTextColor={colors.muted}
+          value={description}
+          onChangeText={setDescription}
+          multiline
+          textAlignVertical="top"
+        />
+
         <View style={footerRow}>
           <TouchableOpacity style={secondaryButton} onPress={handleSave}>
             <Text style={secondaryButtonText}>Save as draft</Text>
@@ -393,5 +407,9 @@ const styles = StyleSheet.create({
   sheetOptionText: {
     fontSize: 15,
     color: colors.navy,
+  },
+  descriptionInput: {
+    minHeight: 120,
+    paddingTop: 12,
   },
 });

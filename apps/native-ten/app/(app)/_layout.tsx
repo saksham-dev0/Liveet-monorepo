@@ -200,6 +200,7 @@ export default function AppLayout() {
         {/* Liked must be true stack for swipe-back */}
         <Stack.Screen name="favorites" options={{ title: "Liked" }} />
         <Stack.Screen name="favorites/[id]" options={{ animation: "none" }} />
+        <Stack.Screen name="favorites/move-in/[propertyId]" options={{ title: "Move-in" }} />
       </Stack>
 
       {showTabBar ? <BottomTabBar activeRouteName={activeRouteName} /> : null}

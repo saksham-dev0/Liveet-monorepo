@@ -20,7 +20,12 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.RECORD_AUDIO"
+      ],
+      "package": "com.sakksham096.nativeop"
     },
     "web": {
       "output": "static",
@@ -39,6 +44,13 @@
           "dark": {
             "backgroundColor": "#000000"
           }
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Liveet uses the camera to capture your government ID for move-in verification.",
+          "photosPermission": "Liveet may access photos when saving camera captures for move-in verification."
         }
       ]
     ],

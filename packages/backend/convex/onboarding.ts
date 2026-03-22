@@ -1,5 +1,7 @@
+import type { QueryCtx } from "./_generated/server";
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
+import type { Doc } from "./_generated/dataModel";
 
 async function getCurrentUserDoc(ctx: any) {
   const identity = await ctx.auth.getUserIdentity();
@@ -34,112 +36,186 @@ async function getCurrentUserDoc(ctx: any) {
   return await ctx.db.get(userId);
 }
 
+/** Prefer `primaryPropertyId` when valid so listing matches the user's main property. */
+async function getOperatorPropertyForUser(
+  ctx: QueryCtx,
+  user: Doc<"users">,
+): Promise<Doc<"properties"> | null> {
+  if (user.primaryPropertyId) {
+    const primary = await ctx.db.get("properties", user.primaryPropertyId);
+    if (primary && primary.userId === user._id) {
+      return primary;
+    }
+  }
+  return await ctx.db
+    .query("properties")
+    .withIndex("by_user", (q) => q.eq("userId", user._id))
+    .first();
+}
+
+async function getOnboardingStatusPayload(ctx: QueryCtx) {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) return null;
+
+  const tokenIdentifier = identity.tokenIdentifier;
+  if (!tokenIdentifier) return null;
+
+  const user = await ctx.db
+    .query("users")
+    .withIndex("by_tokenIdentifier", (q) =>
+      q.eq("tokenIdentifier", tokenIdentifier),
+    )
+    .unique();
+
+  if (!user) return null;
+
+  const onboardingProfile = await ctx.db
+    .query("onboardingProfiles")
+    .withIndex("by_user", (q) => q.eq("userId", user._id))
+    .unique();
+
+  const businessProfile = await ctx.db
+    .query("businessProfiles")
+    .withIndex("by_user", (q) => q.eq("userId", user._id))
+    .unique();
+
+  const account = await ctx.db
+    .query("accounts")
+    .withIndex("by_user", (q) => q.eq("userId", user._id))
+    .unique();
+
+  const property = await getOperatorPropertyForUser(ctx, user);
+
+  const agreement =
+    property &&
+    (await ctx.db
+      .query("propertyAgreement")
+      .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+      .unique());
+
+  const rent =
+    property &&
+    (await ctx.db
+      .query("propertyRent")
+      .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+      .unique());
+
+  const extraCharges =
+    property &&
+    (await ctx.db
+      .query("propertyExtraCharges")
+      .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+      .unique());
+
+  const tenantDetails =
+    property &&
+    (await ctx.db
+      .query("propertyTenantDetails")
+      .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+      .unique());
+
+  const roomOptions =
+    property &&
+    (await ctx.db
+      .query("roomOptions")
+      .withIndex("by_property_and_category", (q) =>
+        q.eq("propertyId", property._id),
+      )
+      .take(100));
+
+  const floors =
+    property &&
+    (await ctx.db
+      .query("floors")
+      .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+      .collect());
+
+  const rooms =
+    property &&
+    (await ctx.db
+      .query("rooms")
+      .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+      .collect());
+
+  return {
+    userId: user._id,
+    user,
+    hasCompletedOnboarding: !!user.hasCompletedOnboarding,
+    primaryPropertyId: user.primaryPropertyId ?? null,
+    referralCode: user.referralCode ?? null,
+    onboardingProfile,
+    businessProfile,
+    account,
+    property,
+    agreement,
+    rent,
+    extraCharges,
+    tenantDetails,
+    roomOptions,
+    floors,
+    rooms,
+  };
+}
+
 export const getOnboardingStatus = query({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return null;
+    return await getOnboardingStatusPayload(ctx);
+  },
+});
 
-    const tokenIdentifier = identity.tokenIdentifier;
-    if (!tokenIdentifier) return null;
+export const getPropertyListingEditorData = query({
+  args: {},
+  handler: async (ctx) => {
+    const bundle = await getOnboardingStatusPayload(ctx);
+    if (!bundle) return null;
 
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_tokenIdentifier", (q) =>
-        q.eq("tokenIdentifier", tokenIdentifier),
-      )
-      .unique();
+    const property = bundle.property;
+    let coverImageUrl: string | null = null;
+    const galleryImageUrls: (string | null)[] = [];
 
-    if (!user) return null;
+    const listingGallery: Array<
+      Doc<"propertyListingGalleryItems"> & { url: string | null }
+    > = [];
 
-    const onboardingProfile = await ctx.db
-      .query("onboardingProfiles")
-      .withIndex("by_user", (q) => q.eq("userId", user._id))
-      .unique();
+    if (property) {
+      if (property.coverImageFileId) {
+        coverImageUrl = await ctx.storage.getUrl(property.coverImageFileId);
+      }
+      const galleryIds = property.galleryImageFileIds ?? [];
+      for (const fileId of galleryIds) {
+        galleryImageUrls.push(await ctx.storage.getUrl(fileId));
+      }
 
-    const businessProfile = await ctx.db
-      .query("businessProfiles")
-      .withIndex("by_user", (q) => q.eq("userId", user._id))
-      .unique();
-
-    const account = await ctx.db
-      .query("accounts")
-      .withIndex("by_user", (q) => q.eq("userId", user._id))
-      .unique();
-
-    const property = await ctx.db
-      .query("properties")
-      .withIndex("by_user", (q) => q.eq("userId", user._id))
-      .first();
-
-    const agreement =
-      property &&
-      (await ctx.db
-        .query("propertyAgreement")
+      const listingItems = await ctx.db
+        .query("propertyListingGalleryItems")
         .withIndex("by_property", (q) => q.eq("propertyId", property._id))
-        .unique());
+        .collect();
+      listingItems.sort((a, b) => a.sortOrder - b.sortOrder);
+      for (const item of listingItems) {
+        listingGallery.push({
+          ...item,
+          url: await ctx.storage.getUrl(item.fileId),
+        });
+      }
+    }
 
-    const rent =
-      property &&
-      (await ctx.db
-        .query("propertyRent")
-        .withIndex("by_property", (q) => q.eq("propertyId", property._id))
-        .unique());
-
-    const extraCharges =
-      property &&
-      (await ctx.db
-        .query("propertyExtraCharges")
-        .withIndex("by_property", (q) => q.eq("propertyId", property._id))
-        .unique());
-
-    const tenantDetails =
-      property &&
-      (await ctx.db
-        .query("propertyTenantDetails")
-        .withIndex("by_property", (q) => q.eq("propertyId", property._id))
-        .unique());
-
-    const roomOptions =
-      property &&
-      (await ctx.db
-        .query("roomOptions")
-        .withIndex("by_property_and_category", (q) =>
-          q.eq("propertyId", property._id),
-        )
-        .take(100));
-
-    const floors =
-      property &&
-      (await ctx.db
-        .query("floors")
-        .withIndex("by_property", (q) => q.eq("propertyId", property._id))
-        .collect());
-
-    const rooms =
-      property &&
-      (await ctx.db
-        .query("rooms")
-        .withIndex("by_property", (q) => q.eq("propertyId", property._id))
-        .collect());
+    /** Matches list-property checklist: at least one listing gallery photo; utilities; amenities. Captions optional. */
+    let listingChecklistComplete = false;
+    if (bundle.hasCompletedOnboarding && property) {
+      const utilities = (property.utilities ?? []).map((u) => u.trim()).filter(Boolean);
+      const amenities = (property.amenities ?? []).map((a) => a.trim()).filter(Boolean);
+      const galleryOk = listingGallery.length > 0;
+      listingChecklistComplete =
+        utilities.length > 0 && amenities.length > 0 && galleryOk;
+    }
 
     return {
-      userId: user._id,
-      user,
-      hasCompletedOnboarding: !!user.hasCompletedOnboarding,
-      primaryPropertyId: user.primaryPropertyId ?? null,
-      referralCode: user.referralCode ?? null,
-      onboardingProfile,
-      businessProfile,
-      account,
-      property,
-      agreement,
-      rent,
-      extraCharges,
-      tenantDetails,
-      roomOptions,
-      floors,
-      rooms,
+      ...bundle,
+      coverImageUrl,
+      galleryImageUrls,
+      listingGallery,
+      listingChecklistComplete,
     };
   },
 });
@@ -263,6 +339,15 @@ export const generateAccountUploadUrl = mutation({
   },
 });
 
+export const generatePropertyImageUploadUrl = mutation({
+  args: {},
+  handler: async (ctx) => {
+    await getCurrentUserDoc(ctx);
+    const url = await ctx.storage.generateUploadUrl();
+    return { uploadUrl: url };
+  },
+});
+
 export const setUpiQrCodeFile = mutation({
   args: { fileId: v.id("_storage") },
   handler: async (ctx, args) => {
@@ -325,7 +410,11 @@ export const createOrUpdatePropertyBasics = mutation({
     city: v.optional(v.string()),
     state: v.optional(v.string()),
     line1: v.optional(v.string()),
+    description: v.optional(v.string()),
     coverImageFileId: v.optional(v.id("_storage")),
+    galleryImageFileIds: v.optional(v.array(v.id("_storage"))),
+    amenities: v.optional(v.array(v.string())),
+    nearbyPlaces: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUserDoc(ctx);
@@ -335,38 +424,52 @@ export const createOrUpdatePropertyBasics = mutation({
       const existing = await ctx.db.get(propertyId);
       if (!existing) {
         propertyId = null;
+      } else if (existing.userId !== user._id) {
+        throw new Error("You do not have access to this property");
       }
     }
+
+    const optionalMedia = {
+      ...(args.coverImageFileId !== undefined
+        ? { coverImageFileId: args.coverImageFileId }
+        : {}),
+      ...(args.galleryImageFileIds !== undefined
+        ? { galleryImageFileIds: args.galleryImageFileIds }
+        : {}),
+      ...(args.amenities !== undefined ? { amenities: args.amenities } : {}),
+      ...(args.nearbyPlaces !== undefined
+        ? { nearbyPlaces: args.nearbyPlaces }
+        : {}),
+    };
 
     if (!propertyId) {
       propertyId = await ctx.db.insert("properties", {
         userId: user._id,
-        name: args.name,
-        totalUnits: args.totalUnits,
-        vacantUnits: args.vacantUnits,
-        pincode: args.pincode,
-        city: args.city,
-        state: args.state,
-        line1: args.line1,
-        ...(args.coverImageFileId !== undefined
-          ? { coverImageFileId: args.coverImageFileId }
-          : {}),
+        ...(args.name !== undefined ? { name: args.name } : {}),
+        ...(args.totalUnits !== undefined ? { totalUnits: args.totalUnits } : {}),
+        ...(args.vacantUnits !== undefined ? { vacantUnits: args.vacantUnits } : {}),
+        ...(args.pincode !== undefined ? { pincode: args.pincode } : {}),
+        ...(args.city !== undefined ? { city: args.city } : {}),
+        ...(args.state !== undefined ? { state: args.state } : {}),
+        ...(args.line1 !== undefined ? { line1: args.line1 } : {}),
+        ...(args.description !== undefined ? { description: args.description } : {}),
+        ...optionalMedia,
       });
       if (!user.primaryPropertyId) {
         await ctx.db.patch(user._id, { primaryPropertyId: propertyId });
       }
     } else {
+      // Never pass `undefined` into db.patch — Convex removes those fields from the document.
       await ctx.db.patch(propertyId, {
-        name: args.name,
-        totalUnits: args.totalUnits,
-        vacantUnits: args.vacantUnits,
-        pincode: args.pincode,
-        city: args.city,
-        state: args.state,
-        line1: args.line1,
-        ...(args.coverImageFileId !== undefined
-          ? { coverImageFileId: args.coverImageFileId }
-          : {}),
+        ...(args.name !== undefined ? { name: args.name } : {}),
+        ...(args.totalUnits !== undefined ? { totalUnits: args.totalUnits } : {}),
+        ...(args.vacantUnits !== undefined ? { vacantUnits: args.vacantUnits } : {}),
+        ...(args.pincode !== undefined ? { pincode: args.pincode } : {}),
+        ...(args.city !== undefined ? { city: args.city } : {}),
+        ...(args.state !== undefined ? { state: args.state } : {}),
+        ...(args.line1 !== undefined ? { line1: args.line1 } : {}),
+        ...(args.description !== undefined ? { description: args.description } : {}),
+        ...optionalMedia,
       });
     }
 

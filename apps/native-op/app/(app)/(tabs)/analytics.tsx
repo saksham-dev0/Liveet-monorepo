@@ -6,7 +6,7 @@ import {
   ScrollView,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { colors, radii, card as cardStyle, cardShadow } from "../../constants/theme";
+import { colors, radii, card as cardStyle, cardShadow } from "../../../constants/theme";
 
 const CHART_DATA = [
   { month: "Jan", value: 65 },

@@ -52,12 +52,12 @@ export default function AuthScreen() {
         {},
       );
       if (status?.hasCompletedOnboarding) {
-        router.replace("/(app)");
+        router.replace("/(app)/(tabs)");
       } else {
         router.replace("/(onboarding)" as any);
       }
     } catch {
-      router.replace("/(app)");
+        router.replace("/(app)/(tabs)");
     }
   }, [convex, router, syncUser]);
 

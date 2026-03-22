@@ -1,5 +1,20 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
+import type { Doc, Id } from "./_generated/dataModel";
+
+function ownerDisplayName(owner: Doc<"users"> | null): string | undefined {
+  if (!owner) return undefined;
+  const name = owner.name?.trim();
+  if (name) return name;
+  const brand = owner.brandName?.trim();
+  if (brand) return brand;
+  const email = owner.email?.trim();
+  if (email) {
+    const at = email.indexOf("@");
+    return at > 0 ? email.slice(0, at) : email;
+  }
+  return undefined;
+}
 
 export const listForTenants = query({
   args: {},
@@ -31,10 +46,19 @@ export const listForTenants = query({
 
     const enriched = [];
     for (const property of unswiped) {
-      const { coverImageFileId, ...propertyRest } = property;
+      const {
+        coverImageFileId,
+        galleryImageFileIds,
+        ...propertyRest
+      } = property;
       const coverImageUrl = coverImageFileId
         ? await ctx.storage.getUrl(coverImageFileId)
         : null;
+
+      const galleryImageUrls: (string | null)[] = [];
+      for (const id of galleryImageFileIds ?? []) {
+        galleryImageUrls.push(await ctx.storage.getUrl(id));
+      }
 
       const roomOptions = await ctx.db
         .query("roomOptions")
@@ -61,6 +85,7 @@ export const listForTenants = query({
       enriched.push({
         ...propertyRest,
         coverImageUrl,
+        galleryImageUrls,
         roomOptions: roomOptions ?? [],
         tenantDetails: tenantDetails ?? null,
         agreement: agreement ?? null,
@@ -94,7 +119,7 @@ export const listLikedForTenants = query({
       .order("desc")
       .take(200);
 
-    const likedPropertyIds: string[] = [];
+    const likedPropertyIds: Id<"properties">[] = [];
     const seen = new Set<string>();
     for (const s of swipes) {
       if (!s.liked) continue;
@@ -111,10 +136,19 @@ export const listLikedForTenants = query({
       const property = await ctx.db.get("properties", propertyId);
       if (!property) continue;
 
-      const { coverImageFileId, ...propertyRest } = property;
+      const {
+        coverImageFileId,
+        galleryImageFileIds,
+        ...propertyRest
+      } = property;
       const coverImageUrl = coverImageFileId
         ? await ctx.storage.getUrl(coverImageFileId)
         : null;
+
+      const galleryImageUrls: (string | null)[] = [];
+      for (const id of galleryImageFileIds ?? []) {
+        galleryImageUrls.push(await ctx.storage.getUrl(id));
+      }
 
       const roomOptions = await ctx.db
         .query("roomOptions")
@@ -138,9 +172,14 @@ export const listLikedForTenants = query({
         .withIndex("by_property", (q) => q.eq("propertyId", property._id))
         .unique();
 
+      const ownerUser = await ctx.db.get(property.userId);
+      const ownerName = ownerDisplayName(ownerUser);
+
       enriched.push({
         ...propertyRest,
         coverImageUrl,
+        galleryImageUrls,
+        ownerName,
         roomOptions: roomOptions ?? [],
         tenantDetails: tenantDetails ?? null,
         agreement: agreement ?? null,
@@ -186,5 +225,52 @@ export const recordSwipe = mutation({
         liked: args.liked,
       });
     }
+  },
+});
+
+/** Aggregates unit counts across the operator's properties for the dashboard. */
+export const getDashboardPropertyStats = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      return null;
+    }
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+
+    if (!user) {
+      return null;
+    }
+
+    const properties = await ctx.db
+      .query("properties")
+      .withIndex("by_user", (q) => q.eq("userId", user._id))
+      .take(500);
+
+    let vacantUnits = 0;
+    let occupiedUnits = 0;
+    for (const p of properties) {
+      const total = p.totalUnits ?? 0;
+      let vacant = p.vacantUnits;
+      if (vacant === undefined && total > 0) {
+        const rooms = await ctx.db
+          .query("rooms")
+          .withIndex("by_property", (q) => q.eq("propertyId", p._id))
+          .take(1000);
+        const occupiedByRooms = rooms.length;
+        vacant = Math.max(0, total - occupiedByRooms);
+      }
+      const vacantN = vacant ?? 0;
+      vacantUnits += vacantN;
+      occupiedUnits += Math.max(0, total - vacantN);
+    }
+
+    return { vacantUnits, occupiedUnits };
   },
 });

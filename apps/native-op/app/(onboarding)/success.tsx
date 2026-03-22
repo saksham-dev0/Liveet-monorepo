@@ -47,7 +47,7 @@ export default function OnboardingSuccessScreen() {
         )}
         <TouchableOpacity
           style={s.doneBtn}
-          onPress={() => router.replace("/(app)")}
+          onPress={() => router.replace("/(app)/(tabs)")}
         >
           <Text style={s.doneBtnText}>Done</Text>
         </TouchableOpacity>

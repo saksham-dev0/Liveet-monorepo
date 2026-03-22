@@ -65,9 +65,27 @@ export default defineSchema({
     city: v.optional(v.string()),
     state: v.optional(v.string()),
     line1: v.optional(v.string()),
+    /** Free-form copy shown on tenant property detail */
+    description: v.optional(v.string()),
     /** Operator-uploaded hero image for tenant discovery cards */
     coverImageFileId: v.optional(v.id("_storage")),
+    /** Additional property photos (gallery) */
+    galleryImageFileIds: v.optional(v.array(v.id("_storage"))),
+    /** Listing amenities shown to tenants */
+    amenities: v.optional(v.array(v.string())),
+    /** e.g. "Metro station – 5 min walk" */
+    nearbyPlaces: v.optional(v.array(v.string())),
+    /** Listing-only: utilities (post-onboarding operator edits) */
+    utilities: v.optional(v.array(v.string())),
   }).index("by_user", ["userId"]),
+
+  /** Per-image gallery for property listing (max 10); not used in onboarding flow */
+  propertyListingGalleryItems: defineTable({
+    propertyId: v.id("properties"),
+    fileId: v.id("_storage"),
+    description: v.optional(v.string()),
+    sortOrder: v.number(),
+  }).index("by_property", ["propertyId"]),
 
   propertyTenantDetails: defineTable({
     propertyId: v.id("properties"),
@@ -141,6 +159,40 @@ export default defineSchema({
     liked: v.boolean(),
   })
     .index("by_tenant", ["tenantUserId"])
+    .index("by_tenant_and_property", ["tenantUserId", "propertyId"]),
+
+  /** Tenant move-in (E-KYC + details) for a liked property; upserted per tenant+property. */
+  tenantMoveInApplications: defineTable({
+    tenantUserId: v.id("users"),
+    propertyId: v.id("properties"),
+    status: v.optional(v.string()),
+
+    legalNameAsOnId: v.string(),
+    govIdType: v.string(),
+    govIdOtherLabel: v.optional(v.string()),
+    govIdNumber: v.string(),
+    idFrontFileId: v.id("_storage"),
+    idBackFileId: v.id("_storage"),
+
+    phone: v.string(),
+    email: v.string(),
+    dateOfBirth: v.string(),
+    maritalStatus: v.union(v.literal("married"), v.literal("single")),
+    address: v.string(),
+    /** Preferred or planned move-in date (free-form, e.g. DD/MM/YYYY). */
+    moveInDate: v.optional(v.string()),
+    professionalDetails: v.string(),
+
+    emergencyContacts: v.array(
+      v.object({
+        name: v.string(),
+        phone: v.string(),
+        relation: v.string(),
+      }),
+    ),
+  })
+    .index("by_tenant", ["tenantUserId"])
+    .index("by_property", ["propertyId"])
     .index("by_tenant_and_property", ["tenantUserId", "propertyId"]),
 });
 
