@@ -523,6 +523,7 @@ export default function AppHome() {
   const [properties, setProperties] = useState<Property[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [showDashboard, setShowDashboard] = useState(false);
 
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
@@ -535,6 +536,13 @@ export default function AppHome() {
 
     (async () => {
       try {
+        const gate = await (convex as any).query("moveIn:hasPaidMoveInForTenant", {});
+        if (!cancelled && gate?.shouldShowDashboard) {
+          setShowDashboard(true);
+          setLoading(false);
+          clearTimeout(timeout);
+          return;
+        }
         const result = await (convex as any).query(
           "properties:listForTenants",
           {},
@@ -687,6 +695,40 @@ export default function AppHome() {
         <View style={s.loadWrap}>
           <ActivityIndicator size="large" color={colors.primary} />
           <Text style={s.loadText}>Finding properties...</Text>
+        </View>
+      </View>
+    );
+  }
+
+  if (showDashboard) {
+    return (
+      <View style={[s.root, { paddingTop: insets.top }]}>
+        <View style={s.header}>
+          <TouchableOpacity
+            style={s.filterBtn}
+            onPress={() => router.push("/(app)/favorites")}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="heart-outline" size={20} color={colors.navy} />
+          </TouchableOpacity>
+          <View style={s.hCenter}>
+            <Text style={s.hTitle}>Dashboard</Text>
+            <Text style={s.hSub}>Temporary view</Text>
+          </View>
+          <TouchableOpacity style={s.filterBtn}>
+            <Ionicons name="options-outline" size={20} color={colors.navy} />
+          </TouchableOpacity>
+        </View>
+
+        <View style={s.dashboardWrap}>
+          <View style={s.dashboardCard}>
+            <Ionicons name="grid-outline" size={34} color={colors.primary} />
+            <Text style={s.dashboardTitle}>Dashboard is enabled</Text>
+            <Text style={s.dashboardSub}>
+              Discover is hidden because payment status is marked as paid. Share your dashboard UI
+              requirements and I will build this screen next.
+            </Text>
+          </View>
         </View>
       </View>
     );
@@ -912,5 +954,36 @@ const s = StyleSheet.create({
     color: colors.muted,
     marginTop: 8,
     textAlign: "center",
+  },
+  dashboardWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 20,
+    paddingBottom: 90,
+  },
+  dashboardCard: {
+    width: "100%",
+    backgroundColor: colors.cardBg,
+    borderRadius: radii.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingVertical: 26,
+    paddingHorizontal: 20,
+    alignItems: "center",
+    ...cardShadow,
+  },
+  dashboardTitle: {
+    marginTop: 12,
+    fontSize: 20,
+    fontWeight: "800",
+    color: colors.navy,
+  },
+  dashboardSub: {
+    marginTop: 8,
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: "center",
+    color: colors.muted,
   },
 });

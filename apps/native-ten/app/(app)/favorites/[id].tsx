@@ -218,6 +218,7 @@ export default function FavoritesDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [property, setProperty] = useState<LikedProperty | null>(null);
   const [heroImageIndex, setHeroImageIndex] = useState(0);
+  const [hasMoveInRequest, setHasMoveInRequest] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -225,16 +226,25 @@ export default function FavoritesDetailScreen() {
     (async () => {
       setLoading(true);
       try {
-        const result = await (convex as any).query("properties:listLikedForTenants", {});
+        const [result, moveInStatus] = await Promise.all([
+          (convex as any).query("properties:listLikedForTenants", {}),
+          propertyId
+            ? (convex as any).query("moveIn:getTenantMoveInForProperty", { propertyId })
+            : Promise.resolve({ hasApplication: false }),
+        ]);
         if (cancelled) return;
 
         const found =
           (result ?? []).find((p: LikedProperty) => p?._id === propertyId) ?? null;
         setProperty(found);
+        setHasMoveInRequest(!!moveInStatus?.hasApplication);
       } catch (e) {
         // UI-only: keep the screen usable even if the query fails.
         console.warn("Failed to load favorite details:", e);
-        if (!cancelled) setProperty(null);
+        if (!cancelled) {
+          setProperty(null);
+          setHasMoveInRequest(false);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -605,7 +615,7 @@ export default function FavoritesDetailScreen() {
                 : undefined
             }
           >
-            <Text style={s.ctaText}>Ready to move-in</Text>
+            <Text style={s.ctaText}>{hasMoveInRequest ? "Edit request" : "Ready to move-in"}</Text>
           </TouchableOpacity>
         </View>
       </View>

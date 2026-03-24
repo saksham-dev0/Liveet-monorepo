@@ -182,6 +182,12 @@ export default defineSchema({
     /** Preferred or planned move-in date (free-form, e.g. DD/MM/YYYY). */
     moveInDate: v.optional(v.string()),
     professionalDetails: v.string(),
+    selectedRoomOptionId: v.optional(v.id("roomOptions")),
+    paymentMethod: v.optional(
+      v.union(v.literal("Bank transfer"), v.literal("UPI"), v.literal("Cash")),
+    ),
+    paymentStatus: v.optional(v.union(v.literal("paid"), v.literal("pending"))),
+    agreementAccepted: v.optional(v.boolean()),
 
     emergencyContacts: v.array(
       v.object({

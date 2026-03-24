@@ -228,6 +228,16 @@ export const recordSwipe = mutation({
   },
 });
 
+function isMoveInKycComplete(
+  app: Doc<"tenantMoveInApplications">,
+): boolean {
+  return (
+    app.status === "submitted" ||
+    app.status === undefined ||
+    app.status === null
+  );
+}
+
 /** Aggregates unit counts across the operator's properties for the dashboard. */
 export const getDashboardPropertyStats = query({
   args: {},
@@ -255,6 +265,9 @@ export const getDashboardPropertyStats = query({
 
     let vacantUnits = 0;
     let occupiedUnits = 0;
+    /** Tenants who completed E-KYC / move-in for any of this operator's properties (distinct users). */
+    const occupantsWithKyc = new Set<Id<"users">>();
+
     for (const p of properties) {
       const total = p.totalUnits ?? 0;
       let vacant = p.vacantUnits;
@@ -269,8 +282,106 @@ export const getDashboardPropertyStats = query({
       const vacantN = vacant ?? 0;
       vacantUnits += vacantN;
       occupiedUnits += Math.max(0, total - vacantN);
+
+      const moveInApps = await ctx.db
+        .query("tenantMoveInApplications")
+        .withIndex("by_property", (q) => q.eq("propertyId", p._id))
+        .take(500);
+      for (const app of moveInApps) {
+        if (isMoveInKycComplete(app)) {
+          occupantsWithKyc.add(app.tenantUserId);
+        }
+      }
     }
 
-    return { vacantUnits, occupiedUnits };
+    return {
+      vacantUnits,
+      occupiedUnits,
+      occupantsWithKyc: occupantsWithKyc.size,
+    };
+  },
+});
+
+/** Recent tenants who completed E-KYC / move-in on this operator's properties (newest first). */
+export const getRecentKycTenantsForDashboard = query({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const limit = Math.min(Math.max(args.limit ?? 8, 1), 25);
+
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      return null;
+    }
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+
+    if (!user) {
+      return null;
+    }
+
+    const properties = await ctx.db
+      .query("properties")
+      .withIndex("by_user", (q) => q.eq("userId", user._id))
+      .take(500);
+
+    type Collected = {
+      _creationTime: number;
+      applicationId: Id<"tenantMoveInApplications">;
+      legalNameAsOnId: string;
+      phone: string;
+      moveInDate: string | undefined;
+      tenantUserId: Id<"users">;
+    };
+
+    const collected: Collected[] = [];
+
+    for (const p of properties) {
+      const apps = await ctx.db
+        .query("tenantMoveInApplications")
+        .withIndex("by_property", (q) => q.eq("propertyId", p._id))
+        .take(200);
+
+      for (const app of apps) {
+        if (!isMoveInKycComplete(app)) {
+          continue;
+        }
+        collected.push({
+          _creationTime: app._creationTime,
+          applicationId: app._id,
+          legalNameAsOnId: app.legalNameAsOnId,
+          phone: app.phone,
+          moveInDate: app.moveInDate,
+          tenantUserId: app.tenantUserId,
+        });
+      }
+    }
+
+    collected.sort((a, b) => b._creationTime - a._creationTime);
+
+    const out: Array<{
+      applicationId: Id<"tenantMoveInApplications">;
+      legalNameAsOnId: string;
+      imageUrl: string | undefined;
+      phone: string;
+      moveInDate: string | undefined;
+    }> = [];
+
+    for (const row of collected.slice(0, limit)) {
+      const tenant = await ctx.db.get(row.tenantUserId);
+      out.push({
+        applicationId: row.applicationId,
+        legalNameAsOnId: row.legalNameAsOnId,
+        imageUrl: tenant?.imageUrl,
+        phone: row.phone,
+        moveInDate: row.moveInDate,
+      });
+    }
+
+    return { items: out };
   },
 });

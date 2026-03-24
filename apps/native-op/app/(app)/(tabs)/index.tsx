@@ -6,6 +6,7 @@ import {
   Pressable,
   Text,
   TouchableOpacity,
+  Image,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -24,7 +25,7 @@ const TRANSACTIONS = [
     id: 1,
     name: "Grocery Store",
     date: "Today, 9:14 AM",
-    amount: "-$42.00",
+    amount: "-₹42.00",
     icon: "cart-outline" as const,
     color: "#DC2626",
   },
@@ -32,7 +33,7 @@ const TRANSACTIONS = [
     id: 2,
     name: "Savings",
     date: "Yesterday",
-    amount: "+$60.00",
+    amount: "+₹60.00",
     icon: "wallet-outline" as const,
     color: "#16A34A",
   },
@@ -40,7 +41,7 @@ const TRANSACTIONS = [
     id: 3,
     name: "Netflix",
     date: "Mar 17",
-    amount: "-$15.99",
+    amount: "-₹15.99",
     icon: "play-outline" as const,
     color: "#DC2626",
   },
@@ -48,7 +49,7 @@ const TRANSACTIONS = [
     id: 4,
     name: "Salary Deposit",
     date: "Mar 15",
-    amount: "+$4,200.00",
+    amount: "+₹4,200.00",
     icon: "cash-outline" as const,
     color: "#16A34A",
   },
@@ -56,22 +57,44 @@ const TRANSACTIONS = [
     id: 5,
     name: "Coffee Shop",
     date: "Mar 14",
-    amount: "-$6.50",
+    amount: "-₹6.50",
     icon: "cafe-outline" as const,
     color: "#DC2626",
   },
 ];
 
 /** Placeholder until rent collection is modeled in Convex */
-const SAMPLE_PENDING_COLLECTION = "$8,200";
-const SAMPLE_RECEIVED_COLLECTION = "$5,800";
+const SAMPLE_PENDING_COLLECTION = "₹8,200";
+const SAMPLE_RECEIVED_COLLECTION = "₹5,800";
 
 const DASHBOARD_STAT_CARDS = [
-  { label: "Occupied" },
+  { label: "Occupants" },
   { label: "Vacant" },
-  { label: "Pending collection" },
-  { label: "Received collection" },
+  { label: "Pending" },
+  { label: "Received" },
 ] as const;
+
+type RecentKycTenantItem = {
+  applicationId: string;
+  legalNameAsOnId: string;
+  imageUrl?: string;
+  phone: string;
+  moveInDate?: string;
+};
+
+function getGreetingLabel(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good Morning";
+  if (hour < 17) return "Good Afternoon";
+  return "Good Evening";
+}
+
+function getFirstName(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) return "";
+  const [first] = trimmed.split(/\s+/);
+  return first ?? "";
+}
 
 export default function TestScreen() {
   const router = useRouter();
@@ -84,7 +107,12 @@ export default function TestScreen() {
   const [dashboardStats, setDashboardStats] = useState<{
     occupiedUnits: number;
     vacantUnits: number;
+    occupantsWithKyc: number;
   } | null>(null);
+  const [recentKycTenants, setRecentKycTenants] = useState<
+    RecentKycTenantItem[] | null
+  >(null);
+  const [greetingName, setGreetingName] = useState("user");
 
   const refreshListingStatus = useCallback(async () => {
     try {
@@ -93,8 +121,12 @@ export default function TestScreen() {
         {},
       );
       setListingChecklistComplete(data?.listingChecklistComplete === true);
+      const maybeName =
+        typeof data?.user?.name === "string" ? data.user.name.trim() : "";
+      setGreetingName(getFirstName(maybeName) || "user");
     } catch {
       setListingChecklistComplete(false);
+      setGreetingName("user");
     }
   }, [convex]);
 
@@ -109,11 +141,29 @@ export default function TestScreen() {
           ? {
               occupiedUnits: data.occupiedUnits,
               vacantUnits: data.vacantUnits,
+              occupantsWithKyc: data.occupantsWithKyc ?? 0,
             }
-          : { occupiedUnits: 0, vacantUnits: 0 },
+          : { occupiedUnits: 0, vacantUnits: 0, occupantsWithKyc: 0 },
       );
     } catch {
-      setDashboardStats({ occupiedUnits: 0, vacantUnits: 0 });
+      setDashboardStats({
+        occupiedUnits: 0,
+        vacantUnits: 0,
+        occupantsWithKyc: 0,
+      });
+    }
+  }, [convex]);
+
+  const refreshRecentKycTenants = useCallback(async () => {
+    try {
+      const data = await (convex as any).query(
+        "properties:getRecentKycTenantsForDashboard",
+        { limit: 8 },
+      );
+      const items = data?.items;
+      setRecentKycTenants(Array.isArray(items) ? items : []);
+    } catch {
+      setRecentKycTenants([]);
     }
   }, [convex]);
 
@@ -121,7 +171,8 @@ export default function TestScreen() {
     useCallback(() => {
       void refreshListingStatus();
       void refreshDashboardStats();
-    }, [refreshListingStatus, refreshDashboardStats]),
+      void refreshRecentKycTenants();
+    }, [refreshListingStatus, refreshDashboardStats, refreshRecentKycTenants]),
   );
 
   const showListPropertyCard = listingChecklistComplete !== true;
@@ -136,8 +187,8 @@ export default function TestScreen() {
         {/* Header */}
         <View style={styles.greetingRow}>
           <View style={styles.greeting}>
-            <Text style={styles.greetingLabel}>Good Morning</Text>
-            <Text style={styles.greetingName}>Maya</Text>
+            <Text style={styles.greetingLabel}>{getGreetingLabel()}</Text>
+            <Text style={styles.greetingName}>{greetingName}</Text>
           </View>
           <View style={styles.headerRight}>
             <Pressable style={styles.orgPill}>
@@ -161,7 +212,7 @@ export default function TestScreen() {
             </View>
           </View>
 
-          <Text style={styles.heroAmount}>$24,830.00</Text>
+          <Text style={styles.heroAmount}>₹24,830.00</Text>
 
           {/* Action Buttons */}
           <View style={styles.actionRow}>
@@ -184,7 +235,7 @@ export default function TestScreen() {
             {DASHBOARD_STAT_CARDS.map((card, index) => {
               const amount =
                 index === 0
-                  ? String(dashboardStats?.occupiedUnits ?? 0)
+                  ? String(dashboardStats?.occupantsWithKyc ?? 0)
                   : index === 1
                     ? String(dashboardStats?.vacantUnits ?? 0)
                     : index === 2
@@ -248,13 +299,55 @@ export default function TestScreen() {
               ))}
             </View>
             <View style={styles.chartYAxis}>
-              {["$400", "$300", "$200", "$100"].map((label) => (
+              {["₹400", "₹300", "₹200", "₹100"].map((label) => (
                 <Text key={label} style={styles.yAxisLabel}>
                   {label}
                 </Text>
               ))}
             </View>
           </View>
+        </View>
+
+        {/* Recent E-KYC tenants */}
+        <View style={styles.card}>
+          <Text style={[styles.cardTitle, styles.kycCardTitle]}>Upcoming Move-Ins</Text>
+          <Text style={styles.cardSubtitle}>
+            Tenants who have completed E-KYC and are scheduled to move in soon
+          </Text>
+          {recentKycTenants === null ? (
+            <Text style={styles.kycEmptyText}>Loading…</Text>
+          ) : recentKycTenants.length === 0 ? (
+            <Text style={styles.kycEmptyText}>
+              No completed move-in applications yet. Tenants who finish E-KYC in
+              the tenant app will appear here.
+            </Text>
+          ) : (
+            recentKycTenants.map((item) => (
+              <View key={item.applicationId} style={styles.transactionRow}>
+                {item.imageUrl ? (
+                  <Image
+                    source={{ uri: item.imageUrl }}
+                    style={styles.kycTenantAvatar}
+                  />
+                ) : (
+                  <View style={styles.transactionIcon}>
+                    <Ionicons name="person" size={20} color="#374151" />
+                  </View>
+                )}
+                <View style={styles.transactionInfo}>
+                  <Text style={styles.transactionName} numberOfLines={1}>
+                    {item.legalNameAsOnId}
+                  </Text>
+                  <Text style={styles.transactionDate} numberOfLines={1}>
+                    {item.phone}
+                  </Text>
+                </View>
+                <Text style={styles.kycMoveInDate} numberOfLines={2}>
+                  {item.moveInDate?.trim() ? item.moveInDate : "—"}
+                </Text>
+              </View>
+            ))
+          )}
         </View>
 
         {/* Recent Transactions */}
@@ -468,6 +561,35 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     color: "#1a1a1a",
     marginBottom: 16,
+  },
+  kycCardTitle: {
+    marginBottom: 4,
+  },
+  cardSubtitle: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: "#6B7280",
+    marginBottom: 16,
+  },
+  kycEmptyText: {
+    fontSize: 14,
+    lineHeight: 21,
+    color: "#9CA3AF",
+  },
+  kycTenantAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    marginRight: 12,
+    backgroundColor: "#F3F4F6",
+  },
+  kycMoveInDate: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#1a1a1a",
+    textAlign: "right",
+    marginLeft: 10,
+    maxWidth: "32%",
   },
   listPropertyHeader: {
     flexDirection: "row",

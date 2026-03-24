@@ -106,6 +106,7 @@ export default function FavoritesScreen() {
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [liked, setLiked] = useState<LikedProperty[]>([]);
+  const [moveInPropertyIds, setMoveInPropertyIds] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<"All" | "Shortlisted" | "Interview" | "Offer">(
     "All",
   );
@@ -116,12 +117,21 @@ export default function FavoritesScreen() {
     (async () => {
       setLoading(true);
       try {
-        const result = await (convex as any).query("properties:listLikedForTenants", {});
-        if (!cancelled) setLiked((result ?? []) as LikedProperty[]);
+        const [result, moveInMap] = await Promise.all([
+          (convex as any).query("properties:listLikedForTenants", {}),
+          (convex as any).query("moveIn:listTenantMoveInApplicationPropertyIds", {}),
+        ]);
+        if (!cancelled) {
+          setLiked((result ?? []) as LikedProperty[]);
+          setMoveInPropertyIds((moveInMap?.propertyIds ?? []) as string[]);
+        }
       } catch (e) {
         // UI-only: keep the screen usable even if the query fails.
         console.warn("Failed to load favorites:", e);
-        if (!cancelled) setLiked([]);
+        if (!cancelled) {
+          setLiked([]);
+          setMoveInPropertyIds([]);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -208,77 +218,80 @@ export default function FavoritesScreen() {
           data={cards}
           keyExtractor={(item) => item.id}
           contentContainerStyle={s.listContent}
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              style={s.card}
-              activeOpacity={0.85}
-              onPress={() => router.push(`/(app)/favorites/${item.id}`)}
-              accessibilityRole="button"
-              accessibilityLabel={`Open details for ${item.name}`}
-            >
-              <View style={s.cardTopRow}>
-                <View style={s.avatar}>
-                  <Ionicons name="business-outline" size={18} color={colors.white} />
+          renderItem={({ item }) => {
+            const hasMoveInRequest = moveInPropertyIds.includes(item.id);
+            return (
+              <TouchableOpacity
+                style={s.card}
+                activeOpacity={0.85}
+                onPress={() => router.push(`/(app)/favorites/${item.id}`)}
+                accessibilityRole="button"
+                accessibilityLabel={`Open details for ${item.name}`}
+              >
+                <View style={s.cardTopRow}>
+                  <View style={s.avatar}>
+                    <Ionicons name="business-outline" size={18} color={colors.white} />
+                  </View>
+
+                  <View style={s.cardTopText}>
+                    <Text style={s.cardName} numberOfLines={1}>
+                      {item.name}
+                    </Text>
+                    <Text style={s.cardRole} numberOfLines={1}>
+                      {item.role}
+                    </Text>
+                  </View>
+
+                  <View style={s.percentBadge}>
+                    <Text style={s.percentText}>{item.rentText}</Text>
+                  </View>
                 </View>
 
-                <View style={s.cardTopText}>
-                  <Text style={s.cardName} numberOfLines={1}>
-                    {item.name}
-                  </Text>
-                  <Text style={s.cardRole} numberOfLines={1}>
-                    {item.role}
-                  </Text>
+                <View style={s.metaRow}>
+                  <View style={s.metaLeft}>
+                    <Ionicons name="woman-outline" size={14} color={colors.muted} />
+                    <Text style={s.metaText}>{item.occupancyText}</Text>
+                  </View>
+                  <View style={s.metaLeft}>
+                    <Ionicons name="location-outline" size={14} color={colors.muted} />
+                    <Text style={s.metaText}>{item.location}</Text>
+                  </View>
                 </View>
 
-                <View style={s.percentBadge}>
-                  <Text style={s.percentText}>{item.rentText}</Text>
-                </View>
-              </View>
+                <View style={s.cardActionsRow}>
+                  <TouchableOpacity
+                    style={[s.actionBtn, s.actionBtnOutline]}
+                    activeOpacity={0.7}
+                    onPress={() => router.push(`/(app)/favorites/move-in/${item.id}`)}
+                  >
+                    <Ionicons
+                      name="checkmark-circle-outline"
+                      size={16}
+                      color={colors.navy}
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text style={[s.actionBtnText, s.actionBtnOutlineText]}>
+                      {hasMoveInRequest ? "Edit request" : "Ready to move-in"}
+                    </Text>
+                  </TouchableOpacity>
 
-              <View style={s.metaRow}>
-                <View style={s.metaLeft}>
-                  <Ionicons name="woman-outline" size={14} color={colors.muted} />
-                  <Text style={s.metaText}>{item.occupancyText}</Text>
+                  <TouchableOpacity
+                    style={[s.actionBtn, s.actionBtnFilled]}
+                    activeOpacity={0.7}
+                    onPress={() => {}}
+                  >
+                    <Ionicons
+                      name="chatbubble-ellipses-outline"
+                      size={16}
+                      color={colors.white}
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text style={s.actionBtnFilledText}>Contact owner</Text>
+                  </TouchableOpacity>
                 </View>
-                <View style={s.metaLeft}>
-                  <Ionicons name="location-outline" size={14} color={colors.muted} />
-                  <Text style={s.metaText}>{item.location}</Text>
-                </View>
-              </View>
-
-              <View style={s.cardActionsRow}>
-                <TouchableOpacity
-                  style={[s.actionBtn, s.actionBtnOutline]}
-                  activeOpacity={0.7}
-                  onPress={() => router.push(`/(app)/favorites/move-in/${item.id}`)}
-                >
-                  <Ionicons
-                    name="checkmark-circle-outline"
-                    size={16}
-                    color={colors.navy}
-                    style={{ marginRight: 6 }}
-                  />
-                  <Text style={[s.actionBtnText, s.actionBtnOutlineText]}>
-                    ready to move-in
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[s.actionBtn, s.actionBtnFilled]}
-                  activeOpacity={0.7}
-                  onPress={() => {}}
-                >
-                  <Ionicons
-                    name="chatbubble-ellipses-outline"
-                    size={16}
-                    color={colors.white}
-                    style={{ marginRight: 6 }}
-                  />
-                  <Text style={s.actionBtnFilledText}>Contact owner</Text>
-                </TouchableOpacity>
-              </View>
-            </TouchableOpacity>
-          )}
+              </TouchableOpacity>
+            );
+          }}
         />
       )}
 
