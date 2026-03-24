@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -33,7 +33,17 @@ const GOV_ID_TYPES = [
 
 type GovIdType = (typeof GOV_ID_TYPES)[number];
 
-type Step = 0 | 1;
+const STEP_LABELS = ["Basic details", "Room selection", "E-KYC", "Payment"] as const;
+type Step = 0 | 1 | 2 | 3;
+const TOTAL_STEPS = STEP_LABELS.length;
+
+const PAYMENT_METHODS = ["Bank transfer", "UPI", "Cash"] as const;
+type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+type PaymentStatus = "paid" | "pending";
+
+function paymentActionLabel(method: PaymentMethod): string {
+  return method === "Cash" ? "Pay on reception" : "Pay Now";
+}
 
 type MaritalStatus = "married" | "single";
 
@@ -42,6 +52,24 @@ type EmergencyContactRow = {
   name: string;
   phone: string;
   relation: string;
+};
+
+type AvailableRoomOption = {
+  id: string;
+  title: string;
+  subtitle: string;
+  rentAmount?: number;
+};
+
+type LikedPropertyRow = {
+  _id: string;
+  roomOptions?: Array<{
+    _id?: string;
+    category?: string;
+    typeName?: string | null;
+    numberOfRooms?: number | null;
+    rentAmount?: number | null;
+  }>;
 };
 
 function makeEmergencyContactId(): string {
@@ -57,50 +85,81 @@ const GOV_ID_ICONS: Record<GovIdType, keyof typeof Ionicons.glyphMap> = {
   Others: "ellipsis-horizontal-circle-outline",
 };
 
+function formatIndianRupees(amount: number): string {
+  return Math.round(amount).toLocaleString("en-IN");
+}
+
+function roomCategoryLabel(category: string | undefined): string {
+  if (!category) return "Room";
+  const key = category.trim().toLowerCase();
+  if (key === "single") return "Single";
+  if (key === "double") return "Double";
+  if (key === "triple") return "Triple";
+  if (key === "3plus") return "3+ Bed";
+  return category;
+}
+
+function roomTitleFromOption(option: {
+  category?: string;
+  typeName?: string | null;
+  numberOfRooms?: number | null;
+}): string {
+  const typeName = option.typeName?.trim();
+  if (typeName) return typeName;
+  const category = roomCategoryLabel(option.category);
+  const count = option.numberOfRooms;
+  if (typeof count === "number" && count > 0) {
+    return `${category} · ${count} room${count === 1 ? "" : "s"}`;
+  }
+  return category;
+}
+
 function StepBar({ step }: { step: Step }) {
-  const onStep2 = step === 1;
   return (
     <View style={s.stepShell}>
       <View style={s.stepBarInner}>
-        <View style={s.stepCol}>
-          <View
-            style={[s.stepDisc, step === 0 && s.stepDiscCurrent, onStep2 && s.stepDiscDone]}
-          >
-            {onStep2 ? (
-              <Ionicons name="checkmark" size={18} color={colors.white} />
-            ) : (
-              <Text style={[s.stepDiscNum, s.stepDiscNumOnPrimary]}>1</Text>
-            )}
-          </View>
-          <Text style={[s.stepTitle, !onStep2 && s.stepTitleStrong]} numberOfLines={1}>
-            E-KYC
-          </Text>
-        </View>
-
-        <View style={s.stepBridge}>
-          <View style={s.stepBridgeTrack}>
-            <View style={[s.stepBridgeFill, onStep2 && s.stepBridgeFillFull]} />
-          </View>
-        </View>
-
-        <View style={s.stepCol}>
-          <View
-            style={[s.stepDisc, !onStep2 && s.stepDiscUpcoming, onStep2 && s.stepDiscCurrent]}
-          >
-            <Text
-              style={[
-                s.stepDiscNum,
-                onStep2 && s.stepDiscNumOnPrimary,
-                !onStep2 && s.stepDiscNumMuted,
-              ]}
-            >
-              2
-            </Text>
-          </View>
-          <Text style={[s.stepTitle, onStep2 && s.stepTitleStrong]} numberOfLines={2}>
-            Basic details
-          </Text>
-        </View>
+        {STEP_LABELS.map((label, index) => {
+          const isCurrent = step === index;
+          const isDone = step > index;
+          return (
+            <React.Fragment key={label}>
+              <View style={s.stepCol}>
+                <View
+                  style={[
+                    s.stepDisc,
+                    isCurrent && s.stepDiscCurrent,
+                    isDone && s.stepDiscDone,
+                    !isCurrent && !isDone && s.stepDiscUpcoming,
+                  ]}
+                >
+                  {isDone ? (
+                    <Ionicons name="checkmark" size={16} color={colors.white} />
+                  ) : (
+                    <Text
+                      style={[
+                        s.stepDiscNum,
+                        isCurrent && s.stepDiscNumOnPrimary,
+                        !isCurrent && !isDone && s.stepDiscNumMuted,
+                      ]}
+                    >
+                      {index + 1}
+                    </Text>
+                  )}
+                </View>
+                <Text style={[s.stepTitle, isCurrent && s.stepTitleStrong]} numberOfLines={2}>
+                  {label}
+                </Text>
+              </View>
+              {index < TOTAL_STEPS - 1 ? (
+                <View style={s.stepBridge}>
+                  <View style={s.stepBridgeTrack}>
+                    <View style={[s.stepBridgeFill, step > index && s.stepBridgeFillFull]} />
+                  </View>
+                </View>
+              ) : null}
+            </React.Fragment>
+          );
+        })}
       </View>
     </View>
   );
@@ -201,6 +260,76 @@ export default function MoveInFlowScreen() {
   ]);
 
   const [govTypeSheetVisible, setGovTypeSheetVisible] = useState(false);
+  const [roomOptions, setRoomOptions] = useState<AvailableRoomOption[]>([]);
+  const [roomsLoading, setRoomsLoading] = useState(true);
+  const [selectedRoomOptionId, setSelectedRoomOptionId] = useState<string | null>(null);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | null>(null);
+  const [paymentStatus, setPaymentStatus] = useState<PaymentStatus | null>(null);
+  const [expandedPaymentMethod, setExpandedPaymentMethod] = useState<PaymentMethod | null>(null);
+  const [agreementAccepted, setAgreementAccepted] = useState(false);
+
+  const stepIndicatorText = useMemo(() => `${step + 1} / ${TOTAL_STEPS}`, [step]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadRoomOptions = async () => {
+      if (!propertyId) {
+        if (!cancelled) {
+          setRoomOptions([]);
+          setRoomsLoading(false);
+        }
+        return;
+      }
+      setRoomsLoading(true);
+      try {
+        const liked = (await (convex as any).query("properties:listLikedForTenants", {})) as
+          | LikedPropertyRow[]
+          | null
+          | undefined;
+        if (cancelled) return;
+        const property = (liked ?? []).find((row) => row?._id === propertyId);
+        const mappedWithRank: Array<AvailableRoomOption & { rank: number }> = [];
+        (property?.roomOptions ?? []).forEach((option, index) => {
+            const id = option?._id;
+            if (!id) return;
+            const title = roomTitleFromOption(option);
+            const category = roomCategoryLabel(option.category);
+            const subtitle =
+              typeof option.rentAmount === "number" && option.rentAmount > 0
+                ? `${category} · ₹${formatIndianRupees(option.rentAmount)}/month`
+                : `${category} · Price on request`;
+            mappedWithRank.push({
+              id,
+              title,
+              subtitle,
+              rentAmount:
+                typeof option.rentAmount === "number" && option.rentAmount > 0
+                  ? option.rentAmount
+                  : undefined,
+              rank: index,
+            });
+          });
+        const mapped = mappedWithRank
+          .sort((a, b) => {
+            const rentA = a.rentAmount ?? Number.MAX_SAFE_INTEGER;
+            const rentB = b.rentAmount ?? Number.MAX_SAFE_INTEGER;
+            if (rentA !== rentB) return rentA - rentB;
+            return a.rank - b.rank;
+          })
+          .map(({ rank: _rank, ...rest }) => rest);
+        setRoomOptions(mapped);
+      } catch (err) {
+        console.warn("loadRoomOptions", err);
+        if (!cancelled) setRoomOptions([]);
+      } finally {
+        if (!cancelled) setRoomsLoading(false);
+      }
+    };
+    void loadRoomOptions();
+    return () => {
+      cancelled = true;
+    };
+  }, [convex, propertyId]);
 
   const updateEmergencyContact = useCallback(
     (id: string, field: "name" | "phone" | "relation", value: string) => {
@@ -325,17 +454,67 @@ export default function MoveInFlowScreen() {
     return true;
   };
 
-  const handleContinueFromEkyc = () => {
-    if (validateEkyc()) setStep(1);
+  const validateRoomSelection = (): boolean => {
+    if (!selectedRoomOptionId) {
+      Alert.alert("Room selection", "Please select one room option to continue.");
+      return false;
+    }
+    return true;
+  };
+
+  const validatePaymentMethod = (): boolean => {
+    if (!paymentMethod || !paymentStatus) {
+      Alert.alert("Payment method", "Please choose a preferred payment method.");
+      return false;
+    }
+    return true;
+  };
+
+  const validateAgreementConsent = (): boolean => {
+    if (!agreementAccepted) {
+      Alert.alert(
+        "Agreement required",
+        "Please agree to the rental agreement before submitting your request.",
+      );
+      return false;
+    }
+    return true;
+  };
+
+  const handleContinue = () => {
+    if (step === 0) {
+      if (validateBasic()) setStep(1);
+      return;
+    }
+    if (step === 1) {
+      if (validateRoomSelection()) setStep(2);
+      return;
+    }
+    if (step === 2) {
+      if (validateEkyc()) setStep(3);
+    }
   };
 
   const handleSubmit = async () => {
-    if (!validateEkyc() || !validateBasic()) return;
+    if (
+      !validateBasic() ||
+      !validateRoomSelection() ||
+      !validateEkyc() ||
+      !validatePaymentMethod() ||
+      !validateAgreementConsent()
+    ) {
+      return;
+    }
     if (!propertyId) {
       Alert.alert("Missing property", "Go back and open a listing again.");
       return;
     }
-    if (!govIdType || !maritalStatus) return;
+    if (!govIdType || !maritalStatus || !selectedRoomOptionId || !paymentMethod || !paymentStatus) {
+      return;
+    }
+    if (!agreementAccepted) {
+      return;
+    }
     if (!idFront || !idBack) {
       Alert.alert("ID photos", "Capture both sides of your ID before submitting.");
       return;
@@ -370,6 +549,10 @@ export default function MoveInFlowScreen() {
         moveInDate: moveInDate.trim(),
         professionalDetails: professionalDetails.trim(),
         emergencyContacts: emergencyPayload,
+        selectedRoomOptionId,
+        paymentMethod,
+        paymentStatus,
+        agreementAccepted: true,
       });
 
       Alert.alert(
@@ -390,10 +573,10 @@ export default function MoveInFlowScreen() {
       <View style={s.header}>
         <TouchableOpacity
           style={[s.headerBtn, s.headerBtnLayer]}
-          onPress={() => (step === 0 ? router.back() : setStep(0))}
+          onPress={() => (step === 0 ? router.back() : setStep((prev) => (prev - 1) as Step))}
           activeOpacity={0.7}
           accessibilityRole="button"
-          accessibilityLabel={step === 0 ? "Go back" : "Back to E-KYC"}
+          accessibilityLabel={step === 0 ? "Go back" : "Back to previous step"}
         >
           <Ionicons name="chevron-back" size={22} color={colors.navy} />
         </TouchableOpacity>
@@ -420,13 +603,232 @@ export default function MoveInFlowScreen() {
             <View style={s.formCard}>
               <View style={s.sectionHeadRow}>
                 <View style={s.sectionHeadText}>
+                  <Text style={s.sectionTitle}>Basic details</Text>
+                  <Text style={s.sectionSubtitle}>
+                    Contact details for the property team. Kept private and used only for this
+                    application.
+                  </Text>
+                </View>
+                <View style={s.sectionPill}>
+                  <Text style={s.sectionPillText}>{stepIndicatorText}</Text>
+                </View>
+              </View>
+              <Text style={[s.fieldLabel, s.fieldLabelFirst]}>Mobile number</Text>
+              <TextInput
+                style={s.inputWell}
+                value={phone}
+                onChangeText={setPhone}
+                placeholder="+91 98765 43210"
+                placeholderTextColor={colors.muted}
+                keyboardType="phone-pad"
+              />
+
+              <Text style={s.fieldLabel}>Email</Text>
+              <TextInput
+                style={s.inputWell}
+                value={email}
+                onChangeText={setEmail}
+                placeholder="you@example.com"
+                placeholderTextColor={colors.muted}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+
+              <Text style={s.fieldLabel}>Date of birth</Text>
+              <TextInput
+                style={s.inputWell}
+                value={dob}
+                onChangeText={setDob}
+                placeholder="DD/MM/YYYY"
+                placeholderTextColor={colors.muted}
+              />
+
+              <Text style={s.fieldLabel}>Marital status</Text>
+              <View style={s.maritalRow}>
+                {(
+                  [
+                    { key: "married" as const, label: "Married" },
+                    { key: "single" as const, label: "Single" },
+                  ] as const
+                ).map(({ key, label }) => {
+                  const active = maritalStatus === key;
+                  return (
+                    <Pressable
+                      key={key}
+                      onPress={() => setMaritalStatus(key)}
+                      style={[s.maritalChip, active && s.maritalChipActive]}
+                    >
+                      <Text style={[s.maritalChipText, active && s.maritalChipTextActive]}>{label}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              <Text style={s.fieldLabel}>Address</Text>
+              <TextInput
+                style={[s.inputWell, s.inputMultiline]}
+                value={address}
+                onChangeText={setAddress}
+                placeholder="House, street, area, city, PIN"
+                placeholderTextColor={colors.muted}
+                multiline
+                textAlignVertical="top"
+              />
+
+              <Text style={s.fieldLabel}>Move-in date</Text>
+              <TextInput
+                style={s.inputWell}
+                value={moveInDate}
+                onChangeText={setMoveInDate}
+                placeholder="DD/MM/YYYY or month you plan to move"
+                placeholderTextColor={colors.muted}
+              />
+
+              <Text style={s.subSectionTitle}>Professional details</Text>
+              <Text style={s.subSectionHint}>
+                Occupation, employer, years of experience, or other relevant work information.
+              </Text>
+              <TextInput
+                style={[s.inputWell, s.textareaProfessional]}
+                value={professionalDetails}
+                onChangeText={setProfessionalDetails}
+                placeholder="e.g. Software engineer at Acme Corp, 3 years in product engineering…"
+                placeholderTextColor={colors.muted}
+                multiline
+                textAlignVertical="top"
+              />
+
+              <Text style={s.subSectionTitle}>Emergency contacts</Text>
+              <Text style={s.subSectionHint}>
+                People we can reach if we cannot contact you. Add one or more. Not used for
+                marketing.
+              </Text>
+
+              {emergencyContacts.map((contact, index) => (
+                <View key={contact.id} style={s.emergencyCard}>
+                  <View style={s.emergencyCardHeader}>
+                    <Text style={s.emergencyCardTitle}>Contact {index + 1}</Text>
+                    {emergencyContacts.length > 1 ? (
+                      <Pressable
+                        onPress={() => removeEmergencyContact(contact.id)}
+                        style={({ pressed }) => [s.emergencyRemoveBtn, pressed && { opacity: 0.7 }]}
+                        hitSlop={8}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Remove emergency contact ${index + 1}`}
+                      >
+                        <Ionicons name="trash-outline" size={22} color={colors.error} />
+                      </Pressable>
+                    ) : null}
+                  </View>
+
+                  <Text style={s.fieldLabel}>Name</Text>
+                  <TextInput
+                    style={s.inputWell}
+                    value={contact.name}
+                    onChangeText={(v) => updateEmergencyContact(contact.id, "name", v)}
+                    placeholder="Full name"
+                    placeholderTextColor={colors.muted}
+                    autoCapitalize="words"
+                  />
+
+                  <Text style={s.fieldLabel}>Phone number</Text>
+                  <TextInput
+                    style={s.inputWell}
+                    value={contact.phone}
+                    onChangeText={(v) => updateEmergencyContact(contact.id, "phone", v)}
+                    placeholder="+91 …"
+                    placeholderTextColor={colors.muted}
+                    keyboardType="phone-pad"
+                  />
+
+                  <Text style={s.fieldLabel}>Relation with contact</Text>
+                  <TextInput
+                    style={s.inputWell}
+                    value={contact.relation}
+                    onChangeText={(v) => updateEmergencyContact(contact.id, "relation", v)}
+                    placeholder="e.g. Father, Mother, Spouse, Sibling"
+                    placeholderTextColor={colors.muted}
+                  />
+                </View>
+              ))}
+
+              <TouchableOpacity
+                style={s.addContactBtn}
+                onPress={addEmergencyContact}
+                activeOpacity={0.88}
+                accessibilityRole="button"
+                accessibilityLabel="Add another emergency contact"
+              >
+                <Ionicons name="add-circle-outline" size={22} color={colors.primary} />
+                <Text style={s.addContactBtnText}>Add another contact</Text>
+              </TouchableOpacity>
+            </View>
+          ) : step === 1 ? (
+            <View style={s.formCard}>
+              <View style={s.sectionHeadRow}>
+                <View style={s.sectionHeadText}>
+                  <Text style={s.sectionTitle}>Room selection</Text>
+                  <Text style={s.sectionSubtitle}>
+                    Choose your preferred room option from currently available choices.
+                  </Text>
+                </View>
+                <View style={s.sectionPill}>
+                  <Text style={s.sectionPillText}>{stepIndicatorText}</Text>
+                </View>
+              </View>
+              {roomsLoading ? (
+                <View style={s.centerState}>
+                  <ActivityIndicator size="small" color={colors.primary} />
+                  <Text style={s.centerStateText}>Loading available room options...</Text>
+                </View>
+              ) : roomOptions.length === 0 ? (
+                <View style={s.centerState}>
+                  <Ionicons name="bed-outline" size={24} color={colors.muted} />
+                  <Text style={s.centerStateText}>
+                    No room options are available right now for this listing.
+                  </Text>
+                </View>
+              ) : (
+                <View style={s.roomList}>
+                  {roomOptions.map((room) => {
+                    const selected = selectedRoomOptionId === room.id;
+                    return (
+                      <Pressable
+                        key={room.id}
+                        onPress={() => setSelectedRoomOptionId(room.id)}
+                        style={({ pressed }) => [
+                          s.roomOptionCard,
+                          selected && s.roomOptionCardSelected,
+                          pressed && s.roomOptionCardPressed,
+                        ]}
+                      >
+                        <View style={s.roomOptionMain}>
+                          <Text style={[s.roomOptionTitle, selected && s.roomOptionTitleSelected]}>
+                            {room.title}
+                          </Text>
+                          <Text style={s.roomOptionSubtitle}>{room.subtitle}</Text>
+                        </View>
+                        <View style={[s.radioOuter, selected && s.radioOuterActive]}>
+                          {selected ? <View style={s.radioInner} /> : null}
+                        </View>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              )}
+            </View>
+          ) : step === 2 ? (
+            <View style={s.formCard}>
+              <View style={s.sectionHeadRow}>
+                <View style={s.sectionHeadText}>
                   <Text style={s.sectionTitle}>E-KYC</Text>
                   <Text style={s.sectionSubtitle}>
                     Match your government ID exactly. Encrypted and used only for verification.
                   </Text>
                 </View>
                 <View style={s.sectionPill}>
-                  <Text style={s.sectionPillText}>1 / 2</Text>
+                  <Text style={s.sectionPillText}>{stepIndicatorText}</Text>
                 </View>
               </View>
 
@@ -604,167 +1006,90 @@ export default function MoveInFlowScreen() {
             <View style={s.formCard}>
               <View style={s.sectionHeadRow}>
                 <View style={s.sectionHeadText}>
-                  <Text style={s.sectionTitle}>Basic details</Text>
+                  <Text style={s.sectionTitle}>Payment method</Text>
                   <Text style={s.sectionSubtitle}>
-                    Contact details for the property team. Kept private and used only for this
-                    application.
+                    Share your preferred payment method for the move-in process.
                   </Text>
                 </View>
                 <View style={s.sectionPill}>
-                  <Text style={s.sectionPillText}>2 / 2</Text>
+                  <Text style={s.sectionPillText}>{stepIndicatorText}</Text>
                 </View>
               </View>
-
-              <Text style={[s.fieldLabel, s.fieldLabelFirst]}>Mobile number</Text>
-              <TextInput
-                style={s.inputWell}
-                value={phone}
-                onChangeText={setPhone}
-                placeholder="+91 98765 43210"
-                placeholderTextColor={colors.muted}
-                keyboardType="phone-pad"
-              />
-
-              <Text style={s.fieldLabel}>Email</Text>
-              <TextInput
-                style={s.inputWell}
-                value={email}
-                onChangeText={setEmail}
-                placeholder="you@example.com"
-                placeholderTextColor={colors.muted}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-
-              <Text style={s.fieldLabel}>Date of birth</Text>
-              <TextInput
-                style={s.inputWell}
-                value={dob}
-                onChangeText={setDob}
-                placeholder="DD/MM/YYYY"
-                placeholderTextColor={colors.muted}
-              />
-
-              <Text style={s.fieldLabel}>Marital status</Text>
-              <View style={s.maritalRow}>
-                {(
-                  [
-                    { key: "married" as const, label: "Married" },
-                    { key: "single" as const, label: "Single" },
-                  ] as const
-                ).map(({ key, label }) => {
-                  const active = maritalStatus === key;
+              <View style={s.paymentMethodsWrap}>
+                {PAYMENT_METHODS.map((method) => {
+                  const active = expandedPaymentMethod === method;
                   return (
-                    <Pressable
-                      key={key}
-                      onPress={() => setMaritalStatus(key)}
-                      style={[s.maritalChip, active && s.maritalChipActive]}
+                    <View
+                      key={method}
+                      style={[s.paymentAccordionItem, active && s.paymentAccordionItemActive]}
                     >
-                      <Text style={[s.maritalChipText, active && s.maritalChipTextActive]}>{label}</Text>
-                    </Pressable>
+                      <Pressable
+                        onPress={() =>
+                          setExpandedPaymentMethod((prev) => (prev === method ? null : method))
+                        }
+                        style={s.paymentAccordionHeader}
+                      >
+                        <Text
+                          style={[
+                            s.paymentAccordionTitle,
+                            active && s.paymentAccordionTitleActive,
+                          ]}
+                        >
+                          {method}
+                        </Text>
+                        <Ionicons
+                          name={active ? "chevron-up" : "chevron-down"}
+                          size={18}
+                          color={active ? colors.primary : colors.muted}
+                        />
+                      </Pressable>
+                      {active ? (
+                        <View style={s.paymentAccordionBody}>
+                          <TouchableOpacity
+                            style={s.paymentActionBtn}
+                            activeOpacity={0.9}
+                            onPress={() => {
+                              setPaymentMethod(method);
+                              setPaymentStatus(method === "Cash" ? "pending" : "paid");
+                            }}
+                          >
+                            <Text style={s.paymentActionBtnText}>
+                              {paymentActionLabel(method)}
+                            </Text>
+                          </TouchableOpacity>
+                          {paymentMethod === method && paymentStatus ? (
+                            <Text style={s.paymentSelectionMeta}>
+                              {paymentStatus === "paid"
+                                ? "Payment status: Paid"
+                                : "Payment status: Pending"}
+                            </Text>
+                          ) : null}
+                        </View>
+                      ) : null}
+                    </View>
                   );
                 })}
               </View>
 
-              <Text style={s.fieldLabel}>Address</Text>
-              <TextInput
-                style={[s.inputWell, s.inputMultiline]}
-                value={address}
-                onChangeText={setAddress}
-                placeholder="House, street, area, city, PIN"
-                placeholderTextColor={colors.muted}
-                multiline
-                textAlignVertical="top"
-              />
-
-              <Text style={s.fieldLabel}>Move-in date</Text>
-              <TextInput
-                style={s.inputWell}
-                value={moveInDate}
-                onChangeText={setMoveInDate}
-                placeholder="DD/MM/YYYY or month you plan to move"
-                placeholderTextColor={colors.muted}
-              />
-
-              <Text style={s.subSectionTitle}>Professional details</Text>
-              <Text style={s.subSectionHint}>
-                Occupation, employer, years of experience, or other relevant work information.
-              </Text>
-              <TextInput
-                style={[s.inputWell, s.textareaProfessional]}
-                value={professionalDetails}
-                onChangeText={setProfessionalDetails}
-                placeholder="e.g. Software engineer at Acme Corp, 3 years in product engineering…"
-                placeholderTextColor={colors.muted}
-                multiline
-                textAlignVertical="top"
-              />
-
-              <Text style={s.subSectionTitle}>Emergency contacts</Text>
-              <Text style={s.subSectionHint}>
-                People we can reach if we cannot contact you. Add one or more. Not used for
-                marketing.
-              </Text>
-
-              {emergencyContacts.map((contact, index) => (
-                <View key={contact.id} style={s.emergencyCard}>
-                  <View style={s.emergencyCardHeader}>
-                    <Text style={s.emergencyCardTitle}>Contact {index + 1}</Text>
-                    {emergencyContacts.length > 1 ? (
-                      <Pressable
-                        onPress={() => removeEmergencyContact(contact.id)}
-                        style={({ pressed }) => [s.emergencyRemoveBtn, pressed && { opacity: 0.7 }]}
-                        hitSlop={8}
-                        accessibilityRole="button"
-                        accessibilityLabel={`Remove emergency contact ${index + 1}`}
-                      >
-                        <Ionicons name="trash-outline" size={22} color={colors.error} />
-                      </Pressable>
-                    ) : null}
-                  </View>
-
-                  <Text style={s.fieldLabel}>Name</Text>
-                  <TextInput
-                    style={s.inputWell}
-                    value={contact.name}
-                    onChangeText={(v) => updateEmergencyContact(contact.id, "name", v)}
-                    placeholder="Full name"
-                    placeholderTextColor={colors.muted}
-                    autoCapitalize="words"
-                  />
-
-                  <Text style={s.fieldLabel}>Phone number</Text>
-                  <TextInput
-                    style={s.inputWell}
-                    value={contact.phone}
-                    onChangeText={(v) => updateEmergencyContact(contact.id, "phone", v)}
-                    placeholder="+91 …"
-                    placeholderTextColor={colors.muted}
-                    keyboardType="phone-pad"
-                  />
-
-                  <Text style={s.fieldLabel}>Relation with contact</Text>
-                  <TextInput
-                    style={s.inputWell}
-                    value={contact.relation}
-                    onChangeText={(v) => updateEmergencyContact(contact.id, "relation", v)}
-                    placeholder="e.g. Father, Mother, Spouse, Sibling"
-                    placeholderTextColor={colors.muted}
-                  />
-                </View>
-              ))}
-
-              <TouchableOpacity
-                style={s.addContactBtn}
-                onPress={addEmergencyContact}
-                activeOpacity={0.88}
-                accessibilityRole="button"
-                accessibilityLabel="Add another emergency contact"
+              <Pressable
+                onPress={() => setAgreementAccepted((prev) => !prev)}
+                style={({ pressed }) => [
+                  s.agreementConsentRow,
+                  pressed && s.agreementConsentRowPressed,
+                ]}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: agreementAccepted }}
+                accessibilityLabel="I agree to the rental agreement"
               >
-                <Ionicons name="add-circle-outline" size={22} color={colors.primary} />
-                <Text style={s.addContactBtnText}>Add another contact</Text>
-              </TouchableOpacity>
+                <View style={[s.agreementCheckbox, agreementAccepted && s.agreementCheckboxChecked]}>
+                  {agreementAccepted ? (
+                    <Ionicons name="checkmark" size={14} color={colors.white} />
+                  ) : null}
+                </View>
+                <Text style={s.agreementConsentText}>
+                  I agree to the rental agreement and the move-in terms.
+                </Text>
+              </Pressable>
             </View>
           )}
         </ScrollView>
@@ -773,17 +1098,38 @@ export default function MoveInFlowScreen() {
           {step === 0 ? (
             <TouchableOpacity
               style={s.primaryBtn}
-              onPress={handleContinueFromEkyc}
+              onPress={handleContinue}
               activeOpacity={0.92}
             >
-              <Text style={s.primaryBtnText}>Continue to basic details</Text>
+              <Text style={s.primaryBtnText}>Continue to room selection</Text>
               <Ionicons name="arrow-forward" size={20} color={colors.white} style={s.primaryBtnIcon} />
             </TouchableOpacity>
+          ) : step < 3 ? (
+            <View style={s.footerRow}>
+              <TouchableOpacity
+                style={[s.secondaryBtn, submitting && s.footerBtnDisabled]}
+                onPress={() => setStep((prev) => (prev - 1) as Step)}
+                activeOpacity={0.92}
+                disabled={submitting}
+              >
+                <Text style={s.secondaryBtnText}>Back</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[s.primaryBtnFlex, submitting && s.footerBtnDisabled]}
+                onPress={handleContinue}
+                activeOpacity={0.92}
+                disabled={submitting}
+              >
+                <Text style={s.primaryBtnText}>
+                  {step === 1 ? "Continue to E-KYC" : "Continue to payment"}
+                </Text>
+              </TouchableOpacity>
+            </View>
           ) : (
             <View style={s.footerRow}>
               <TouchableOpacity
                 style={[s.secondaryBtn, submitting && s.footerBtnDisabled]}
-                onPress={() => setStep(0)}
+                onPress={() => setStep(2)}
                 activeOpacity={0.92}
                 disabled={submitting}
               >
@@ -888,7 +1234,7 @@ const s = StyleSheet.create({
   },
   stepCol: {
     alignItems: "center",
-    width: 88,
+    width: 66,
   },
   stepDisc: {
     width: 40,
@@ -935,8 +1281,8 @@ const s = StyleSheet.create({
   stepBridge: {
     flex: 1,
     paddingHorizontal: 4,
-    marginBottom: 26,
-    maxWidth: 120,
+    marginBottom: 28,
+    maxWidth: 42,
   },
   stepBridgeTrack: {
     height: 4,
@@ -1101,6 +1447,172 @@ const s = StyleSheet.create({
     fontSize: 15,
     fontWeight: "700",
     color: colors.primary,
+  },
+  centerState: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 30,
+    gap: 10,
+  },
+  centerStateText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.muted,
+    textAlign: "center",
+  },
+  roomList: {
+    gap: 10,
+  },
+  roomOptionCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    backgroundColor: colors.white,
+  },
+  roomOptionCardSelected: {
+    borderWidth: 2,
+    borderColor: colors.primary,
+    backgroundColor: "rgba(30, 41, 59, 0.05)",
+  },
+  roomOptionCardPressed: {
+    opacity: 0.9,
+  },
+  roomOptionMain: {
+    flex: 1,
+    minWidth: 0,
+  },
+  roomOptionTitle: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: colors.navy,
+    marginBottom: 4,
+  },
+  roomOptionTitleSelected: {
+    color: colors.primary,
+  },
+  roomOptionSubtitle: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: colors.muted,
+  },
+  radioOuter: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+    backgroundColor: colors.white,
+  },
+  radioOuterActive: {
+    borderColor: colors.primary,
+  },
+  radioInner: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: colors.primary,
+  },
+  paymentMethodsWrap: {
+    gap: 10,
+    marginBottom: 20,
+  },
+  paymentAccordionItem: {
+    borderWidth: 1.5,
+    borderColor: "rgba(148, 163, 184, 0.45)",
+    borderRadius: 14,
+    backgroundColor: colors.surfaceGray,
+    overflow: "hidden",
+  },
+  paymentAccordionItemActive: {
+    borderColor: colors.primary,
+    backgroundColor: "rgba(30, 41, 59, 0.06)",
+  },
+  paymentAccordionHeader: {
+    minHeight: 54,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  paymentAccordionTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: colors.navy,
+    flex: 1,
+    minWidth: 0,
+  },
+  paymentAccordionTitleActive: {
+    color: colors.primary,
+  },
+  paymentAccordionBody: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "rgba(148, 163, 184, 0.45)",
+    paddingHorizontal: 14,
+    paddingBottom: 14,
+    paddingTop: 12,
+  },
+  paymentActionBtn: {
+    backgroundColor: colors.primary,
+    borderRadius: radii.pill,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  paymentActionBtnText: {
+    color: colors.white,
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  paymentSelectionMeta: {
+    marginTop: 10,
+    fontSize: 12,
+    fontWeight: "700",
+    color: colors.muted,
+  },
+  agreementConsentRow: {
+    marginTop: 0,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    paddingVertical: 8,
+  },
+  agreementConsentRowPressed: {
+    opacity: 0.85,
+  },
+  agreementCheckbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    backgroundColor: colors.white,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 1,
+    flexShrink: 0,
+  },
+  agreementCheckboxChecked: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primary,
+  },
+  agreementConsentText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 20,
+    fontWeight: "600",
+    color: colors.navy,
   },
   maritalRow: {
     flexDirection: "row",

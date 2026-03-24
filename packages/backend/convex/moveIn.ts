@@ -1,4 +1,4 @@
-import { mutation } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
 async function requireTenantUser(ctx: MutationCtx) {
@@ -47,6 +47,14 @@ export const submitMoveInApplication = mutation({
     address: v.string(),
     moveInDate: v.string(),
     professionalDetails: v.string(),
+    selectedRoomOptionId: v.id("roomOptions"),
+    paymentMethod: v.union(
+      v.literal("Bank transfer"),
+      v.literal("UPI"),
+      v.literal("Cash"),
+    ),
+    paymentStatus: v.union(v.literal("paid"), v.literal("pending")),
+    agreementAccepted: v.boolean(),
     emergencyContacts: v.array(
       v.object({
         name: v.string(),
@@ -99,6 +107,10 @@ export const submitMoveInApplication = mutation({
     ) {
       throw new Error("Please complete all required fields.");
     }
+    const roomOption = await ctx.db.get(args.selectedRoomOptionId);
+    if (!roomOption || roomOption.propertyId !== args.propertyId) {
+      throw new Error("Selected room option is not available for this property.");
+    }
 
     const govIdOtherLabel =
       govIdType === "Others" ? trimOrEmpty(args.govIdOtherLabel ?? "") : undefined;
@@ -128,6 +140,9 @@ export const submitMoveInApplication = mutation({
     if (contacts.length === 0) {
       throw new Error("Add at least one complete emergency contact.");
     }
+    if (!args.agreementAccepted) {
+      throw new Error("Please agree to the rental agreement before submitting.");
+    }
 
     const row = {
       tenantUserId: user._id,
@@ -147,6 +162,10 @@ export const submitMoveInApplication = mutation({
       address,
       moveInDate,
       professionalDetails,
+      selectedRoomOptionId: args.selectedRoomOptionId,
+      paymentMethod: args.paymentMethod,
+      paymentStatus: args.paymentStatus,
+      agreementAccepted: true,
       emergencyContacts: contacts,
     };
 
@@ -164,5 +183,92 @@ export const submitMoveInApplication = mutation({
 
     const applicationId = await ctx.db.insert("tenantMoveInApplications", row);
     return { applicationId, updated: false };
+  },
+});
+
+export const hasPaidMoveInForTenant = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) {
+      return { shouldShowDashboard: false };
+    }
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) {
+      return { shouldShowDashboard: false };
+    }
+
+    const apps = await ctx.db
+      .query("tenantMoveInApplications")
+      .withIndex("by_tenant", (q) => q.eq("tenantUserId", user._id))
+      .take(200);
+
+    const shouldShowDashboard = apps.some((app) => app.paymentStatus === "paid");
+    return { shouldShowDashboard };
+  },
+});
+
+export const getTenantMoveInForProperty = query({
+  args: { propertyId: v.id("properties") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) {
+      return { hasApplication: false };
+    }
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) {
+      return { hasApplication: false };
+    }
+
+    const application = await ctx.db
+      .query("tenantMoveInApplications")
+      .withIndex("by_tenant_and_property", (q) =>
+        q.eq("tenantUserId", user._id).eq("propertyId", args.propertyId),
+      )
+      .unique();
+    if (!application) {
+      return { hasApplication: false };
+    }
+    return {
+      hasApplication: true,
+      status: application.status ?? null,
+      paymentStatus: application.paymentStatus ?? null,
+    };
+  },
+});
+
+export const listTenantMoveInApplicationPropertyIds = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) {
+      return { propertyIds: [] as string[] };
+    }
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) {
+      return { propertyIds: [] as string[] };
+    }
+
+    const apps = await ctx.db
+      .query("tenantMoveInApplications")
+      .withIndex("by_tenant", (q) => q.eq("tenantUserId", user._id))
+      .take(200);
+    const propertyIds = [...new Set(apps.map((app) => app.propertyId))];
+    return { propertyIds };
   },
 });
