@@ -23,28 +23,39 @@ const BAR_SIDE_MARGIN = 24;
 const BAR_H_PADDING = 6;
 const EASE = Easing.bezier(0.4, 0, 0.2, 1);
 
-const NAV_TABS = [
-  {
-    label: "Dashboard",
-    icon: "home" as const,
-    iconOutline: "home-outline" as const,
+type TabConfig = {
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  iconOutline: keyof typeof Ionicons.glyphMap;
+};
+
+const NAV_TABS: Record<string, TabConfig> = {
+  index: {
+    label: "Home",
+    icon: "home",
+    iconOutline: "home-outline",
   },
-  {
-    label: "Transactions",
-    icon: "swap-horizontal" as const,
-    iconOutline: "swap-horizontal-outline" as const,
+  tasks: {
+    label: "Tasks",
+    icon: "checkmark-circle",
+    iconOutline: "checkmark-circle-outline",
   },
-  {
+  transfer: {
+    label: "Payments",
+    icon: "swap-horizontal",
+    iconOutline: "swap-horizontal-outline",
+  },
+  analytics: {
     label: "Chats",
-    icon: "chatbubble-ellipses" as const,
-    iconOutline: "chatbubble-ellipses-outline" as const,
+    icon: "chatbubble-ellipses",
+    iconOutline: "chatbubble-ellipses-outline",
   },
-  {
+  manage: {
     label: "Manage",
-    icon: "options" as const,
-    iconOutline: "options-outline" as const,
+    icon: "options",
+    iconOutline: "options-outline",
   },
-];
+};
 
 function CustomTabBar({ state, navigation }: BottomTabBarProps) {
   const insets = useSafeAreaInsets();
@@ -52,7 +63,7 @@ function CustomTabBar({ state, navigation }: BottomTabBarProps) {
   const activeTab = state.index;
 
   const pillInnerWidth = screenWidth - BAR_SIDE_MARGIN * 2;
-  const tabWidth = (pillInnerWidth - BAR_H_PADDING * 2) / NAV_TABS.length;
+  const tabWidth = (pillInnerWidth - BAR_H_PADDING * 2) / state.routes.length;
   const highlightX = useSharedValue(0);
 
   useEffect(() => {
@@ -81,7 +92,7 @@ function CustomTabBar({ state, navigation }: BottomTabBarProps) {
 
           {state.routes.map((route, globalIndex) => {
             const isActive = globalIndex === activeTab;
-            const tab = NAV_TABS[globalIndex];
+            const tab = NAV_TABS[route.name];
             if (!tab) return null;
             return (
               <Pressable
@@ -123,10 +134,11 @@ export default function TabsLayout() {
         screenOptions={{ headerShown: false }}
         tabBar={(props: BottomTabBarProps) => <CustomTabBar {...props} />}
       >
-        <Tabs.Screen name="index" options={{ title: "Dashboard" }} />
-        <Tabs.Screen name="transfer" options={{ title: "Transactions" }} />
+        <Tabs.Screen name="index" options={{ title: "Home" }} />
+        <Tabs.Screen name="tasks" options={{ title: "Tasks" }} />
+        <Tabs.Screen name="transfer" options={{ title: "Payments" }} />
         <Tabs.Screen name="analytics" options={{ title: "Chats" }} />
-        <Tabs.Screen name="profile" options={{ title: "Manage" }} />
+        <Tabs.Screen name="manage" options={{ title: "Manage" }} />
       </Tabs>
     </View>
   );

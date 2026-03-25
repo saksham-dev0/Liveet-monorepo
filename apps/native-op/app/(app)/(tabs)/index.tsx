@@ -9,7 +9,7 @@ import {
   Image,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useRouter, type Href } from "expo-router";
 import { useConvex } from "convex/react";
 import { useFocusEffect } from "@react-navigation/native";
 
@@ -18,49 +18,6 @@ const SPENDING_DATA = [
   { week: "Week 2", value: 120 },
   { week: "Week 3", value: 380 },
   { week: "Week 4", value: 220 },
-];
-
-const TRANSACTIONS = [
-  {
-    id: 1,
-    name: "Grocery Store",
-    date: "Today, 9:14 AM",
-    amount: "-₹42.00",
-    icon: "cart-outline" as const,
-    color: "#DC2626",
-  },
-  {
-    id: 2,
-    name: "Savings",
-    date: "Yesterday",
-    amount: "+₹60.00",
-    icon: "wallet-outline" as const,
-    color: "#16A34A",
-  },
-  {
-    id: 3,
-    name: "Netflix",
-    date: "Mar 17",
-    amount: "-₹15.99",
-    icon: "play-outline" as const,
-    color: "#DC2626",
-  },
-  {
-    id: 4,
-    name: "Salary Deposit",
-    date: "Mar 15",
-    amount: "+₹4,200.00",
-    icon: "cash-outline" as const,
-    color: "#16A34A",
-  },
-  {
-    id: 5,
-    name: "Coffee Shop",
-    date: "Mar 14",
-    amount: "-₹6.50",
-    icon: "cafe-outline" as const,
-    color: "#DC2626",
-  },
 ];
 
 /** Placeholder until rent collection is modeled in Convex */
@@ -82,6 +39,14 @@ type RecentKycTenantItem = {
   moveInDate?: string;
 };
 
+type RecentCreditedTransactionItem = {
+  applicationId: string;
+  tenantName: string;
+  amount: number;
+  createdAt: number;
+  type: "credit";
+};
+
 function getGreetingLabel(): string {
   const hour = new Date().getHours();
   if (hour < 12) return "Good Morning";
@@ -96,6 +61,24 @@ function getFirstName(name: string): string {
   return first ?? "";
 }
 
+function formatTransactionDate(timestamp: number): string {
+  const date = new Date(timestamp);
+  return date.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatCreditAmount(amount: number): string {
+  return `+₹${Math.round(amount).toLocaleString("en-IN")}`;
+}
+
+function formatInrAmount(amount: number): string {
+  return `₹${Math.round(amount).toLocaleString("en-IN")}.00`;
+}
+
 export default function TestScreen() {
   const router = useRouter();
   const convex = useConvex();
@@ -108,11 +91,15 @@ export default function TestScreen() {
     occupiedUnits: number;
     vacantUnits: number;
     occupantsWithKyc: number;
+    totalPaidRentAmount: number;
   } | null>(null);
   const [recentKycTenants, setRecentKycTenants] = useState<
     RecentKycTenantItem[] | null
   >(null);
   const [greetingName, setGreetingName] = useState("user");
+  const [recentTransactions, setRecentTransactions] = useState<
+    RecentCreditedTransactionItem[] | null
+  >(null);
 
   const refreshListingStatus = useCallback(async () => {
     try {
@@ -132,6 +119,7 @@ export default function TestScreen() {
 
   const refreshDashboardStats = useCallback(async () => {
     try {
+      await (convex as any).mutation("properties:syncVacantUnitsForDashboard", {});
       const data = await (convex as any).query(
         "properties:getDashboardPropertyStats",
         {},
@@ -142,14 +130,21 @@ export default function TestScreen() {
               occupiedUnits: data.occupiedUnits,
               vacantUnits: data.vacantUnits,
               occupantsWithKyc: data.occupantsWithKyc ?? 0,
+              totalPaidRentAmount: data.totalPaidRentAmount ?? 0,
             }
-          : { occupiedUnits: 0, vacantUnits: 0, occupantsWithKyc: 0 },
+          : {
+              occupiedUnits: 0,
+              vacantUnits: 0,
+              occupantsWithKyc: 0,
+              totalPaidRentAmount: 0,
+            },
       );
     } catch {
       setDashboardStats({
         occupiedUnits: 0,
         vacantUnits: 0,
         occupantsWithKyc: 0,
+        totalPaidRentAmount: 0,
       });
     }
   }, [convex]);
@@ -167,12 +162,31 @@ export default function TestScreen() {
     }
   }, [convex]);
 
+  const refreshRecentTransactions = useCallback(async () => {
+    try {
+      const data = await (convex as any).query(
+        "properties:getRecentCreditedTransactionsForDashboard",
+        { limit: 6 },
+      );
+      const items = data?.items;
+      setRecentTransactions(Array.isArray(items) ? items : []);
+    } catch {
+      setRecentTransactions([]);
+    }
+  }, [convex]);
+
   useFocusEffect(
     useCallback(() => {
       void refreshListingStatus();
       void refreshDashboardStats();
       void refreshRecentKycTenants();
-    }, [refreshListingStatus, refreshDashboardStats, refreshRecentKycTenants]),
+      void refreshRecentTransactions();
+    }, [
+      refreshListingStatus,
+      refreshDashboardStats,
+      refreshRecentKycTenants,
+      refreshRecentTransactions,
+    ]),
   );
 
   const showListPropertyCard = listingChecklistComplete !== true;
@@ -196,7 +210,14 @@ export default function TestScreen() {
               <Text style={styles.orgText}>Acme Inc</Text>
               <Ionicons name="chevron-down" size={12} color="#9CA3AF" />
             </Pressable>
-            <Pressable style={styles.profileButton}>
+            <Pressable
+              style={styles.profileButton}
+              onPress={() =>
+                router.push("/(app)/profile" as Href)
+              }
+              accessibilityRole="button"
+              accessibilityLabel="Open profile"
+            >
               <Ionicons name="person-outline" size={16} color="#fff" />
             </Pressable>
           </View>
@@ -212,7 +233,9 @@ export default function TestScreen() {
             </View>
           </View>
 
-          <Text style={styles.heroAmount}>₹24,830.00</Text>
+          <Text style={styles.heroAmount}>
+            {formatInrAmount(dashboardStats?.totalPaidRentAmount ?? 0)}
+          </Text>
 
           {/* Action Buttons */}
           <View style={styles.actionRow}>
@@ -361,26 +384,31 @@ export default function TestScreen() {
               <Ionicons name="arrow-forward" size={14} color="#6B7280" />
             </Pressable>
           </View>
-          {TRANSACTIONS.map((tx) => (
-            <View key={tx.id} style={styles.transactionRow}>
-              <View style={styles.transactionIcon}>
-                <Ionicons name={tx.icon} size={20} color="#374151" />
-              </View>
-              <View style={styles.transactionInfo}>
-                <Text style={styles.transactionName}>
-                  {tx.name}
+          {recentTransactions === null ? (
+            <Text style={styles.kycEmptyText}>Loading…</Text>
+          ) : recentTransactions.length === 0 ? (
+            <Text style={styles.kycEmptyText}>
+              No credited transactions yet. Paid single sharing move-ins will
+              appear here.
+            </Text>
+          ) : (
+            recentTransactions.map((tx) => (
+              <View key={tx.applicationId} style={styles.transactionRow}>
+                <View style={styles.transactionIcon}>
+                  <Ionicons name="cash-outline" size={20} color="#16A34A" />
+                </View>
+                <View style={styles.transactionInfo}>
+                  <Text style={styles.transactionName}>{tx.tenantName}</Text>
+                  <Text style={styles.transactionDate}>
+                    {formatTransactionDate(tx.createdAt)}
+                  </Text>
+                </View>
+                <Text style={[styles.transactionAmount, { color: "#16A34A" }]}>
+                  {formatCreditAmount(tx.amount)}
                 </Text>
-                <Text style={styles.transactionDate}>
-                  {tx.date}
-                </Text>
               </View>
-              <Text
-                style={[styles.transactionAmount, { color: tx.color }]}
-              >
-                {tx.amount}
-              </Text>
-            </View>
-          ))}
+            ))
+          )}
         </View>
 
         {/* Footer */}
