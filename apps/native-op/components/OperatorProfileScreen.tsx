@@ -1,10 +1,18 @@
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from "react-native";
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  Pressable,
+} from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@clerk/clerk-expo";
 import { useRouter } from "expo-router";
 import { useConvex } from "convex/react";
 import { useEffect, useState } from "react";
-import { colors, radii, card as cardStyle, cardShadow } from "../../../constants/theme";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { colors, radii, card as cardStyle } from "../constants/theme";
 
 const MENU_ITEMS = [
   { icon: "person-outline" as const, label: "Personal info", href: "#" },
@@ -20,10 +28,16 @@ const MENU_ITEMS = [
   { icon: "help-circle-outline" as const, label: "Help & support", href: "#" },
 ];
 
-export default function ProfileScreen() {
+type Props = {
+  /** When true, shows a back control for stack navigation from other screens. */
+  showBackButton?: boolean;
+};
+
+export function OperatorProfileScreen({ showBackButton = false }: Props) {
   const { signOut } = useAuth();
   const router = useRouter();
   const convex = useConvex();
+  const insets = useSafeAreaInsets();
   const [propertyId, setPropertyId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -58,8 +72,28 @@ export default function ProfileScreen() {
         contentContainerStyle={s.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        <View style={s.header}>
-          <Text style={s.title}>Profile</Text>
+        <View
+          style={[s.header, { paddingTop: Math.max(insets.top, 8) }]}
+        >
+          {showBackButton ? (
+            <Pressable
+              onPress={() => router.back()}
+              style={s.backBtn}
+              hitSlop={12}
+              accessibilityRole="button"
+              accessibilityLabel="Go back"
+            >
+              <Ionicons name="chevron-back" size={24} color={colors.black} />
+            </Pressable>
+          ) : null}
+          <Text
+            style={[
+              s.title,
+              showBackButton ? s.titleWithBack : s.titleStandalone,
+            ]}
+          >
+            Profile
+          </Text>
           <TouchableOpacity style={s.iconBtn} activeOpacity={0.7}>
             <Ionicons name="settings-outline" size={22} color={colors.black} />
           </TouchableOpacity>
@@ -136,10 +170,29 @@ const s = StyleSheet.create({
     alignItems: "center",
     marginBottom: 24,
   },
+  backBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.white,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
   title: {
     fontSize: 24,
     fontWeight: "700",
     color: colors.black,
+  },
+  titleStandalone: {
+    flex: 1,
+    textAlign: "left",
+  },
+  titleWithBack: {
+    flex: 1,
+    marginLeft: 8,
+    textAlign: "left",
   },
   iconBtn: {
     width: 44,

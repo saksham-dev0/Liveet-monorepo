@@ -187,6 +187,7 @@ export default defineSchema({
       v.union(v.literal("Bank transfer"), v.literal("UPI"), v.literal("Cash")),
     ),
     paymentStatus: v.optional(v.union(v.literal("paid"), v.literal("pending"))),
+    assignedAt: v.optional(v.number()),
     agreementAccepted: v.optional(v.boolean()),
 
     emergencyContacts: v.array(
