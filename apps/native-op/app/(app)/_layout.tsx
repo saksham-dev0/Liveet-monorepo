@@ -46,6 +46,13 @@ export default function AppStackLayout() {
           fullScreenGestureEnabled: true,
         }}
       />
+      <Stack.Screen
+        name="tasks/[applicationId]"
+        options={{
+          gestureEnabled: true,
+          fullScreenGestureEnabled: true,
+        }}
+      />
     </Stack>
   );
 }
