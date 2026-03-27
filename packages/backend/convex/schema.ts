@@ -188,6 +188,8 @@ export default defineSchema({
     ),
     paymentStatus: v.optional(v.union(v.literal("paid"), v.literal("pending"))),
     assignedAt: v.optional(v.number()),
+    assignedRoomId: v.optional(v.id("rooms")),
+    assignedRoomNumber: v.optional(v.string()),
     agreementAccepted: v.optional(v.boolean()),
 
     emergencyContacts: v.array(

@@ -519,6 +519,73 @@ function roomOptionSummary(room: Doc<"roomOptions"> | null): string {
   return cat || "Room";
 }
 
+function parseMoveInDateToTs(
+  moveInDate: string,
+): { ts: number; formatted: string } | null {
+  const s = moveInDate.trim();
+  if (!s) return null;
+
+  // Supports a few common input formats:
+  // - YYYY-MM-DD
+  // - DD/MM/YYYY
+  // - DD-MM-YYYY
+  const isoMatch = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoMatch) {
+    const year = Number(isoMatch[1]);
+    const month = Number(isoMatch[2]);
+    const day = Number(isoMatch[3]);
+    const d = new Date(year, month - 1, day);
+    return {
+      ts: d.getTime(),
+      formatted: `${String(day).padStart(2, "0")}/${String(month).padStart(
+        2,
+        "0",
+      )}/${String(year)}`,
+    };
+  }
+
+  const dmyMatch = s.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+  if (dmyMatch) {
+    const day = Number(dmyMatch[1]);
+    const month = Number(dmyMatch[2]);
+    const year = Number(dmyMatch[3]);
+    const d = new Date(year, month - 1, day);
+    return {
+      ts: d.getTime(),
+      formatted: `${String(day).padStart(2, "0")}/${String(month).padStart(
+        2,
+        "0",
+      )}/${String(year)}`,
+    };
+  }
+
+  return null;
+}
+
+function dueLabelBeforeMoveIn(moveInDate?: string): {
+  dueLabel: string;
+  dueTs: number | null;
+} {
+  if (!moveInDate) {
+    return { dueLabel: "Before move-in", dueTs: null };
+  }
+  const parsed = parseMoveInDateToTs(moveInDate);
+  if (!parsed) {
+    return { dueLabel: "Before move-in", dueTs: null };
+  }
+
+  // Create the due date 1 day before the move-in date.
+  const due = new Date(parsed.ts - 24 * 60 * 60 * 1000);
+  const dueDay = due.getDate();
+  const dueMonth = due.getMonth() + 1;
+  const dueYear = due.getFullYear();
+  const formattedDue = `${String(dueDay).padStart(2, "0")}/${String(
+    dueMonth,
+  ).padStart(2, "0")}/${String(dueYear)}`;
+
+  return { dueLabel: `Due by ${formattedDue}`, dueTs: due.getTime() };
+}
+
 /** Single tenant manage view for an operator — auth + property ownership enforced. */
 export const getTenantManageDetails = query({
   args: { applicationId: v.id("tenantMoveInApplications") },
@@ -784,5 +851,295 @@ export const syncVacantUnitsForDashboard = mutation({
     }
 
     return { updatedProperties };
+  },
+});
+
+type RoomTaskPriority = "High" | "Medium" | "Low";
+
+function priorityWeight(p: RoomTaskPriority): number {
+  if (p === "High") return 0;
+  if (p === "Medium") return 1;
+  return 2;
+}
+
+export const getRoomAssignmentTasksForOperator = query({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const limit = Math.min(Math.max(args.limit ?? 20, 1), 50);
+
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) {
+      return { items: [] as Array<{
+        applicationId: Id<"tenantMoveInApplications">;
+        priority: RoomTaskPriority;
+        description: string;
+        tenantName: string;
+        dueLabel: string;
+      }> };
+    }
+
+    const operator = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+
+    if (!operator) {
+      return { items: [] as Array<{
+        applicationId: Id<"tenantMoveInApplications">;
+        priority: RoomTaskPriority;
+        description: string;
+        tenantName: string;
+        dueLabel: string;
+      }> };
+    }
+
+    const properties = await ctx.db
+      .query("properties")
+      .withIndex("by_user", (q) => q.eq("userId", operator._id))
+      .take(200);
+
+    type InternalTask = {
+      applicationId: Id<"tenantMoveInApplications">;
+      priority: RoomTaskPriority;
+      description: string;
+      tenantName: string;
+      dueLabel: string;
+      _dueTs: number | null;
+      _creationTime: number;
+    };
+
+    const collected: InternalTask[] = [];
+
+    for (const property of properties) {
+      const apps = await ctx.db
+        .query("tenantMoveInApplications")
+        .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+        .take(300);
+
+      for (const app of apps) {
+        // Skip completed assignments.
+        if (app.assignedRoomId) continue;
+
+        const isEkycSubmitted = app.status === "submitted";
+        const isPaid = app.paymentStatus === "paid";
+
+        const due = dueLabelBeforeMoveIn(app.moveInDate);
+        const tenantName = app.legalNameAsOnId?.trim() || "Tenant";
+
+        // High priority: when the tenant pays or completes E-KYC, room assignment becomes actionable.
+        if ((isPaid || isEkycSubmitted) && !app.assignedRoomId) {
+          collected.push({
+            applicationId: app._id,
+            priority: "High",
+            description: "Assign a room to new tenant",
+            tenantName,
+            dueLabel: due.dueLabel,
+            _dueTs: due.dueTs,
+            _creationTime: app._creationTime,
+          });
+        }
+
+        // Medium/Low follow-ups so the tab can show multiple priorities.
+        if (isEkycSubmitted && !isPaid) {
+          collected.push({
+            applicationId: app._id,
+            priority: "Medium",
+            description: "Complete rent payment",
+            tenantName,
+            dueLabel: due.dueLabel,
+            _dueTs: due.dueTs,
+            _creationTime: app._creationTime,
+          });
+        }
+
+        if (isEkycSubmitted && app.agreementAccepted !== true) {
+          collected.push({
+            applicationId: app._id,
+            priority: "Medium",
+            description: "Sign rental agreement",
+            tenantName,
+            dueLabel: due.dueLabel,
+            _dueTs: due.dueTs,
+            _creationTime: app._creationTime,
+          });
+        }
+
+        if (isEkycSubmitted && (app.emergencyContacts?.length ?? 0) === 0) {
+          collected.push({
+            applicationId: app._id,
+            priority: "Low",
+            description: "Add emergency contacts",
+            tenantName,
+            dueLabel: due.dueLabel,
+            _dueTs: due.dueTs,
+            _creationTime: app._creationTime,
+          });
+        }
+
+        if (collected.length >= limit) break;
+      }
+
+      if (collected.length >= limit) break;
+    }
+
+    collected.sort((a, b) => {
+      const pw = priorityWeight(a.priority) - priorityWeight(b.priority);
+      if (pw !== 0) return pw;
+
+      if (a._dueTs != null && b._dueTs != null) return a._dueTs - b._dueTs;
+      if (a._dueTs != null) return -1;
+      if (b._dueTs != null) return 1;
+
+      // Newer first as a tie-breaker.
+      return b._creationTime - a._creationTime;
+    });
+
+    return {
+      items: collected.slice(0, limit).map((t) => ({
+        applicationId: t.applicationId,
+        priority: t.priority,
+        description: t.description,
+        tenantName: t.tenantName,
+        dueLabel: t.dueLabel,
+      })),
+    };
+  },
+});
+
+export const getRoomAssignmentTask = query({
+  args: { applicationId: v.id("tenantMoveInApplications") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) {
+      return { notFound: true as const };
+    }
+
+    const operator = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+
+    if (!operator) {
+      return { notFound: true as const };
+    }
+
+    const app = await ctx.db.get(args.applicationId);
+    if (!app) {
+      return { notFound: true as const };
+    }
+
+    const property = await ctx.db.get(app.propertyId);
+    if (!property || property.userId !== operator._id) {
+      return { notFound: true as const };
+    }
+
+    if (app.assignedRoomId) {
+      return {
+        notFound: false as const,
+        alreadyAssigned: true as const,
+        assignedRoomNumber: app.assignedRoomNumber ?? null,
+      };
+    }
+
+    const tenantUser = await ctx.db.get(app.tenantUserId);
+    const roomOption =
+      app.selectedRoomOptionId !== undefined
+        ? await ctx.db.get(app.selectedRoomOptionId)
+        : null;
+
+    const roomOptionLabel = roomOption ? roomOptionSummary(roomOption) : "Any available room";
+
+    const apps = await ctx.db
+      .query("tenantMoveInApplications")
+      .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+      .take(500);
+    const assignedRoomIds = new Set<Id<"rooms">>();
+    for (const x of apps) {
+      if (x.assignedRoomId) assignedRoomIds.add(x.assignedRoomId);
+    }
+
+    const rooms = await ctx.db
+      .query("rooms")
+      .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+      .take(200);
+
+    const availableRooms = rooms
+      .filter((r) => !assignedRoomIds.has(r._id))
+      .filter((r) =>
+        app.selectedRoomOptionId ? r.roomOptionId === app.selectedRoomOptionId : true,
+      )
+      .map((r) => ({
+        roomId: r._id,
+        roomLabel: r.roomNumber,
+      }));
+
+    return {
+      notFound: false as const,
+      alreadyAssigned: false as const,
+      applicationId: app._id,
+      propertyName: property.name?.trim() || "Unnamed property",
+      tenantName: app.legalNameAsOnId,
+      phone: app.phone,
+      imageUrl: tenantUser?.imageUrl,
+      paymentStatus: app.paymentStatus,
+      roomOptionLabel,
+      availableRooms,
+    };
+  },
+});
+
+export const assignRoomToTenant = mutation({
+  args: {
+    applicationId: v.id("tenantMoveInApplications"),
+    roomId: v.id("rooms"),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) {
+      throw new Error("Unauthenticated");
+    }
+
+    const operator = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+
+    if (!operator) {
+      throw new Error("Operator not found");
+    }
+
+    const app = await ctx.db.get(args.applicationId);
+    if (!app) {
+      throw new Error("Task not found");
+    }
+
+    const property = await ctx.db.get(app.propertyId);
+    if (!property || property.userId !== operator._id) {
+      throw new Error("You do not have access to this tenant");
+    }
+
+    if (app.assignedRoomId) {
+      throw new Error("Room already assigned");
+    }
+
+    const room = await ctx.db.get(args.roomId);
+    if (!room || room.propertyId !== property._id) {
+      throw new Error("Invalid room selection");
+    }
+
+    await ctx.db.patch(args.applicationId, {
+      assignedAt: Date.now(),
+      assignedRoomId: room._id,
+      assignedRoomNumber: room.roomNumber,
+      ...(room.roomOptionId !== undefined ? { selectedRoomOptionId: room.roomOptionId } : {}),
+    });
+
+    return { assignedRoomNumber: room.roomNumber };
   },
 });
