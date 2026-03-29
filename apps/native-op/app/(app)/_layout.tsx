@@ -53,6 +53,13 @@ export default function AppStackLayout() {
           fullScreenGestureEnabled: true,
         }}
       />
+      <Stack.Screen
+        name="chats/[conversationId]"
+        options={{
+          gestureEnabled: true,
+          fullScreenGestureEnabled: true,
+        }}
+      />
     </Stack>
   );
 }

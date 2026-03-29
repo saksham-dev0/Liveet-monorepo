@@ -161,6 +161,28 @@ export default defineSchema({
     .index("by_tenant", ["tenantUserId"])
     .index("by_tenant_and_property", ["tenantUserId", "propertyId"]),
 
+  /** Chat conversations between a tenant and an operator about a specific property. */
+  conversations: defineTable({
+    propertyId: v.id("properties"),
+    tenantUserId: v.id("users"),
+    operatorUserId: v.id("users"),
+    lastMessageAt: v.optional(v.number()),
+    lastMessageText: v.optional(v.string()),
+    tenantUnreadCount: v.optional(v.number()),
+    operatorUnreadCount: v.optional(v.number()),
+  })
+    .index("by_tenant", ["tenantUserId"])
+    .index("by_operator", ["operatorUserId"])
+    .index("by_property_and_tenant", ["propertyId", "tenantUserId"]),
+
+  /** Individual messages in a conversation. */
+  messages: defineTable({
+    conversationId: v.id("conversations"),
+    senderUserId: v.id("users"),
+    senderRole: v.union(v.literal("tenant"), v.literal("operator")),
+    body: v.string(),
+  }).index("by_conversation", ["conversationId"]),
+
   /** Tenant move-in (E-KYC + details) for a liked property; upserted per tenant+property. */
   tenantMoveInApplications: defineTable({
     tenantUserId: v.id("users"),

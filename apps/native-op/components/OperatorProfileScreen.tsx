@@ -8,7 +8,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@clerk/clerk-expo";
-import { useRouter } from "expo-router";
+import { useRouter, type Href } from "expo-router";
 import { useConvex } from "convex/react";
 import { useEffect, useState } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -139,6 +139,7 @@ export function OperatorProfileScreen({ showBackButton = false }: Props) {
           onPress={async () => {
             try {
               await signOut();
+              router.replace("/(auth)" as Href);
             } catch (err) {
               console.error("Error signing out", err);
             }

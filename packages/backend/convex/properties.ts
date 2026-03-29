@@ -805,7 +805,8 @@ export const syncVacantUnitsForDashboard = mutation({
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity?.tokenIdentifier) {
-      throw new Error("Unauthenticated");
+      // No-op during client logout races (token cleared before UI unmounts).
+      return { updatedProperties: 0 };
     }
 
     const user = await ctx.db
@@ -927,9 +928,23 @@ export const getRoomAssignmentTasksForOperator = query({
 
         const due = dueLabelBeforeMoveIn(app.moveInDate);
         const tenantName = app.legalNameAsOnId?.trim() || "Tenant";
+        const isCashOnReception =
+          app.paymentMethod === "Cash" && app.paymentStatus !== "paid";
+
+        if (isCashOnReception) {
+          collected.push({
+            applicationId: app._id,
+            priority: "High",
+            description: "User will pay cash on reception",
+            tenantName,
+            dueLabel: due.dueLabel,
+            _dueTs: due.dueTs,
+            _creationTime: app._creationTime,
+          });
+        }
 
         // High priority: when the tenant pays or completes E-KYC, room assignment becomes actionable.
-        if ((isPaid || isEkycSubmitted) && !app.assignedRoomId) {
+        if ((isPaid || isEkycSubmitted) && !isCashOnReception && !app.assignedRoomId) {
           collected.push({
             applicationId: app._id,
             priority: "High",
@@ -942,7 +957,7 @@ export const getRoomAssignmentTasksForOperator = query({
         }
 
         // Medium/Low follow-ups so the tab can show multiple priorities.
-        if (isEkycSubmitted && !isPaid) {
+        if (isEkycSubmitted && !isPaid && !isCashOnReception) {
           collected.push({
             applicationId: app._id,
             priority: "Medium",
@@ -1127,6 +1142,9 @@ export const assignRoomToTenant = mutation({
     if (app.assignedRoomId) {
       throw new Error("Room already assigned");
     }
+    if (app.paymentMethod === "Cash" && app.paymentStatus !== "paid") {
+      throw new Error("Mark cash payment as paid before assigning a room");
+    }
 
     const room = await ctx.db.get(args.roomId);
     if (!room || room.propertyId !== property._id) {
@@ -1141,5 +1159,45 @@ export const assignRoomToTenant = mutation({
     });
 
     return { assignedRoomNumber: room.roomNumber };
+  },
+});
+
+export const markCashPaymentReceived = mutation({
+  args: { applicationId: v.id("tenantMoveInApplications") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) {
+      throw new Error("Unauthenticated");
+    }
+
+    const operator = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!operator) {
+      throw new Error("Operator not found");
+    }
+
+    const app = await ctx.db.get(args.applicationId);
+    if (!app) {
+      throw new Error("Task not found");
+    }
+
+    const property = await ctx.db.get(app.propertyId);
+    if (!property || property.userId !== operator._id) {
+      throw new Error("You do not have access to this tenant");
+    }
+
+    if (app.paymentMethod !== "Cash") {
+      throw new Error("This task is only for cash-on-reception payments");
+    }
+    if (app.paymentStatus === "paid") {
+      return { updated: false };
+    }
+
+    await ctx.db.patch(app._id, { paymentStatus: "paid" });
+    return { updated: true };
   },
 });

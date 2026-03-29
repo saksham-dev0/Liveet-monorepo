@@ -1,6 +1,6 @@
 import "./global.css";
 import React, { useCallback, useMemo } from "react";
-import { Stack } from "expo-router";
+import { Stack, useRouter, type Href } from "expo-router";
 import { ClerkProvider, SignedIn, SignedOut, useAuth } from "@clerk/clerk-expo";
 import { ConvexProviderWithAuth, ConvexReactClient } from "convex/react";
 import * as SecureStore from "expo-secure-store";
@@ -101,9 +101,22 @@ function useConvexClerkAuth() {
   );
 }
 
-export default function RootLayout() {
+function RootLayoutContent() {
+  const router = useRouter();
+
   return (
-    <ClerkProvider publishableKey={clerkPublishableKey} tokenCache={tokenCache}>
+    <ClerkProvider
+      publishableKey={clerkPublishableKey}
+      tokenCache={tokenCache}
+      standardBrowser={false}
+      afterSignOutUrl="/(auth)"
+      routerPush={(to) => {
+        router.push(to as Href);
+      }}
+      routerReplace={(to) => {
+        router.replace(to as Href);
+      }}
+    >
       <ConvexProviderWithAuth client={convex} useAuth={useConvexClerkAuth}>
         <SignedIn>
           <Stack screenOptions={{ headerShown: false }}>
@@ -119,4 +132,8 @@ export default function RootLayout() {
       </ConvexProviderWithAuth>
     </ClerkProvider>
   );
+}
+
+export default function RootLayout() {
+  return <RootLayoutContent />;
 }
