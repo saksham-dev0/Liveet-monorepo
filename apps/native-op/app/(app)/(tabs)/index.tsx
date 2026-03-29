@@ -10,6 +10,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, type Href } from "expo-router";
+import { useAuth } from "@clerk/clerk-expo";
 import { useConvex } from "convex/react";
 import { useFocusEffect } from "@react-navigation/native";
 
@@ -81,6 +82,7 @@ function formatInrAmount(amount: number): string {
 
 export default function TestScreen() {
   const router = useRouter();
+  const { isLoaded: authLoaded, isSignedIn } = useAuth();
   const convex = useConvex();
   const maxBarValue = Math.max(...SPENDING_DATA.map((d) => d.value));
 
@@ -177,11 +179,14 @@ export default function TestScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      if (!authLoaded || !isSignedIn) return;
       void refreshListingStatus();
       void refreshDashboardStats();
       void refreshRecentKycTenants();
       void refreshRecentTransactions();
     }, [
+      authLoaded,
+      isSignedIn,
       refreshListingStatus,
       refreshDashboardStats,
       refreshRecentKycTenants,

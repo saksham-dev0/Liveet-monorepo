@@ -1,283 +1,349 @@
+import React, { useCallback, useMemo, useState } from "react";
 import {
-  View,
-  Text,
+  ActivityIndicator,
+  FlatList,
+  Platform,
+  Pressable,
   StyleSheet,
-  TouchableOpacity,
-  ScrollView,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
+import { Image } from "expo-image";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { colors, radii, card as cardStyle, cardShadow } from "../../../constants/theme";
+import { useConvex } from "convex/react";
+import { useFocusEffect } from "@react-navigation/native";
+import { useRouter } from "expo-router";
+import { colors, radii, cardShadow } from "../../../constants/theme";
 
-const CHART_DATA = [
-  { month: "Jan", value: 65 },
-  { month: "Feb", value: 45 },
-  { month: "Mar", value: 80 },
-  { month: "Apr", value: 55 },
-  { month: "May", value: 90 },
-  { month: "Jun", value: 70 },
-];
-const MAX_CHART = 100;
-const CHART_HEIGHT = 120;
+const TAB_BAR_CLEARANCE = 88;
+const H_PAD = 16;
 
-const CATEGORIES = [
-  { name: "Food & Dining", amount: 420, percent: 28, color: colors.spentCard },
-  { name: "Shopping", amount: 310, percent: 21, color: colors.savedCard },
-  { name: "Transport", amount: 180, percent: 12, color: colors.investedCard },
-  { name: "Entertainment", amount: 250, percent: 17, color: colors.primary },
-];
+type ConversationRow = {
+  _id: string;
+  propertyId: string;
+  propertyName: string;
+  tenantName: string;
+  tenantImageUrl: string | null;
+  lastMessageAt: number | null;
+  lastMessageText: string | null;
+  lastMessageTimeLabel: string | null;
+  unreadCount: number;
+};
 
-export default function AnalyticsScreen() {
+export default function ChatsTabScreen() {
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const convex = useConvex();
+  const [query, setQuery] = useState("");
+  const [conversations, setConversations] = useState<ConversationRow[] | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const data = await (convex as any).query("chats:listConversationsForOperator", {});
+      setConversations(Array.isArray(data) ? (data as ConversationRow[]) : []);
+    } catch {
+      setConversations((prev) => prev ?? []);
+    }
+  }, [convex]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void refresh();
+    }, [refresh])
+  );
+
+  const loading = conversations === null;
+
+  const filtered = useMemo(() => {
+    const list = conversations ?? [];
+    const q = query.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter(
+      (c) =>
+        c.tenantName.toLowerCase().includes(q) ||
+        c.propertyName.toLowerCase().includes(q) ||
+        (c.lastMessageText ?? "").toLowerCase().includes(q)
+    );
+  }, [conversations, query]);
+
+  const showEmpty = !loading && (conversations ?? []).length === 0;
+  const bottomPad = insets.bottom + TAB_BAR_CLEARANCE;
+
   return (
-    <View style={s.container}>
-      <ScrollView
-        style={s.scroll}
-        contentContainerStyle={s.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={s.header}>
-          <Text style={s.title}>Analytics</Text>
-          <TouchableOpacity style={s.iconBtn} activeOpacity={0.7}>
-            <Ionicons name="calendar-outline" size={22} color={colors.black} />
-          </TouchableOpacity>
-        </View>
+    <View style={[s.root, { paddingTop: insets.top + 4 }]}>
+      <View style={s.headerRow}>
+        <Text style={s.headerTitle} numberOfLines={1}>
+          Chats
+        </Text>
+        <Pressable
+          style={s.headerIconBtn}
+          accessibilityRole="button"
+          accessibilityLabel="More options"
+        >
+          <Ionicons name="ellipsis-horizontal" size={20} color={colors.navy} />
+        </Pressable>
+      </View>
 
-        <View style={[s.card, s.overviewCard]}>
-          <Text style={s.cardTitle}>Spending overview</Text>
-          <Text style={s.periodLabel}>Last 6 months</Text>
-          <View style={s.chartContainer}>
-            {CHART_DATA.map((item, i) => (
-              <View key={i} style={s.chartBarWrap}>
-                <View
-                  style={[
-                    s.chartBar,
-                    {
-                      height: (item.value / MAX_CHART) * CHART_HEIGHT,
-                      backgroundColor: colors.spentCard,
+      <View style={s.searchOuter}>
+        <View style={s.searchField}>
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            placeholder="Search by tenant or property"
+            placeholderTextColor="rgba(107,114,128,0.9)"
+            style={s.searchInput}
+            editable={!loading}
+          />
+          <Ionicons name="search" size={18} color={colors.muted} />
+        </View>
+      </View>
+
+      {loading ? (
+        <View style={s.loadingWrap}>
+          <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      ) : showEmpty ? (
+        <View style={s.emptyWrap}>
+          <View style={s.emptyCircle}>
+            <Ionicons name="chatbubbles-outline" size={48} color={colors.muted} />
+          </View>
+          <Text style={s.emptyTitle}>No conversations yet</Text>
+          <Text style={s.emptySub}>
+            Tenants who express interest in your property will appear here.
+          </Text>
+        </View>
+      ) : (
+        <FlatList
+          style={s.list}
+          data={filtered}
+          keyExtractor={(item) => item._id}
+          contentContainerStyle={[
+            s.listContent,
+            { paddingBottom: bottomPad, paddingHorizontal: H_PAD },
+          ]}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          keyboardDismissMode="on-drag"
+          {...(Platform.OS === "ios"
+            ? { contentInsetAdjustmentBehavior: "never" as const }
+            : {})}
+          renderItem={({ item }: { item: ConversationRow }) => (
+            <View style={s.cardOuter}>
+              <Pressable
+                style={({ pressed }) => [s.card, pressed && s.cardPressed]}
+                onPress={() =>
+                  router.push({
+                    pathname: "/(app)/chats/[conversationId]",
+                    params: {
+                      conversationId: item._id,
+                      tenantName: item.tenantName,
+                      propertyName: item.propertyName,
                     },
-                  ]}
-                />
-              </View>
-            ))}
-          </View>
-          <View style={s.chartLabels}>
-            {CHART_DATA.map((item, i) => (
-              <Text key={i} style={s.chartLabel}>
-                {item.month}
-              </Text>
-            ))}
-          </View>
-        </View>
-
-        <View style={[s.card, s.categoriesCard]}>
-          <Text style={s.cardTitle}>By category</Text>
-          {CATEGORIES.map((cat, i) => (
-            <View
-              key={i}
-              style={[
-                s.categoryRow,
-                i === CATEGORIES.length - 1 && s.categoryRowLast,
-              ]}
-            >
-              <View style={[s.categoryDot, { backgroundColor: cat.color }]} />
-              <View style={s.categoryContent}>
-                <Text style={s.categoryName}>{cat.name}</Text>
-                <View style={s.categoryBarBg}>
-                  <View
-                    style={[s.categoryBarFill, { width: `${cat.percent}%`, backgroundColor: cat.color }]}
-                  />
+                  } as any)
+                }
+                accessibilityRole="button"
+                accessibilityLabel={`Chat with ${item.tenantName}`}
+              >
+                <View style={s.avatarWrap}>
+                  {item.tenantImageUrl ? (
+                    <Image
+                      source={{ uri: item.tenantImageUrl }}
+                      style={s.avatar}
+                      contentFit="cover"
+                      transition={120}
+                    />
+                  ) : (
+                    <View style={s.avatarFallback}>
+                      <Ionicons name="person" size={22} color={colors.white} />
+                    </View>
+                  )}
                 </View>
+
+                <View style={s.cardBody}>
+                  <View style={s.titleRow}>
+                    <Text style={s.rowTitle} numberOfLines={1}>
+                      {item.tenantName}
+                    </Text>
+                    {item.unreadCount > 0 && (
+                      <View style={s.badge}>
+                        <Text style={s.badgeText}>{item.unreadCount}</Text>
+                      </View>
+                    )}
+                  </View>
+                  <Text style={s.rowSub} numberOfLines={1}>
+                    {item.propertyName}
+                  </Text>
+                  <Text
+                    style={[s.rowPreview, item.unreadCount > 0 && s.rowPreviewUnread]}
+                    numberOfLines={1}
+                  >
+                    {item.lastMessageText ?? "No messages yet"}
+                  </Text>
+                  {item.lastMessageTimeLabel ? (
+                    <Text style={s.rowMetaTime} numberOfLines={1}>
+                      {item.lastMessageTimeLabel}
+                    </Text>
+                  ) : null}
+                </View>
+              </Pressable>
+            </View>
+          )}
+          ListEmptyComponent={
+            query.trim() ? (
+              <View style={s.noResults}>
+                <Text style={s.noResultsText}>No matches for "{query.trim()}"</Text>
               </View>
-              <Text style={s.categoryAmount}>${cat.amount}</Text>
-            </View>
-          ))}
-        </View>
-
-        <View style={[s.card, s.insightsCard]}>
-          <Text style={s.cardTitle}>Insights</Text>
-          <View style={s.insightRow}>
-            <View style={s.insightIconWrap}>
-              <Ionicons name="trending-up" size={20} color={colors.positiveAmount} />
-            </View>
-            <View style={s.insightContent}>
-              <Text style={s.insightTitle}>Spending down 12%</Text>
-              <Text style={s.insightSub}>
-                You spent less this month compared to last month
-              </Text>
-            </View>
-          </View>
-          <View style={s.insightRow}>
-            <View style={[s.insightIconWrap, s.insightIconWarning]}>
-              <Ionicons name="alert-circle-outline" size={20} color={colors.error} />
-            </View>
-            <View style={s.insightContent}>
-              <Text style={s.insightTitle}>Food spending up</Text>
-              <Text style={s.insightSub}>
-                Consider setting a budget for dining out
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        <View style={s.bottomSpacer} />
-      </ScrollView>
+            ) : null
+          }
+        />
+      )}
     </View>
   );
 }
 
 const s = StyleSheet.create({
-  container: {
+  root: {
     flex: 1,
     backgroundColor: colors.pageBg,
   },
-  scroll: { flex: 1 },
-  scrollContent: {
-    paddingHorizontal: 20,
-    paddingTop: 8,
-  },
-  header: {
+  headerRow: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 24,
+    justifyContent: "space-between",
+    paddingHorizontal: H_PAD,
+    paddingBottom: 10,
+    gap: 12,
   },
-  title: {
-    fontSize: 24,
-    fontWeight: "700",
-    color: colors.black,
+  headerTitle: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 22,
+    fontWeight: "800",
+    color: colors.navy,
   },
-  iconBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: colors.white,
+  headerIconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.cardBg,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
     borderColor: colors.border,
+    flexShrink: 0,
   },
-  card: {
-    ...cardStyle,
-    marginBottom: 16,
+  searchOuter: {
+    paddingHorizontal: H_PAD,
+    marginBottom: 12,
   },
-  overviewCard: {
-    padding: 20,
-  },
-  cardTitle: {
-    fontSize: 17,
-    fontWeight: "700",
-    color: colors.black,
-    marginBottom: 8,
-  },
-  periodLabel: {
-    fontSize: 13,
-    color: colors.muted,
-    marginBottom: 16,
-  },
-  chartContainer: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    height: CHART_HEIGHT + 8,
-    gap: 8,
-  },
-  chartBarWrap: {
-    flex: 1,
-    height: "100%",
-    justifyContent: "flex-end",
-  },
-  chartBar: {
-    borderRadius: 8,
-    minHeight: 16,
-  },
-  chartLabels: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: 8,
-    paddingHorizontal: 2,
-  },
-  chartLabel: {
-    flex: 1,
-    fontSize: 11,
-    color: colors.muted,
-    textAlign: "center",
-  },
-  categoriesCard: {
-    padding: 20,
-  },
-  categoryRow: {
+  searchField: {
     flexDirection: "row",
     alignItems: "center",
+    backgroundColor: colors.cardBg,
+    borderRadius: radii.pill,
+    paddingHorizontal: 16,
     paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: 10,
   },
-  categoryRowLast: {
-    borderBottomWidth: 0,
-  },
-  categoryDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    marginRight: 12,
-  },
-  categoryContent: {
+  searchInput: {
     flex: 1,
-  },
-  categoryName: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: colors.black,
-    marginBottom: 6,
-  },
-  categoryBarBg: {
-    height: 6,
-    backgroundColor: colors.inputBg,
-    borderRadius: 3,
-    overflow: "hidden",
-  },
-  categoryBarFill: {
-    height: "100%",
-    borderRadius: 3,
-  },
-  categoryAmount: {
     fontSize: 15,
-    fontWeight: "600",
-    color: colors.black,
-    marginLeft: 12,
+    fontWeight: "500",
+    color: colors.navy,
+    paddingVertical: 0,
   },
-  insightsCard: {
-    padding: 20,
-  },
-  insightRow: {
+  list: { flex: 1, width: "100%" },
+  listContent: { paddingTop: 4 },
+  cardOuter: { width: "100%", marginBottom: 12 },
+  card: {
+    width: "100%",
     flexDirection: "row",
     alignItems: "flex-start",
-    marginBottom: 16,
+    backgroundColor: colors.cardBg,
+    borderRadius: 16,
+    padding: 14,
+    gap: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...cardShadow,
   },
-  insightIconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "rgba(5, 150, 105, 0.15)",
+  cardPressed: { opacity: 0.92 },
+  loadingWrap: { flex: 1, alignItems: "center", justifyContent: "center" },
+  emptyWrap: {
+    flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    marginRight: 12,
+    paddingHorizontal: 28,
+    paddingBottom: 32,
   },
-  insightIconWarning: {
-    backgroundColor: "rgba(220, 38, 38, 0.15)",
-  },
-  insightContent: {
-    flex: 1,
-  },
-  insightTitle: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: colors.black,
-  },
-  insightSub: {
-    fontSize: 13,
-    color: colors.muted,
-    marginTop: 4,
-  },
-  bottomSpacer: {
+  emptyCircle: {
+    width: 100,
     height: 100,
+    borderRadius: 50,
+    backgroundColor: colors.surfaceGray,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 20,
   },
+  emptyTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: colors.navy,
+    marginBottom: 8,
+  },
+  emptySub: {
+    fontSize: 14,
+    color: colors.muted,
+    textAlign: "center",
+    lineHeight: 20,
+  },
+  avatarWrap: { position: "relative", marginTop: 2, flexShrink: 0 },
+  avatar: { width: 52, height: 52, borderRadius: 26 },
+  avatarFallback: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cardBody: { flex: 1, minWidth: 0 },
+  titleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 2,
+    gap: 8,
+  },
+  rowTitle: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: "700",
+    color: colors.navy,
+  },
+  badge: {
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 5,
+  },
+  badgeText: { fontSize: 11, fontWeight: "700", color: colors.white },
+  rowSub: { fontSize: 12, fontWeight: "500", color: colors.muted, marginBottom: 4 },
+  rowPreview: {
+    fontSize: 13,
+    fontWeight: "500",
+    color: colors.muted,
+    lineHeight: 18,
+    marginBottom: 4,
+  },
+  rowPreviewUnread: { color: colors.navy, fontWeight: "600" },
+  rowMetaTime: { fontSize: 12, fontWeight: "500", color: colors.muted },
+  noResults: { paddingVertical: 40, alignItems: "center" },
+  noResultsText: { fontSize: 14, fontWeight: "600", color: colors.muted },
 });

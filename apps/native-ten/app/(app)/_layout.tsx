@@ -43,9 +43,12 @@ const NAV_TABS = [
 function getActiveRouteName(pathname: string | null | undefined) {
   const normalized = (pathname ?? "").replace(/\/+$/, "");
   if (!normalized) return "index";
-  // e.g. "/(app)" or "/(app)/index" => "index"
   if (normalized === "/(app)") return "index";
-  const last = normalized.split("/").filter(Boolean).pop();
+  const parts = normalized.split("/").filter(Boolean);
+  if (parts.includes("chats")) return "chats";
+  if (parts.includes("community")) return "community";
+  if (parts.includes("profile")) return "profile";
+  const last = parts[parts.length - 1];
   return last && last !== "(app)" ? last : "index";
 }
 
@@ -179,8 +182,9 @@ function BottomTabBar({ activeRouteName }: { activeRouteName: string }) {
 export default function AppLayout() {
   const pathname = usePathname();
   const activeRouteName = getActiveRouteName(pathname);
-  // Hide tab bar for all favorites-related screens (favorites list + details).
-  const showTabBar = !(pathname ?? "").includes("/favorites");
+  // Hide tab bar on pushed stacks (favorites, chat thread).
+  const path = pathname ?? "";
+  const showTabBar = !path.includes("/favorites") && !path.includes("/chats/");
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.pageBg }}>
@@ -196,6 +200,7 @@ export default function AppLayout() {
         <Stack.Screen name="index" options={{ animation: "none", gestureEnabled: false } as any} />
         <Stack.Screen name="community" options={{ animation: "none", gestureEnabled: false } as any} />
         <Stack.Screen name="chats" options={{ animation: "none", gestureEnabled: false } as any} />
+        <Stack.Screen name="chats/[propertyId]" options={{ animation: "default" } as any} />
         <Stack.Screen name="profile" options={{ animation: "none", gestureEnabled: false } as any} />
         {/* Liked must be true stack for swipe-back */}
         <Stack.Screen name="favorites" options={{ title: "Liked" }} />

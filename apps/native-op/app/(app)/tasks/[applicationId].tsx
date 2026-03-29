@@ -16,10 +16,16 @@ type ManagePayload = {
 
 type AssignmentPayload =
   | { notFound: true }
-  | { notFound: false; alreadyAssigned: true; assignedRoomNumber: string | null }
+  | {
+      notFound: false;
+      alreadyAssigned: true;
+      assignedRoomNumber: string | null;
+      paymentStatus?: "paid" | "pending";
+    }
   | {
       notFound: false;
       alreadyAssigned: false;
+      paymentStatus?: "paid" | "pending";
       availableRooms: Array<{ roomId: string; roomLabel: string }>;
     };
 
@@ -56,6 +62,7 @@ export default function TaskDetailsScreen() {
   const [assignmentData, setAssignmentData] = useState<AssignmentPayload | null>(null);
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
   const [assigning, setAssigning] = useState(false);
+  const [markingPaid, setMarkingPaid] = useState(false);
   const [assignMessage, setAssignMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -124,6 +131,35 @@ export default function TaskDetailsScreen() {
     }
   }, [applicationId, convex, load, selectedRoomId]);
 
+  const markCashPaid = useCallback(async () => {
+    if (!applicationId || typeof applicationId !== "string") return;
+    setMarkingPaid(true);
+    setAssignMessage(null);
+    try {
+      await (convex as any).mutation("properties:markCashPaymentReceived", {
+        applicationId,
+      });
+      setAssignMessage("Payment marked as paid.");
+      await load();
+    } catch (err) {
+      setAssignMessage(
+        err instanceof Error ? err.message : "Could not update payment status.",
+      );
+    } finally {
+      setMarkingPaid(false);
+    }
+  }, [applicationId, convex, load]);
+
+  const isCashTask = finalTaskDescription === "User will pay cash on reception";
+  const isAlreadyAssigned =
+    assignmentData !== null &&
+    !assignmentData.notFound &&
+    assignmentData.alreadyAssigned === true;
+  const paymentIsPaid =
+    assignmentData && !assignmentData.notFound
+      ? assignmentData.paymentStatus === "paid"
+      : false;
+
   return (
     <View style={styles.root}>
       <ScrollView
@@ -188,6 +224,27 @@ export default function TaskDetailsScreen() {
             Select a room and assign it to this tenant.
           </Text>
 
+          {isCashTask && !isAlreadyAssigned && !paymentIsPaid ? (
+            <View style={styles.cashPaymentCard}>
+              <Text style={styles.cashTitle}>Cash Payment</Text>
+              <Text style={styles.cashBody}>
+                Confirm when you receive cash at reception.
+              </Text>
+              <Pressable
+                style={[
+                  styles.assignBtn,
+                  (markingPaid || paymentIsPaid) && styles.assignBtnDisabled,
+                ]}
+                disabled={markingPaid || paymentIsPaid}
+                onPress={() => void markCashPaid()}
+              >
+                <Text style={styles.assignBtnText}>
+                  {markingPaid ? "Updating..." : "Paid"}
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
+
           {!loading && assignmentData?.notFound ? (
             <Text style={styles.infoText}>Room assignment task not found.</Text>
           ) : null}
@@ -231,15 +288,21 @@ export default function TaskDetailsScreen() {
               <Pressable
                 style={[
                   styles.assignBtn,
-                  (!selectedRoomId || assigning) && styles.assignBtnDisabled,
+                  (!selectedRoomId || assigning || (isCashTask && !paymentIsPaid)) &&
+                    styles.assignBtnDisabled,
                 ]}
-                disabled={!selectedRoomId || assigning}
+                disabled={!selectedRoomId || assigning || (isCashTask && !paymentIsPaid)}
                 onPress={() => void assignRoom()}
               >
                 <Text style={styles.assignBtnText}>
                   {assigning ? "Assigning..." : "Assign selected room"}
                 </Text>
               </Pressable>
+              {isCashTask && !paymentIsPaid ? (
+                <Text style={styles.infoText}>
+                  Mark payment as paid before assigning a room.
+                </Text>
+              ) : null}
             </>
           ) : null}
 
@@ -419,5 +482,24 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
     color: colors.muted,
+  },
+  cashPaymentCard: {
+    marginTop: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#FBCFE8",
+    backgroundColor: "#FDF2F8",
+    padding: 12,
+  },
+  cashTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#9D174D",
+    marginBottom: 4,
+  },
+  cashBody: {
+    fontSize: 13,
+    color: "#831843",
+    marginBottom: 10,
   },
 });

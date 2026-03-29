@@ -278,7 +278,12 @@ export default function FavoritesScreen() {
                   <TouchableOpacity
                     style={[s.actionBtn, s.actionBtnFilled]}
                     activeOpacity={0.7}
-                    onPress={() => {}}
+                    onPress={() =>
+                      router.push({
+                        pathname: "/(app)/chats/[propertyId]",
+                        params: { propertyId: item.id, title: item.name },
+                      } as any)
+                    }
                   >
                     <Ionicons
                       name="chatbubble-ellipses-outline"

@@ -573,7 +573,20 @@ export default function FavoritesDetailScreen() {
               </View>
 
               <View style={s.agentActions}>
-                <TouchableOpacity style={s.agentCircle} activeOpacity={0.85}>
+                <TouchableOpacity
+                  style={s.agentCircle}
+                  activeOpacity={0.85}
+                  onPress={() =>
+                    propertyId
+                      ? router.push({
+                          pathname: "/(app)/chats/[propertyId]",
+                          params: { propertyId, title: property?.name ?? "Property host" },
+                        } as any)
+                      : undefined
+                  }
+                  accessibilityRole="button"
+                  accessibilityLabel="Chat with owner"
+                >
                   <Ionicons name="chatbubble-ellipses" size={18} color={colors.white} />
                 </TouchableOpacity>
                 <TouchableOpacity style={s.agentCircle} activeOpacity={0.85}>
