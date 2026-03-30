@@ -238,6 +238,25 @@ function isMoveInKycComplete(
   );
 }
 
+/**
+ * Returns true if the move-in date (DD/MM/YYYY) is strictly before today.
+ * Unparseable or missing dates return false (i.e. keep the record).
+ */
+function isMoveInDatePast(moveInDate: string | undefined): boolean {
+  if (!moveInDate?.trim()) return false;
+  const parts = moveInDate.trim().split("/");
+  if (parts.length !== 3) return false;
+  const [dd, mm, yyyy] = parts;
+  const d = parseInt(dd ?? "", 10);
+  const m = parseInt(mm ?? "", 10) - 1;
+  const y = parseInt(yyyy ?? "", 10);
+  if (isNaN(d) || isNaN(m) || isNaN(y)) return false;
+  const moveInMs = new Date(y, m, d).getTime();
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  return moveInMs < todayStart.getTime();
+}
+
 /** Aggregates unit counts across the operator's properties for the dashboard. */
 export const getDashboardPropertyStats = query({
   args: {},
@@ -374,11 +393,14 @@ export const getRecentKycTenantsForDashboard = query({
         if (!isMoveInKycComplete(app)) {
           continue;
         }
+        if (isMoveInDatePast(app.moveInDate)) {
+          continue;
+        }
         collected.push({
           _creationTime: app._creationTime,
           applicationId: app._id,
-          legalNameAsOnId: app.legalNameAsOnId,
-          phone: app.phone,
+          legalNameAsOnId: app.legalNameAsOnId ?? "",
+          phone: app.phone ?? "",
           moveInDate: app.moveInDate,
           tenantUserId: app.tenantUserId,
         });
@@ -467,8 +489,8 @@ export const listOnboardedTenantsForManage = query({
           applicationId: app._id,
           propertyId: p._id,
           propertyName,
-          legalNameAsOnId: app.legalNameAsOnId,
-          phone: app.phone,
+          legalNameAsOnId: app.legalNameAsOnId ?? "",
+          phone: app.phone ?? "",
           moveInDate: app.moveInDate,
           tenantUserId: app.tenantUserId,
           paymentStatus: app.paymentStatus,
@@ -628,7 +650,7 @@ export const getTenantManageDetails = query({
 
     const govDigits = (app.govIdNumber ?? "").replace(/\D/g, "");
     const idSuffix =
-      govDigits.length >= 4 ? govDigits.slice(-4) : app.govIdNumber.trim();
+      govDigits.length >= 4 ? govDigits.slice(-4) : (app.govIdNumber ?? "").trim();
 
     const roomLabel = roomOptionSummary(roomOption);
     const metaLine =
@@ -763,12 +785,6 @@ export const getRecentCreditedTransactionsForDashboard = query({
       if (!roomOption) continue;
       if (!propertyIdSet.has(roomOption.propertyId)) continue;
 
-      const category = roomOption.category?.trim().toLowerCase() ?? "";
-      const typeName = roomOption.typeName?.trim().toLowerCase() ?? "";
-      const isSingleSharing =
-        category === "single" || typeName.includes("single sharing");
-      if (!isSingleSharing) continue;
-
       const amount = roomOption.rentAmount;
       if (typeof amount !== "number" || Number.isNaN(amount) || amount <= 0) {
         continue;
@@ -777,7 +793,7 @@ export const getRecentCreditedTransactionsForDashboard = query({
       creditedRows.push({
         applicationId: app._id,
         _creationTime: app._creationTime,
-        tenantName: app.legalNameAsOnId,
+        tenantName: app.legalNameAsOnId ?? "",
         amount,
       });
     }
@@ -920,11 +936,28 @@ export const getRoomAssignmentTasksForOperator = query({
         .take(300);
 
       for (const app of apps) {
-        // Skip completed assignments.
-        if (app.assignedRoomId) continue;
+        // Skip fully completed applications (room assigned AND payment received).
+        if (app.assignedRoomId && app.paymentStatus === "paid") continue;
 
+        const isQuickRequest = app.status === "quick_request";
         const isEkycSubmitted = app.status === "submitted";
         const isPaid = app.paymentStatus === "paid";
+
+        if (isQuickRequest) {
+          const due = dueLabelBeforeMoveIn(app.moveInDate);
+          const tenantName = app.legalNameAsOnId?.trim() || "New user";
+          collected.push({
+            applicationId: app._id,
+            priority: "High",
+            description: "Move-in request by new user",
+            tenantName,
+            dueLabel: due.dueLabel,
+            _dueTs: due.dueTs,
+            _creationTime: app._creationTime,
+          });
+          if (collected.length >= limit) break;
+          continue;
+        }
 
         const due = dueLabelBeforeMoveIn(app.moveInDate);
         const tenantName = app.legalNameAsOnId?.trim() || "Tenant";
@@ -997,6 +1030,31 @@ export const getRoomAssignmentTasksForOperator = query({
       }
 
       if (collected.length >= limit) break;
+    }
+
+    // Pull open complaint tasks for this operator's properties.
+    for (const property of properties) {
+      const complaints = await ctx.db
+        .query("complaints")
+        .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+        .order("desc")
+        .take(100);
+
+      for (const c of complaints) {
+        if (c.status === "resolved") continue;
+        const tenant = await ctx.db.get(c.tenantUserId);
+        const tenantName = tenant?.name?.trim() || "Tenant";
+        collected.push({
+          applicationId: c._id as any,
+          priority: c.priority,
+          description: `Complaint: ${c.problemTitle}`,
+          tenantName,
+          dueLabel: "Needs attention",
+          _dueTs: null,
+          _creationTime: c._creationTime,
+        });
+        if (collected.length >= limit * 2) break;
+      }
     }
 
     collected.sort((a, b) => {
@@ -1101,6 +1159,7 @@ export const getRoomAssignmentTask = query({
       phone: app.phone,
       imageUrl: tenantUser?.imageUrl,
       paymentStatus: app.paymentStatus,
+      paymentMethod: app.paymentMethod ?? null,
       roomOptionLabel,
       availableRooms,
     };
@@ -1201,3 +1260,57 @@ export const markCashPaymentReceived = mutation({
     return { updated: true };
   },
 });
+
+export const markPaymentReceived = mutation({
+  args: { applicationId: v.id("tenantMoveInApplications") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) throw new Error("Unauthenticated");
+
+    const operator = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!operator) throw new Error("Operator not found");
+
+    const app = await ctx.db.get(args.applicationId);
+    if (!app) throw new Error("Application not found");
+
+    const property = await ctx.db.get(app.propertyId);
+    if (!property || property.userId !== operator._id) {
+      throw new Error("You do not have access to this tenant");
+    }
+
+    if (app.paymentStatus === "paid") return { updated: false };
+
+    await ctx.db.patch(app._id, { paymentStatus: "paid" });
+    return { updated: true };
+  },
+});
+
+export const getPropertyRoomOptionsForTenant = query({
+  args: { propertyId: v.id("properties") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) return { items: [] };
+
+    const options = await ctx.db
+      .query("roomOptions")
+      .withIndex("by_property_and_category", (q) =>
+        q.eq("propertyId", args.propertyId),
+      )
+      .take(30);
+
+    return {
+      items: options.map((o) => ({
+        id: o._id,
+        label: roomOptionSummary(o),
+        rentAmount: o.rentAmount ?? null,
+        category: o.category,
+      })),
+    };
+  },
+});
+

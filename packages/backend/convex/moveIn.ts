@@ -247,6 +247,76 @@ export const getTenantMoveInForProperty = query({
   },
 });
 
+export const submitQuickMoveInRequest = mutation({
+  args: {
+    propertyId: v.id("properties"),
+    name: v.string(),
+    phone: v.string(),
+    email: v.string(),
+    dateOfBirth: v.string(),
+    address: v.string(),
+    moveInDate: v.string(),
+    selectedRoomOptionId: v.optional(v.id("roomOptions")),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireTenantUser(ctx);
+
+    const property = await ctx.db.get(args.propertyId);
+    if (!property) {
+      throw new Error("Property not found");
+    }
+    if (property.userId === user._id) {
+      throw new Error("You cannot submit a move-in request for your own property.");
+    }
+
+    const name = args.name.trim();
+    const phone = args.phone.trim();
+    const email = args.email.trim();
+    const dateOfBirth = args.dateOfBirth.trim();
+    const address = args.address.trim();
+    const moveInDate = args.moveInDate.trim();
+
+    if (!name || !phone || !email || !dateOfBirth || !address || !moveInDate) {
+      throw new Error("Please fill in all required fields.");
+    }
+
+    const existing = await ctx.db
+      .query("tenantMoveInApplications")
+      .withIndex("by_tenant_and_property", (q) =>
+        q.eq("tenantUserId", user._id).eq("propertyId", args.propertyId),
+      )
+      .unique();
+
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        legalNameAsOnId: name,
+        phone,
+        email,
+        dateOfBirth,
+        address,
+        moveInDate,
+        status: "quick_request",
+        selectedRoomOptionId: args.selectedRoomOptionId,
+      });
+      return { applicationId: existing._id, updated: true };
+    }
+
+    const applicationId = await ctx.db.insert("tenantMoveInApplications", {
+      tenantUserId: user._id,
+      propertyId: args.propertyId,
+      status: "quick_request",
+      legalNameAsOnId: name,
+      phone,
+      email,
+      dateOfBirth,
+      address,
+      moveInDate,
+      selectedRoomOptionId: args.selectedRoomOptionId,
+    });
+    return { applicationId, updated: false };
+  },
+});
+
 export const listTenantMoveInApplicationPropertyIds = query({
   args: {},
   handler: async (ctx) => {
@@ -270,5 +340,269 @@ export const listTenantMoveInApplicationPropertyIds = query({
       .take(200);
     const propertyIds = [...new Set(apps.map((app) => app.propertyId))];
     return { propertyIds };
+  },
+});
+
+async function requireOperatorUser(ctx: MutationCtx) {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity?.tokenIdentifier) throw new Error("Unauthenticated");
+  const user = await ctx.db
+    .query("users")
+    .withIndex("by_tokenIdentifier", (q) =>
+      q.eq("tokenIdentifier", identity.tokenIdentifier),
+    )
+    .unique();
+  if (!user) throw new Error("User not found");
+  return user;
+}
+
+export const getApplicationForOnboarding = query({
+  args: { applicationId: v.id("tenantMoveInApplications") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) return { notFound: true as const };
+
+    const operator = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!operator) return { notFound: true as const };
+
+    const app = await ctx.db.get(args.applicationId);
+    if (!app) return { notFound: true as const };
+
+    const property = await ctx.db.get(app.propertyId);
+    if (!property || property.userId !== operator._id) return { notFound: true as const };
+
+    const roomOptions = await ctx.db
+      .query("roomOptions")
+      .withIndex("by_property_and_category", (q) =>
+        q.eq("propertyId", property._id),
+      )
+      .take(30);
+
+    const apps = await ctx.db
+      .query("tenantMoveInApplications")
+      .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+      .take(500);
+    const assignedRoomIds = new Set(apps.filter((a) => a.assignedRoomId).map((a) => a.assignedRoomId!));
+
+    const rooms = await ctx.db
+      .query("rooms")
+      .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+      .take(200);
+
+    const availableRooms = rooms
+      .filter((r) => !assignedRoomIds.has(r._id) || app.assignedRoomId === r._id)
+      .map((r) => ({ roomId: r._id, roomLabel: r.roomNumber }));
+
+    return {
+      notFound: false as const,
+      applicationId: app._id,
+      propertyId: property._id,
+      propertyName: property.name?.trim() || "Unnamed property",
+      tenantName: app.legalNameAsOnId ?? "",
+      phone: app.phone ?? "",
+      email: app.email ?? "",
+      dateOfBirth: app.dateOfBirth ?? "",
+      address: app.address ?? "",
+      moveInDate: app.moveInDate ?? "",
+      selectedRoomOptionLabel: app.selectedRoomOptionId
+        ? (await ctx.db.get(app.selectedRoomOptionId))?.typeName ??
+          (await ctx.db.get(app.selectedRoomOptionId))?.category ??
+          null
+        : null,
+      assignedRoomId: app.assignedRoomId ?? null,
+      assignedRoomNumber: app.assignedRoomNumber ?? null,
+      onboardingSecurityDeposit: app.onboardingSecurityDeposit ?? null,
+      onboardingAgreementDuration: app.onboardingAgreementDuration ?? null,
+      onboardingRentCycle: app.onboardingRentCycle ?? null,
+      onboardingRentCycleCustomDay: app.onboardingRentCycleCustomDay ?? null,
+      onboardingExtraCharges: app.onboardingExtraCharges ?? null,
+      roomOptions: roomOptions.map((o) => ({
+        id: o._id,
+        label: o.typeName?.trim() || o.category,
+        rentAmount: o.rentAmount ?? null,
+      })),
+      availableRooms,
+    };
+  },
+});
+
+export const onboardTenant = mutation({
+  args: {
+    applicationId: v.id("tenantMoveInApplications"),
+    roomId: v.optional(v.id("rooms")),
+    securityDeposit: v.optional(v.number()),
+    agreementDuration: v.optional(v.string()),
+    rentCycle: v.optional(v.string()),
+    rentCycleCustomDay: v.optional(v.number()),
+    extraCharges: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const operator = await requireOperatorUser(ctx);
+
+    const app = await ctx.db.get(args.applicationId);
+    if (!app) throw new Error("Application not found");
+
+    const property = await ctx.db.get(app.propertyId);
+    if (!property || property.userId !== operator._id) {
+      throw new Error("You do not have access to this application");
+    }
+
+    const patch: Record<string, unknown> = {
+      status: "onboarded",
+      onboardingSecurityDeposit: args.securityDeposit,
+      onboardingAgreementDuration: args.agreementDuration,
+      onboardingRentCycle: args.rentCycle,
+      onboardingRentCycleCustomDay: args.rentCycleCustomDay,
+      onboardingExtraCharges: args.extraCharges,
+    };
+
+    if (args.roomId) {
+      const room = await ctx.db.get(args.roomId);
+      if (!room || room.propertyId !== property._id) {
+        throw new Error("Selected room does not belong to this property");
+      }
+      patch.assignedRoomId = args.roomId;
+      patch.assignedRoomNumber = room.roomNumber;
+      patch.assignedAt = Date.now();
+    }
+
+    await ctx.db.patch(args.applicationId, patch as any);
+
+    // Send the onboarding invite message to the tenant via chat.
+    const propertyName = property.name?.trim() || "this property";
+    const messageBody = `__OB__:${JSON.stringify({
+      pid: app.propertyId,
+      aid: args.applicationId,
+      pname: propertyName,
+    })}`;
+
+    let conv = await ctx.db
+      .query("conversations")
+      .withIndex("by_property_and_tenant", (q) =>
+        q.eq("propertyId", app.propertyId).eq("tenantUserId", app.tenantUserId),
+      )
+      .unique();
+
+    if (!conv) {
+      const convId = await ctx.db.insert("conversations", {
+        propertyId: app.propertyId,
+        tenantUserId: app.tenantUserId,
+        operatorUserId: operator._id,
+        tenantUnreadCount: 0,
+        operatorUnreadCount: 0,
+      });
+      conv = await ctx.db.get(convId);
+    }
+
+    if (conv) {
+      await ctx.db.insert("messages", {
+        conversationId: conv._id,
+        senderUserId: operator._id,
+        senderRole: "operator",
+        body: messageBody,
+      });
+      await ctx.db.patch(conv._id, {
+        lastMessageAt: Date.now(),
+        lastMessageText: `Onboarding invite for ${propertyName}`,
+        tenantUnreadCount: (conv.tenantUnreadCount ?? 0) + 1,
+      });
+    }
+
+    return { success: true };
+  },
+});
+
+export const completeKycAndPayment = mutation({
+  args: {
+    propertyId: v.id("properties"),
+    govIdType: v.string(),
+    govIdNumber: v.string(),
+    idFrontFileId: v.optional(v.id("_storage")),
+    maritalStatus: v.union(v.literal("married"), v.literal("single")),
+    professionalDetails: v.string(),
+    emergencyContacts: v.array(
+      v.object({ name: v.string(), phone: v.string(), relation: v.string() }),
+    ),
+    selectedRoomOptionId: v.optional(v.id("roomOptions")),
+    paymentMethod: v.union(
+      v.literal("Bank transfer"),
+      v.literal("UPI"),
+      v.literal("Cash"),
+    ),
+    agreementAccepted: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireTenantUser(ctx);
+
+    if (!args.agreementAccepted) {
+      throw new Error("Please accept the rental agreement before submitting.");
+    }
+
+    const govIdType = args.govIdType.trim();
+    const govIdNumber = args.govIdNumber.trim();
+    const professionalDetails = args.professionalDetails.trim();
+
+    if (!govIdType || !govIdNumber || !professionalDetails) {
+      throw new Error("Please fill in all required fields.");
+    }
+
+    const contacts = args.emergencyContacts
+      .map((c) => ({
+        name: c.name.trim(),
+        phone: c.phone.trim(),
+        relation: c.relation.trim(),
+      }))
+      .filter((c) => c.name && c.phone && c.relation);
+
+    if (contacts.length === 0) {
+      throw new Error("Please add at least one emergency contact.");
+    }
+
+    const existing = await ctx.db
+      .query("tenantMoveInApplications")
+      .withIndex("by_tenant_and_property", (q) =>
+        q.eq("tenantUserId", user._id).eq("propertyId", args.propertyId),
+      )
+      .unique();
+
+    const kyc: Record<string, unknown> = {
+      govIdType,
+      govIdNumber,
+      maritalStatus: args.maritalStatus,
+      professionalDetails,
+      emergencyContacts: contacts,
+      paymentMethod: args.paymentMethod,
+      paymentStatus: "pending" as const,
+      agreementAccepted: true,
+      status: "submitted",
+    };
+    if (args.idFrontFileId) {
+      kyc.idFrontFileId = args.idFrontFileId;
+    }
+    if (args.selectedRoomOptionId) {
+      kyc.selectedRoomOptionId = args.selectedRoomOptionId;
+    }
+
+    if (existing) {
+      await ctx.db.patch(existing._id, kyc as any);
+      return { applicationId: existing._id };
+    }
+
+    // Should not normally reach here (quick request should already exist),
+    // but create a new record as a fallback.
+    const property = await ctx.db.get(args.propertyId);
+    if (!property) throw new Error("Property not found");
+
+    const applicationId = await ctx.db.insert("tenantMoveInApplications", {
+      tenantUserId: user._id,
+      propertyId: args.propertyId,
+      ...(kyc as any),
+    });
+    return { applicationId };
   },
 });

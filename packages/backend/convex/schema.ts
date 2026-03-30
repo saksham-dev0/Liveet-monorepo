@@ -183,27 +183,54 @@ export default defineSchema({
     body: v.string(),
   }).index("by_conversation", ["conversationId"]),
 
+  /** In-app notifications sent to tenants (e.g. complaint resolved). */
+  notifications: defineTable({
+    tenantUserId: v.id("users"),
+    type: v.string(),
+    title: v.string(),
+    body: v.string(),
+    read: v.optional(v.boolean()),
+    /** Reference ID — e.g. complaintId for complaint-resolved notifications */
+    refId: v.optional(v.string()),
+  }).index("by_tenant", ["tenantUserId"]),
+
+  /** Complaints filed by tenants against their property. */
+  complaints: defineTable({
+    tenantUserId: v.id("users"),
+    propertyId: v.id("properties"),
+    /** applicationId links to tenantMoveInApplications for operator task routing */
+    applicationId: v.optional(v.id("tenantMoveInApplications")),
+    problemTitle: v.string(),
+    description: v.string(),
+    priority: v.union(v.literal("High"), v.literal("Medium"), v.literal("Low")),
+    imageFileId: v.optional(v.id("_storage")),
+    status: v.optional(v.union(v.literal("open"), v.literal("pending_confirmation"), v.literal("resolved"))),
+  })
+    .index("by_tenant", ["tenantUserId"])
+    .index("by_property", ["propertyId"])
+    .index("by_application", ["applicationId"]),
+
   /** Tenant move-in (E-KYC + details) for a liked property; upserted per tenant+property. */
   tenantMoveInApplications: defineTable({
     tenantUserId: v.id("users"),
     propertyId: v.id("properties"),
     status: v.optional(v.string()),
 
-    legalNameAsOnId: v.string(),
-    govIdType: v.string(),
+    legalNameAsOnId: v.optional(v.string()),
+    govIdType: v.optional(v.string()),
     govIdOtherLabel: v.optional(v.string()),
-    govIdNumber: v.string(),
-    idFrontFileId: v.id("_storage"),
-    idBackFileId: v.id("_storage"),
+    govIdNumber: v.optional(v.string()),
+    idFrontFileId: v.optional(v.id("_storage")),
+    idBackFileId: v.optional(v.id("_storage")),
 
-    phone: v.string(),
-    email: v.string(),
-    dateOfBirth: v.string(),
-    maritalStatus: v.union(v.literal("married"), v.literal("single")),
-    address: v.string(),
+    phone: v.optional(v.string()),
+    email: v.optional(v.string()),
+    dateOfBirth: v.optional(v.string()),
+    maritalStatus: v.optional(v.union(v.literal("married"), v.literal("single"))),
+    address: v.optional(v.string()),
     /** Preferred or planned move-in date (free-form, e.g. DD/MM/YYYY). */
     moveInDate: v.optional(v.string()),
-    professionalDetails: v.string(),
+    professionalDetails: v.optional(v.string()),
     selectedRoomOptionId: v.optional(v.id("roomOptions")),
     paymentMethod: v.optional(
       v.union(v.literal("Bank transfer"), v.literal("UPI"), v.literal("Cash")),
@@ -214,13 +241,20 @@ export default defineSchema({
     assignedRoomNumber: v.optional(v.string()),
     agreementAccepted: v.optional(v.boolean()),
 
-    emergencyContacts: v.array(
+    emergencyContacts: v.optional(v.array(
       v.object({
         name: v.string(),
         phone: v.string(),
         relation: v.string(),
       }),
-    ),
+    )),
+
+    /** Operator onboarding fields set when processing a quick move-in request */
+    onboardingSecurityDeposit: v.optional(v.number()),
+    onboardingAgreementDuration: v.optional(v.string()),
+    onboardingRentCycle: v.optional(v.string()),
+    onboardingRentCycleCustomDay: v.optional(v.number()),
+    onboardingExtraCharges: v.optional(v.string()),
   })
     .index("by_tenant", ["tenantUserId"])
     .index("by_property", ["propertyId"])

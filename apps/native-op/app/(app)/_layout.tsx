@@ -54,6 +54,13 @@ export default function AppStackLayout() {
         }}
       />
       <Stack.Screen
+        name="tasks/onboard/[applicationId]"
+        options={{
+          gestureEnabled: true,
+          fullScreenGestureEnabled: true,
+        }}
+      />
+      <Stack.Screen
         name="chats/[conversationId]"
         options={{
           gestureEnabled: true,
