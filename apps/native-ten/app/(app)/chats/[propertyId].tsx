@@ -88,20 +88,54 @@ export default function ChatThreadScreen() {
   const [messages, setMessages] = useState<Message[] | null>(null);
   const listRef = useRef<FlatList<ListItem>>(null);
   const mountedRef = useRef(true);
+  // Cursor: _creationTime of the last message received. Undefined triggers a
+  // full fetch; after that only newer messages are requested on each poll.
+  const afterTimeRef = useRef<number | undefined>(undefined);
+  // Track the latest operator message ID already marked read to avoid
+  // redundant markReadByProperty mutation calls on every poll tick.
+  const lastMarkedReadOperatorMsgIdRef = useRef<string | null>(null);
 
   const fetchMessages = useCallback(async () => {
     if (!propertyId) return;
+    const afterTime = afterTimeRef.current;
     try {
       const result = await (convex as any).query(
         "chats:listMessagesByProperty",
-        { propertyId }
+        { propertyId, afterTime }
       );
-      if (mountedRef.current && Array.isArray(result)) {
+      if (!mountedRef.current || !Array.isArray(result)) return;
+
+      if (afterTime === undefined) {
+        // Initial full load — replace state entirely.
+        setMessages(result as Message[]);
+      } else if (result.length > 0) {
+        // Incremental poll — append only the new messages (deduplicate to guard
+        // against the race between the polling interval and post-send fetch).
         setMessages((prev) => {
-          // Never wipe existing messages with an empty intermediate response
-          if (result.length === 0 && prev !== null && prev.length > 0) return prev;
-          return result as Message[];
+          const existingIds = new Set((prev ?? []).map((m) => m._id));
+          const newMsgs = (result as Message[]).filter((m) => !existingIds.has(m._id));
+          return newMsgs.length > 0 ? [...(prev ?? []), ...newMsgs] : (prev ?? []);
         });
+      }
+
+      // Advance the cursor to the latest message we've now seen.
+      if (result.length > 0) {
+        afterTimeRef.current = (result as Message[])[result.length - 1].createdAt;
+      }
+
+      // Mark as read whenever new operator messages have arrived.
+      const latestOperatorMsg = (result as Message[])
+        .slice()
+        .reverse()
+        .find((m) => m.senderRole === "operator");
+      if (
+        latestOperatorMsg &&
+        latestOperatorMsg._id !== lastMarkedReadOperatorMsgIdRef.current
+      ) {
+        lastMarkedReadOperatorMsgIdRef.current = latestOperatorMsg._id;
+        (convex as any)
+          .mutation("chats:markReadByProperty", { propertyId })
+          .catch(() => {});
       }
     } catch {
       // keep last known messages on error
@@ -110,19 +144,17 @@ export default function ChatThreadScreen() {
 
   useEffect(() => {
     mountedRef.current = true;
+    // Reset cursor so remounting the screen triggers a fresh full fetch.
+    afterTimeRef.current = undefined;
 
     if (!propertyId) return;
 
     // Initial load
     void fetchMessages();
 
-    // Poll for new messages
+    // Poll for new messages; only messages newer than afterTimeRef are fetched
+    // after the initial load, so cost stays constant regardless of history length.
     const interval = setInterval(fetchMessages, POLL_INTERVAL_MS);
-
-    // Mark as read
-    (convex as any)
-      .mutation("chats:markReadByProperty", { propertyId })
-      .catch(() => {});
 
     return () => {
       mountedRef.current = false;

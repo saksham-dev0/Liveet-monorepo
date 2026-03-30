@@ -117,8 +117,8 @@ export const listChatsForTenant = query({
  * Real-time messages for a tenant's conversation about a specific property.
  */
 export const listMessagesByProperty = query({
-  args: { propertyId: v.id("properties") },
-  handler: async (ctx, { propertyId }) => {
+  args: { propertyId: v.id("properties"), afterTime: v.optional(v.number()) },
+  handler: async (ctx, { propertyId, afterTime }) => {
     const user = await optionalUser(ctx);
     if (!user) return [];
 
@@ -131,11 +131,15 @@ export const listMessagesByProperty = query({
 
     if (!conv) return [];
 
-    const msgs = await ctx.db
+    let q = ctx.db
       .query("messages")
-      .withIndex("by_conversation", (q: any) => q.eq("conversationId", conv._id))
-      .order("asc")
-      .collect();
+      .withIndex("by_conversation", (q: any) => q.eq("conversationId", conv._id));
+
+    if (afterTime !== undefined) {
+      q = q.filter((q: any) => q.gt(q.field("_creationTime"), afterTime));
+    }
+
+    const msgs = await q.order("asc").collect();
 
     return msgs.map((m: any) => ({
       _id: m._id as string,
@@ -162,6 +166,7 @@ export const sendMessageByProperty = mutation({
 
     const trimmed = body.trim();
     if (!trimmed) throw new Error("Message cannot be empty");
+    if (trimmed.length > 2000) throw new Error("Message cannot exceed 2000 characters");
 
     const property = await ctx.db.get(propertyId);
     if (!property) throw new Error("Property not found");
@@ -282,16 +287,23 @@ export const listConversationsForOperator = query({
  * Real-time messages for an operator in a specific conversation.
  */
 export const listMessagesForConversation = query({
-  args: { conversationId: v.id("conversations") },
-  handler: async (ctx, { conversationId }) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return [];
+  args: { conversationId: v.id("conversations"), afterTime: v.optional(v.number()) },
+  handler: async (ctx, { conversationId, afterTime }) => {
+    const user = await optionalUser(ctx);
+    if (!user) return [];
 
-    const msgs = await ctx.db
+    const conv = await ctx.db.get(conversationId);
+    if (!conv || (conv as any).operatorUserId !== user._id) return [];
+
+    let q = ctx.db
       .query("messages")
-      .withIndex("by_conversation", (q: any) => q.eq("conversationId", conversationId))
-      .order("asc")
-      .collect();
+      .withIndex("by_conversation", (q: any) => q.eq("conversationId", conversationId));
+
+    if (afterTime !== undefined) {
+      q = q.filter((q: any) => q.gt(q.field("_creationTime"), afterTime));
+    }
+
+    const msgs = await q.order("asc").collect();
 
     return msgs.map((m: any) => ({
       _id: m._id as string,
@@ -317,9 +329,11 @@ export const sendMessageByConversation = mutation({
 
     const trimmed = body.trim();
     if (!trimmed) throw new Error("Message cannot be empty");
+    if (trimmed.length > 2000) throw new Error("Message cannot exceed 2000 characters");
 
     const conv = await ctx.db.get(conversationId);
     if (!conv) throw new Error("Conversation not found");
+    if ((conv as any).operatorUserId !== user._id) throw new Error("Not authorized");
 
     await ctx.db.insert("messages", {
       conversationId,
@@ -341,10 +355,10 @@ export const sendMessageByConversation = mutation({
 export const markReadByConversation = mutation({
   args: { conversationId: v.id("conversations") },
   handler: async (ctx, { conversationId }) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return;
+    const user = await optionalUser(ctx);
+    if (!user) return;
     const conv = await ctx.db.get(conversationId);
-    if (!conv) return;
+    if (!conv || (conv as any).operatorUserId !== user._id) return;
     await ctx.db.patch(conversationId, { operatorUnreadCount: 0 });
   },
 });

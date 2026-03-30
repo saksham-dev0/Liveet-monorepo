@@ -42,9 +42,11 @@ export default function ChatsTabScreen() {
   const refresh = useCallback(async () => {
     try {
       const data = await (convex as any).query("chats:listConversationsForOperator", {});
-      setConversations(Array.isArray(data) ? (data as ConversationRow[]) : []);
+      if (Array.isArray(data)) {
+        setConversations((prev) => data.length > 0 ? (data as ConversationRow[]) : prev);
+      }
     } catch {
-      setConversations((prev) => prev ?? []);
+      // do not collapse null (loading) state on transient failures
     }
   }, [convex]);
 
