@@ -362,3 +362,38 @@ export const markReadByConversation = mutation({
     await ctx.db.patch(conversationId, { operatorUnreadCount: 0 });
   },
 });
+
+export const getOrCreateConversationForApplication = mutation({
+  args: { applicationId: v.id("tenantMoveInApplications") },
+  handler: async (ctx, { applicationId }) => {
+    const operator = await requireUser(ctx);
+
+    const app = await ctx.db.get(applicationId);
+    if (!app) throw new Error("Application not found");
+
+    const property = await ctx.db.get(app.propertyId);
+    if (!property || property.userId !== operator._id) {
+      throw new Error("You do not have access to this application");
+    }
+
+    let conv = await ctx.db
+      .query("conversations")
+      .withIndex("by_property_and_tenant", (q: any) =>
+        q.eq("propertyId", app.propertyId).eq("tenantUserId", app.tenantUserId)
+      )
+      .unique();
+
+    if (!conv) {
+      const convId = await ctx.db.insert("conversations", {
+        propertyId: app.propertyId,
+        tenantUserId: app.tenantUserId,
+        operatorUserId: operator._id,
+        tenantUnreadCount: 0,
+        operatorUnreadCount: 0,
+      });
+      return { conversationId: convId };
+    }
+
+    return { conversationId: conv._id };
+  },
+});

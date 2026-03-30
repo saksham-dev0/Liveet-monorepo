@@ -393,8 +393,7 @@ export default function TestScreen() {
             <Text style={styles.kycEmptyText}>Loading…</Text>
           ) : recentTransactions.length === 0 ? (
             <Text style={styles.kycEmptyText}>
-              No credited transactions yet. Paid single sharing move-ins will
-              appear here.
+              No credited transactions yet. Paid move-ins will appear here.
             </Text>
           ) : (
             recentTransactions.map((tx) => (

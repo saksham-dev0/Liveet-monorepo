@@ -6,10 +6,14 @@ import {
   Dimensions,
   ActivityIndicator,
   TouchableOpacity,
+  FlatList,
+  Alert,
 } from "react-native";
+import { BottomSheet } from "../../components/BottomSheet";
 import { Image } from "expo-image";
+import { ScrollView as NativeScrollView } from "react-native";
 import { ScrollView } from "react-native-gesture-handler";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useSafeAreaInsets, EdgeInsets } from "react-native-safe-area-context";
 import { useConvex } from "convex/react";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
@@ -142,6 +146,321 @@ function getBestSuited(d: Property["tenantDetails"]): string[] {
   if (d.bestForStudent) t.push("Students");
   if (d.bestForWorkingProfessional) t.push("Professionals");
   return t;
+}
+
+// --------------- Tenant Dashboard ---------------
+
+const QUICK_ACTIONS = [
+  {
+    key: "complaint",
+    icon: "alert-circle-outline" as const,
+    title: "Add Complaint",
+    sub: "Report an issue",
+    accent: "#EF4444",
+  },
+  {
+    key: "shift",
+    icon: "swap-horizontal-outline" as const,
+    title: "Shift Request",
+    sub: "Change your room",
+    accent: "#3B82F6",
+  },
+  {
+    key: "moveout",
+    icon: "exit-outline" as const,
+    title: "Move Out",
+    sub: "End your stay",
+    accent: "#F59E0B",
+  },
+  {
+    key: "extend",
+    icon: "document-text-outline" as const,
+    title: "Extend Stay",
+    sub: "Renew agreement",
+    accent: "#10B981",
+  },
+];
+
+const OVERVIEW_ROWS = [
+  { icon: "home-outline" as const, label: "Room", value: "Room 203" },
+  {
+    icon: "calendar-outline" as const,
+    label: "Agreement",
+    value: "12 months · Ends Dec 2026",
+  },
+  { icon: "lock-closed-outline" as const, label: "Lock-in", value: "6 months" },
+  {
+    icon: "time-outline" as const,
+    label: "Notice",
+    value: "30 days notice required",
+  },
+];
+
+const NOTICES = [
+  {
+    icon: "megaphone-outline" as const,
+    title: "Maintenance scheduled",
+    sub: "Water supply off on Apr 3, 10am–1pm",
+  },
+  {
+    icon: "information-circle-outline" as const,
+    title: "Society meeting",
+    sub: "April 5 at 7pm in the common hall",
+  },
+];
+
+type NotificationItem = {
+  id: string;
+  type: string;
+  title: string;
+  body: string;
+  read: boolean;
+  refId: string | null;
+  createdAt: number;
+};
+
+function TenantDashboard({ insets }: { insets: EdgeInsets }) {
+  const router = useRouter();
+  const convex = useConvex();
+  const MOCK_RENT = { amount: 8500, dueDate: "April 1, 2026", daysLeft: 3 };
+  const MOCK_PROPERTY = { name: "Sunrise Apartments", city: "Bengaluru" };
+
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [confirmedComplaintIds, setConfirmedComplaintIds] = useState<Set<string>>(new Set());
+
+  const fetchNotifications = useCallback(async () => {
+    try {
+      const res = await (convex as any).query("complaints:getTenantNotifications", {});
+      if (res) {
+        setNotifications(res.items ?? []);
+        setUnreadCount(res.unreadCount ?? 0);
+      }
+    } catch {}
+  }, [convex]);
+
+  useEffect(() => {
+    void fetchNotifications();
+  }, [fetchNotifications]);
+
+  async function handleOpenNotifications() {
+    setShowNotifications(true);
+    try {
+      await (convex as any).mutation("complaints:markAllNotificationsRead", {});
+      setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+      setUnreadCount(0);
+    } catch {}
+  }
+
+  async function handleConfirmResolved(complaintId: string) {
+    try {
+      await (convex as any).mutation("complaints:confirmComplaintResolved", {
+        complaintId,
+      });
+      setConfirmedComplaintIds((prev) => new Set([...prev, complaintId]));
+      await fetchNotifications();
+    } catch (e) {
+      Alert.alert("Error", "Could not confirm resolution. Please try again.");
+    }
+  }
+
+  function handleQuickAction(key: string) {
+    if (key === "complaint") {
+      router.push("/(app)/complaint" as any);
+    }
+  }
+
+  return (
+    <View style={[s.root, { paddingTop: insets.top }]}>
+      {/* Notifications panel */}
+      <BottomSheet
+        visible={showNotifications}
+        onClose={() => setShowNotifications(false)}
+        title="Notifications"
+        showCloseButton
+        maxHeight="75%"
+      >
+        {notifications.length === 0 ? (
+          <View style={s.notifEmpty}>
+            <Ionicons name="notifications-off-outline" size={36} color={colors.muted} />
+            <Text style={s.notifEmptyText}>No notifications yet</Text>
+          </View>
+        ) : (
+          <FlatList
+            data={notifications}
+            keyExtractor={(item) => item.id}
+            ItemSeparatorComponent={() => <View style={s.notifDivider} />}
+            renderItem={({ item }) => (
+              <View style={[s.notifItem, !item.read && s.notifItemUnread]}>
+                <View style={s.notifIconWrap}>
+                  <Ionicons
+                    name={item.type === "complaint_resolved" ? "checkmark-circle" : "notifications"}
+                    size={20}
+                    color={item.type === "complaint_resolved" ? "#16A34A" : colors.primary}
+                  />
+                </View>
+                <View style={s.notifTextWrap}>
+                  <Text style={s.notifItemTitle}>{item.title}</Text>
+                  <Text style={s.notifItemBody}>{item.body}</Text>
+                  <Text style={s.notifItemTime}>
+                    {new Date(item.createdAt).toLocaleDateString("en-IN", {
+                      day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
+                    })}
+                  </Text>
+                  {item.type === "complaint_resolved" && item.refId && !confirmedComplaintIds.has(item.refId) ? (
+                    <TouchableOpacity
+                      style={s.confirmBtn}
+                      activeOpacity={0.7}
+                      onPress={() => void handleConfirmResolved(item.refId!)}
+                    >
+                      <Text style={s.confirmBtnText}>Yes, issue is fixed</Text>
+                    </TouchableOpacity>
+                  ) : item.type === "complaint_resolved" && item.refId ? (
+                    <View style={[s.confirmBtn, { backgroundColor: "#6B7280" }]}>
+                      <Text style={s.confirmBtnText}>Confirmed ✓</Text>
+                    </View>
+                  ) : null}
+                </View>
+                {!item.read && <View style={s.notifDot} />}
+              </View>
+            )}
+          />
+        )}
+      </BottomSheet>
+
+      {/* Header */}
+      <View style={s.header}>
+        <TouchableOpacity style={s.filterBtn} activeOpacity={0.7}>
+          <Ionicons name="home-outline" size={20} color={colors.navy} />
+        </TouchableOpacity>
+        <View style={s.hCenter}>
+          <Text style={s.hTitle}>My Home</Text>
+          <Text style={s.hSub}>
+            {MOCK_PROPERTY.name} · {MOCK_PROPERTY.city}
+          </Text>
+        </View>
+        <TouchableOpacity
+          style={s.filterBtn}
+          activeOpacity={0.7}
+          onPress={() => void handleOpenNotifications()}
+        >
+          <Ionicons name="notifications-outline" size={20} color={colors.navy} />
+          {unreadCount > 0 && (
+            <View style={s.notifBadge}>
+              <Text style={s.notifBadgeText}>
+                {unreadCount > 9 ? "9+" : unreadCount}
+              </Text>
+            </View>
+          )}
+        </TouchableOpacity>
+      </View>
+
+      <NativeScrollView
+        contentContainerStyle={[
+          s.dbScrollContent,
+          { paddingBottom: insets.bottom + 90 },
+        ]}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Hero Rent Card */}
+        <View style={s.dbHeroCard}>
+          <Text style={s.dbHeroLabel}>NEXT RENT DUE</Text>
+          <Text style={s.dbHeroDate}>{MOCK_RENT.dueDate}</Text>
+          <Text style={s.dbHeroAmount}>
+            ₹{MOCK_RENT.amount.toLocaleString("en-IN")} / month
+          </Text>
+          <View style={s.dbHeroFooter}>
+            <View style={s.dbDueChip}>
+              <Ionicons name="time-outline" size={13} color={colors.white} />
+              <Text style={s.dbDueChipText}>
+                Due in {MOCK_RENT.daysLeft} days
+              </Text>
+            </View>
+            <TouchableOpacity style={s.dbPayBtn} activeOpacity={0.8}>
+              <Text style={s.dbPayBtnText}>Pay Now</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Quick Actions */}
+        <Text style={s.dbSectionTitle}>Quick Actions</Text>
+        <View style={s.dbActionsCard}>
+          {QUICK_ACTIONS.map((action, idx) => (
+            <React.Fragment key={action.key}>
+              <TouchableOpacity
+                style={s.dbActionRow}
+                activeOpacity={0.6}
+                onPress={() => handleQuickAction(action.key)}
+              >
+                <View
+                  style={[
+                    s.dbActionIconCircle,
+                    { backgroundColor: action.accent + "18" },
+                  ]}
+                >
+                  <Ionicons name={action.icon} size={20} color={action.accent} />
+                </View>
+                <View style={s.dbActionTextWrap}>
+                  <Text style={s.dbActionTitle}>{action.title}</Text>
+                  <Text style={s.dbActionSub}>{action.sub}</Text>
+                </View>
+                <View style={[s.dbActionChevronWrap, { backgroundColor: action.accent + "12" }]}>
+                  <Ionicons name="chevron-forward" size={14} color={action.accent} />
+                </View>
+              </TouchableOpacity>
+              {idx < QUICK_ACTIONS.length - 1 && (
+                <View style={s.dbDivider} />
+              )}
+            </React.Fragment>
+          ))}
+        </View>
+
+        {/* Property Overview */}
+        <Text style={s.dbSectionTitle}>Property Overview</Text>
+        <View style={s.dbOverviewCard}>
+          {OVERVIEW_ROWS.map((row, idx) => (
+            <React.Fragment key={row.label}>
+              <View style={s.dbOverviewRow}>
+                <View style={s.dbOverviewIconWrap}>
+                  <Ionicons name={row.icon} size={18} color={colors.muted} />
+                </View>
+                <View style={s.dbOverviewText}>
+                  <Text style={s.dbOverviewLabel}>{row.label}</Text>
+                  <Text style={s.dbOverviewValue}>{row.value}</Text>
+                </View>
+              </View>
+              {idx < OVERVIEW_ROWS.length - 1 && (
+                <View style={s.dbDivider} />
+              )}
+            </React.Fragment>
+          ))}
+        </View>
+
+        {/* Notices */}
+        <Text style={s.dbSectionTitle}>Notices</Text>
+        <View style={s.dbNoticeCard}>
+          {NOTICES.map((notice, idx) => (
+            <React.Fragment key={notice.title}>
+              <View style={s.dbNoticeRow}>
+                <Ionicons
+                  name={notice.icon}
+                  size={18}
+                  color={colors.muted}
+                  style={{ marginTop: 2 }}
+                />
+                <View style={s.dbNoticeTextWrap}>
+                  <Text style={s.dbNoticeTitle}>{notice.title}</Text>
+                  <Text style={s.dbNoticeSub}>{notice.sub}</Text>
+                </View>
+              </View>
+              {idx < NOTICES.length - 1 && <View style={s.dbDivider} />}
+            </React.Fragment>
+          ))}
+        </View>
+      </NativeScrollView>
+    </View>
+  );
 }
 
 // --------------- Property Card ---------------
@@ -701,37 +1020,7 @@ export default function AppHome() {
   }
 
   if (showDashboard) {
-    return (
-      <View style={[s.root, { paddingTop: insets.top }]}>
-        <View style={s.header}>
-          <TouchableOpacity
-            style={s.filterBtn}
-            onPress={() => router.push("/(app)/favorites")}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="heart-outline" size={20} color={colors.navy} />
-          </TouchableOpacity>
-          <View style={s.hCenter}>
-            <Text style={s.hTitle}>Dashboard</Text>
-            <Text style={s.hSub}>Temporary view</Text>
-          </View>
-          <TouchableOpacity style={s.filterBtn}>
-            <Ionicons name="options-outline" size={20} color={colors.navy} />
-          </TouchableOpacity>
-        </View>
-
-        <View style={s.dashboardWrap}>
-          <View style={s.dashboardCard}>
-            <Ionicons name="grid-outline" size={34} color={colors.primary} />
-            <Text style={s.dashboardTitle}>Dashboard is enabled</Text>
-            <Text style={s.dashboardSub}>
-              Discover is hidden because payment status is marked as paid. Share your dashboard UI
-              requirements and I will build this screen next.
-            </Text>
-          </View>
-        </View>
-      </View>
-    );
+    return <TenantDashboard insets={insets} />;
   }
 
   return (
@@ -955,35 +1244,277 @@ const s = StyleSheet.create({
     marginTop: 8,
     textAlign: "center",
   },
-  dashboardWrap: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
+  // --- Dashboard styles ---
+  dbScrollContent: {
     paddingHorizontal: 20,
-    paddingBottom: 90,
+    paddingTop: 8,
   },
-  dashboardCard: {
-    width: "100%",
-    backgroundColor: colors.cardBg,
+  dbHeroCard: {
+    backgroundColor: colors.primary,
     borderRadius: radii.card,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingVertical: 26,
+    paddingVertical: 24,
     paddingHorizontal: 20,
-    alignItems: "center",
+    marginBottom: 24,
     ...cardShadow,
   },
-  dashboardTitle: {
-    marginTop: 12,
-    fontSize: 20,
+  dbHeroLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "rgba(255,255,255,0.55)",
+    textTransform: "uppercase",
+    letterSpacing: 1.2,
+    marginBottom: 6,
+  },
+  dbHeroDate: {
+    fontSize: 26,
+    fontWeight: "800",
+    color: colors.white,
+    marginBottom: 4,
+  },
+  dbHeroAmount: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: colors.trendBadge,
+    marginBottom: 18,
+  },
+  dbHeroFooter: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  dbDueChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: "rgba(255,255,255,0.12)",
+    borderRadius: radii.pill,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  dbDueChipText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: colors.white,
+  },
+  dbPayBtn: {
+    backgroundColor: colors.trendBadge,
+    borderRadius: radii.pill,
+    paddingHorizontal: 22,
+    paddingVertical: 10,
+  },
+  dbPayBtnText: {
+    fontSize: 14,
     fontWeight: "800",
     color: colors.navy,
   },
-  dashboardSub: {
-    marginTop: 8,
-    fontSize: 14,
-    lineHeight: 20,
-    textAlign: "center",
+  dbSectionTitle: {
+    fontSize: 13,
+    fontWeight: "700",
     color: colors.muted,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    marginBottom: 12,
+  },
+  dbActionsCard: {
+    backgroundColor: colors.cardBg,
+    borderRadius: radii.card,
+    paddingHorizontal: 18,
+    paddingVertical: 4,
+    marginBottom: 24,
+    ...cardShadow,
+  },
+  dbActionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 14,
+  },
+  dbActionIconCircle: {
+    width: 42,
+    height: 42,
+    borderRadius: radii.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 14,
+  },
+  dbActionTextWrap: {
+    flex: 1,
+  },
+  dbActionTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: colors.navy,
+    marginBottom: 2,
+  },
+  dbActionSub: {
+    fontSize: 12,
+    color: colors.muted,
+    fontWeight: "500",
+  },
+  dbActionChevronWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: radii.pill,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dbOverviewCard: {
+    backgroundColor: colors.cardBg,
+    borderRadius: radii.card,
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+    marginBottom: 24,
+    ...cardShadow,
+  },
+  dbOverviewRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 14,
+  },
+  dbOverviewIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: colors.surfaceGray,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 14,
+  },
+  dbOverviewText: {
+    flex: 1,
+  },
+  dbOverviewLabel: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: colors.muted,
+    marginBottom: 2,
+  },
+  dbOverviewValue: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: colors.navy,
+  },
+  dbDivider: {
+    height: 1,
+    backgroundColor: colors.border,
+  },
+  dbNoticeCard: {
+    backgroundColor: colors.cardBg,
+    borderRadius: radii.card,
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+    marginBottom: 16,
+    ...cardShadow,
+  },
+  dbNoticeRow: {
+    flexDirection: "row",
+    paddingVertical: 14,
+  },
+  dbNoticeTextWrap: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  dbNoticeTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: colors.navy,
+    marginBottom: 2,
+  },
+  dbNoticeSub: {
+    fontSize: 12,
+    color: colors.muted,
+    lineHeight: 17,
+  },
+
+  // --- Notification styles ---
+  notifEmpty: {
+    alignItems: "center",
+    paddingVertical: 40,
+    gap: 12,
+  },
+  notifEmptyText: {
+    fontSize: 14,
+    color: colors.muted,
+  },
+  notifDivider: {
+    height: 1,
+    backgroundColor: colors.border,
+  },
+  notifItem: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    paddingVertical: 14,
+    gap: 12,
+  },
+  notifItemUnread: {
+    backgroundColor: "#F0FDF4",
+    marginHorizontal: -20,
+    paddingHorizontal: 20,
+  },
+  notifIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.surfaceGray,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  notifTextWrap: {
+    flex: 1,
+  },
+  notifItemTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: colors.navy,
+    marginBottom: 2,
+  },
+  notifItemBody: {
+    fontSize: 13,
+    color: colors.muted,
+    lineHeight: 18,
+    marginBottom: 4,
+  },
+  notifItemTime: {
+    fontSize: 11,
+    color: colors.muted,
+    fontWeight: "500",
+  },
+  notifDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#16A34A",
+    marginTop: 6,
+    flexShrink: 0,
+  },
+  notifBadge: {
+    position: "absolute",
+    top: 4,
+    right: 4,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: colors.error,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 3,
+  },
+  notifBadgeText: {
+    fontSize: 9,
+    fontWeight: "800",
+    color: colors.white,
+  },
+  confirmBtn: {
+    marginTop: 8,
+    alignSelf: "flex-start",
+    backgroundColor: "#16A34A",
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+  },
+  confirmBtnText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: colors.white,
   },
 });

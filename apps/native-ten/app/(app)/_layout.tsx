@@ -184,7 +184,7 @@ export default function AppLayout() {
   const activeRouteName = getActiveRouteName(pathname);
   // Hide tab bar on pushed stacks (favorites, chat thread).
   const path = pathname ?? "";
-  const showTabBar = !path.includes("/favorites") && !path.includes("/chats/");
+  const showTabBar = !path.includes("/favorites") && !path.includes("/chats/") && !path.includes("/kyc/") && !path.endsWith("/complaint");
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.pageBg }}>
@@ -206,6 +206,8 @@ export default function AppLayout() {
         <Stack.Screen name="favorites" options={{ title: "Liked" }} />
         <Stack.Screen name="favorites/[id]" options={{ animation: "none" }} />
         <Stack.Screen name="favorites/move-in/[propertyId]" options={{ title: "Move-in" }} />
+        <Stack.Screen name="kyc/[propertyId]" options={{ animation: "slide_from_right" } as any} />
+        <Stack.Screen name="complaint" options={{ animation: "slide_from_right" } as any} />
       </Stack>
 
       {showTabBar ? <BottomTabBar activeRouteName={activeRouteName} /> : null}

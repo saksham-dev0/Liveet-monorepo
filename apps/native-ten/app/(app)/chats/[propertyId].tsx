@@ -18,6 +18,19 @@ import { colors, radii } from "../../../constants/theme";
 
 const POLL_INTERVAL_MS = 1500;
 
+const OB_PREFIX = "__OB__:";
+
+type OnboardingInvite = { pid: string; aid: string; pname: string };
+
+function parseOnboardingInvite(body: string): OnboardingInvite | null {
+  if (!body.startsWith(OB_PREFIX)) return null;
+  try {
+    return JSON.parse(body.slice(OB_PREFIX.length)) as OnboardingInvite;
+  } catch {
+    return null;
+  }
+}
+
 type Message = {
   _id: string;
   senderRole: "tenant" | "operator";
@@ -27,7 +40,10 @@ type Message = {
 
 type ListItem =
   | { kind: "date"; id: string; label: string }
-  | { kind: "msg"; id: string; from: "host" | "me"; body: string; time: string };
+  | { kind: "msg"; id: string; from: "host" | "me"; body: string; time: string }
+  | { kind: "onboarding"; id: string; invite: OnboardingInvite; time: string; createdAt: number };
+
+const OB_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 function formatTime(ms: number): string {
   return new Date(ms).toLocaleTimeString("en-IN", {
@@ -86,6 +102,7 @@ export default function ChatThreadScreen() {
   const [sending, setSending] = useState(false);
   // null = initial load not done yet, Message[] = loaded (may be empty)
   const [messages, setMessages] = useState<Message[] | null>(null);
+  const [kycStatus, setKycStatus] = useState<{ status: string | null } | null>(null);
   const listRef = useRef<FlatList<ListItem>>(null);
   const mountedRef = useRef(true);
   // Cursor: _creationTime of the last message received. Undefined triggers a
@@ -149,12 +166,25 @@ export default function ChatThreadScreen() {
 
     if (!propertyId) return;
 
+    const fetchKycStatus = async () => {
+      try {
+        const res = await (convex as any).query("moveIn:getTenantMoveInForProperty", { propertyId });
+        if (mountedRef.current && res) setKycStatus({ status: res.status ?? null });
+      } catch {
+        // ignore
+      }
+    };
+
     // Initial load
     void fetchMessages();
+    void fetchKycStatus();
 
     // Poll for new messages; only messages newer than afterTimeRef are fetched
     // after the initial load, so cost stays constant regardless of history length.
-    const interval = setInterval(fetchMessages, POLL_INTERVAL_MS);
+    const interval = setInterval(() => {
+      void fetchMessages();
+      void fetchKycStatus();
+    }, POLL_INTERVAL_MS);
 
     return () => {
       mountedRef.current = false;
@@ -179,13 +209,18 @@ export default function ChatThreadScreen() {
         });
         lastDateStr = dateStr;
       }
-      items.push({
-        kind: "msg",
-        id: msg._id,
-        from: msg.senderRole === "tenant" ? "me" : "host",
-        body: msg.body,
-        time: formatTime(msg.createdAt),
-      });
+      const invite = parseOnboardingInvite(msg.body);
+      if (invite) {
+        items.push({ kind: "onboarding", id: msg._id, invite, time: formatTime(msg.createdAt), createdAt: msg.createdAt });
+      } else {
+        items.push({
+          kind: "msg",
+          id: msg._id,
+          from: msg.senderRole === "tenant" ? "me" : "host",
+          body: msg.body,
+          time: formatTime(msg.createdAt),
+        });
+      }
     }
     return items;
   }, [messages]);
@@ -265,6 +300,75 @@ export default function ChatThreadScreen() {
             if (item.kind === "date") {
               return <DateSeparator label={item.label} />;
             }
+
+            if (item.kind === "onboarding") {
+              const isExpired = Date.now() - item.createdAt > OB_EXPIRY_MS;
+              const isCompleted =
+                kycStatus?.status === "submitted" || kycStatus?.status === "onboarded";
+              const isDisabled = isExpired || isCompleted;
+
+              return (
+                <View style={s.obCardWrap}>
+                  <View style={s.obCard}>
+                    <View style={s.obIconRow}>
+                      <View style={[s.obIconCircle, isDisabled && s.obIconCircleDim]}>
+                        <Ionicons
+                          name={isCompleted ? "checkmark-circle-outline" : "document-text-outline"}
+                          size={22}
+                          color={colors.white}
+                        />
+                      </View>
+                      <View style={s.obCardTextWrap}>
+                        <Text style={s.obCardTitle}>Complete your onboarding</Text>
+                        <Text style={s.obCardSub} numberOfLines={1}>
+                          {item.invite.pname}
+                        </Text>
+                      </View>
+                    </View>
+                    <Text style={s.obCardBody}>
+                      Your landlord has reviewed your move-in request. Complete your
+                      KYC and set up payment to confirm your stay.
+                    </Text>
+                    <Pressable
+                      style={[s.obBtn, isDisabled && s.obBtnDisabled]}
+                      disabled={isDisabled}
+                      onPress={() =>
+                        router.push({
+                          pathname: "/(app)/kyc/[propertyId]",
+                          params: {
+                            propertyId: item.invite.pid,
+                            applicationId: item.invite.aid,
+                            title: item.invite.pname,
+                          },
+                        } as any)
+                      }
+                    >
+                      {isCompleted ? (
+                        <>
+                          <Ionicons name="checkmark-circle" size={16} color={colors.white} style={{ marginRight: 6 }} />
+                          <Text style={s.obBtnText}>KYC Completed</Text>
+                        </>
+                      ) : isExpired ? (
+                        <>
+                          <Ionicons name="lock-closed-outline" size={16} color={colors.white} style={{ marginRight: 6 }} />
+                          <Text style={s.obBtnText}>Link Expired</Text>
+                        </>
+                      ) : (
+                        <>
+                          <Text style={s.obBtnText}>Start E-KYC & Payment</Text>
+                          <Ionicons name="arrow-forward" size={16} color={colors.white} style={{ marginLeft: 6 }} />
+                        </>
+                      )}
+                    </Pressable>
+                    {isExpired && !isCompleted && (
+                      <Text style={s.obExpiredNote}>This link was valid for 24 hours.</Text>
+                    )}
+                    <Text style={s.obTime}>{item.time}</Text>
+                  </View>
+                </View>
+              );
+            }
+
             const incoming = item.from === "host";
             return (
               <View style={[s.bubbleRow, incoming ? s.bubbleRowIn : s.bubbleRowOut]}>
@@ -459,4 +563,53 @@ const s = StyleSheet.create({
     justifyContent: "center",
   },
   sendBtnDisabled: { opacity: 0.35 },
+
+  // Onboarding invite card
+  obCardWrap: { paddingVertical: 6, alignItems: "flex-start" },
+  obCard: {
+    backgroundColor: colors.white,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 14,
+    maxWidth: "88%",
+    shadowColor: "#0A1929",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.07,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  obIconRow: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 10 },
+  obIconCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  obCardTextWrap: { flex: 1 },
+  obCardTitle: { fontSize: 14, fontWeight: "800", color: colors.navy },
+  obCardSub: { fontSize: 12, color: colors.muted, fontWeight: "500", marginTop: 1 },
+  obCardBody: {
+    fontSize: 13,
+    color: colors.muted,
+    lineHeight: 19,
+    marginBottom: 12,
+  },
+  obBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.primary,
+    borderRadius: radii.pill,
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+    marginBottom: 8,
+  },
+  obBtnText: { fontSize: 13, fontWeight: "700", color: colors.white },
+  obBtnDisabled: { backgroundColor: colors.muted, opacity: 0.6 },
+  obIconCircleDim: { backgroundColor: colors.muted },
+  obExpiredNote: { fontSize: 11, color: colors.error, marginBottom: 4, marginTop: -4 },
+  obTime: { fontSize: 11, color: colors.muted, textAlign: "right" },
 });
