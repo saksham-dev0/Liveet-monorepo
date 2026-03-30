@@ -98,22 +98,55 @@ export default function OperatorChatThreadScreen() {
   const [messages, setMessages] = useState<Message[] | null>(null);
   const listRef = useRef<FlatList<ListItem>>(null);
   const mountedRef = useRef(true);
+  // Cursor: _creationTime of the last message we've received. Undefined means
+  // the initial full fetch hasn't completed yet; subsequent polls send only
+  // messages newer than this value so the full thread is never re-transferred.
+  const afterTimeRef = useRef<number | undefined>(undefined);
+  // Track the latest tenant message ID we've already marked read to avoid
+  // redundant mutation calls on every poll tick.
+  const lastMarkedReadTenantMsgIdRef = useRef<string | null>(null);
 
   const fetchMessages = useCallback(async () => {
     if (!conversationId) return;
+    const afterTime = afterTimeRef.current;
     try {
       const result = await (convex as any).query(
         "chats:listMessagesForConversation",
-        { conversationId }
+        { conversationId, afterTime }
       );
-      if (mountedRef.current && Array.isArray(result)) {
-        // Only update if we got a non-empty result OR this is the initial load.
-        // This prevents an empty intermediate response from clearing real messages.
+      if (!mountedRef.current || !Array.isArray(result)) return;
+
+      if (afterTime === undefined) {
+        // Initial full load — replace state entirely.
+        setMessages(result as Message[]);
+      } else if (result.length > 0) {
+        // Incremental poll — append only the new messages (deduplicate to guard
+        // against the race between the polling interval and post-send fetch).
         setMessages((prev) => {
-          if (!Array.isArray(result)) return prev;
-          if (result.length === 0 && prev !== null && prev.length > 0) return prev;
-          return result as Message[];
+          const existingIds = new Set((prev ?? []).map((m) => m._id));
+          const newMsgs = (result as Message[]).filter((m) => !existingIds.has(m._id));
+          return newMsgs.length > 0 ? [...(prev ?? []), ...newMsgs] : (prev ?? []);
         });
+      }
+
+      // Advance the cursor to the latest message we've now seen.
+      if (result.length > 0) {
+        afterTimeRef.current = (result as Message[])[result.length - 1].createdAt;
+      }
+
+      // Mark as read whenever new tenant messages have arrived.
+      const latestTenantMsg = (result as Message[])
+        .slice()
+        .reverse()
+        .find((m) => m.senderRole === "tenant");
+      if (
+        latestTenantMsg &&
+        latestTenantMsg._id !== lastMarkedReadTenantMsgIdRef.current
+      ) {
+        lastMarkedReadTenantMsgIdRef.current = latestTenantMsg._id;
+        (convex as any)
+          .mutation("chats:markReadByConversation", { conversationId })
+          .catch(() => {});
       }
     } catch {
       // silently keep last known messages
@@ -122,19 +155,17 @@ export default function OperatorChatThreadScreen() {
 
   useEffect(() => {
     mountedRef.current = true;
+    // Reset cursor so remounting the screen triggers a fresh full fetch.
+    afterTimeRef.current = undefined;
 
     if (!conversationId) return;
 
     // Initial load
     void fetchMessages();
 
-    // Poll for new messages
+    // Poll for new messages; only messages newer than afterTimeRef are fetched
+    // after the initial load, so cost stays constant regardless of history length.
     const interval = setInterval(fetchMessages, POLL_INTERVAL_MS);
-
-    // Mark as read
-    (convex as any)
-      .mutation("chats:markReadByConversation", { conversationId })
-      .catch(() => {});
 
     return () => {
       mountedRef.current = false;
