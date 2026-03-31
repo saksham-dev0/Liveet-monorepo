@@ -104,9 +104,14 @@ export const listCommunities = query({
         const members = await ctx.db
           .query("communityMembers")
           .withIndex("by_community", (q) => q.eq("communityId", c._id))
-          .take(500);
+          .collect();
         const isMember = currentUserId
-          ? members.some((m) => m.userId === currentUserId)
+          ? (await ctx.db
+              .query("communityMembers")
+              .withIndex("by_community_and_user", (q) =>
+                q.eq("communityId", c._id).eq("userId", currentUserId as any),
+              )
+              .unique()) !== null
           : false;
         const creator = await ctx.db.get(c.createdByUserId);
         return {
@@ -141,6 +146,11 @@ export const createHangout = mutation({
     const title = args.title.trim();
     if (!title) throw new Error("Hangout title is required.");
     if (!args.dateTime.trim()) throw new Error("Date & time is required.");
+    if (
+      args.maxAttendees !== undefined &&
+      (!Number.isInteger(args.maxAttendees) || args.maxAttendees <= 0)
+    )
+      throw new Error("Max attendees must be a positive whole number.");
 
     const hangoutId = await ctx.db.insert("hangouts", {
       communityId: args.communityId,
@@ -179,6 +189,17 @@ export const requestJoinHangout = mutation({
     const hangout = await ctx.db.get(args.hangoutId);
     if (!hangout || hangout.status !== "open")
       throw new Error("Hangout is not open.");
+
+    if (hangout.maxAttendees != null) {
+      const acceptedCount = (
+        await ctx.db
+          .query("hangoutAttendees")
+          .withIndex("by_hangout", (q) => q.eq("hangoutId", args.hangoutId))
+          .collect()
+      ).filter((a) => a.status === "accepted").length;
+      if (acceptedCount >= hangout.maxAttendees)
+        throw new Error("Hangout is full.");
+    }
 
     await ctx.db.insert("hangoutAttendees", {
       hangoutId: args.hangoutId,
@@ -224,9 +245,14 @@ export const listHangouts = query({
         const attendees = await ctx.db
           .query("hangoutAttendees")
           .withIndex("by_hangout", (q) => q.eq("hangoutId", h._id))
-          .take(500);
+          .collect();
         const isGoing = currentUserId
-          ? attendees.some((a) => a.userId === currentUserId)
+          ? (await ctx.db
+              .query("hangoutAttendees")
+              .withIndex("by_hangout_and_user", (q) =>
+                q.eq("hangoutId", h._id).eq("userId", currentUserId as any),
+              )
+              .unique()) !== null
           : false;
         const creator = await ctx.db.get(h.createdByUserId);
         const community = h.communityId

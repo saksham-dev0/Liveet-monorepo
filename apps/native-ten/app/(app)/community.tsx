@@ -101,18 +101,18 @@ export default function CommunityScreen() {
       const data = await (convex as any).query("communities:listCommunities", {});
       if (mountedRef.current && Array.isArray(data)) setCommunities(data);
     } catch {
-      // keep last known list
+      if (mountedRef.current && communities === null) setCommunities([]);
     }
-  }, [convex]);
+  }, [convex, communities]);
 
   const refreshHangouts = useCallback(async () => {
     try {
       const data = await (convex as any).query("communities:listHangouts", {});
       if (mountedRef.current && Array.isArray(data)) setHangouts(data);
     } catch {
-      // keep last known list
+      if (mountedRef.current && hangouts === null) setHangouts([]);
     }
-  }, [convex]);
+  }, [convex, hangouts]);
 
   useFocusEffect(
     useCallback(() => {
@@ -618,6 +618,15 @@ function CreateHangoutModal({
       setError("Date & time is required.");
       return;
     }
+    let parsedMaxAttendees: number | undefined;
+    if (maxAttendees.trim()) {
+      const n = parseInt(maxAttendees, 10);
+      if (isNaN(n) || n <= 0 || String(n) !== maxAttendees.trim()) {
+        setError("Max attendees must be a positive whole number.");
+        return;
+      }
+      parsedMaxAttendees = n;
+    }
     setLoading(true);
     setError("");
     try {
@@ -626,7 +635,7 @@ function CreateHangoutModal({
         description: description.trim() || undefined,
         location: location.trim() || undefined,
         dateTime: dateTime.trim(),
-        maxAttendees: maxAttendees ? parseInt(maxAttendees, 10) : undefined,
+        maxAttendees: parsedMaxAttendees,
       });
       setTitle("");
       setDescription("");

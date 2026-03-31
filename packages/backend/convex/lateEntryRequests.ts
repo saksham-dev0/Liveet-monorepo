@@ -45,6 +45,19 @@ export const submitLateEntryRequest = mutation({
       if (app.propertyId !== args.propertyId)
         throw new Error("Not authorised: application does not match the given property.");
       validatedApplicationId = app._id;
+    } else {
+      // No applicationId supplied — verify the caller has a move-in application
+      // for this property before allowing the request.
+      const app = await ctx.db
+        .query("tenantMoveInApplications")
+        .withIndex("by_tenant_and_property", (q) =>
+          q.eq("tenantUserId", user._id).eq("propertyId", args.propertyId),
+        )
+        .first();
+      if (!app)
+        throw new Error(
+          "Not authorised: no move-in application found for this property.",
+        );
     }
 
     const lateEntryRequestId = await ctx.db.insert("lateEntryRequests", {

@@ -273,6 +273,7 @@ function TenantDashboard({ insets }: { insets: EdgeInsets }) {
   const [lateEntryReason, setLateEntryReason] = useState("");
   const [lateEntryContactIdx, setLateEntryContactIdx] = useState<number | null>(null);
   const [lateEntryContacts, setLateEntryContacts] = useState<{ name: string; phone: string; relation: string }[]>([]);
+  const [lateEntryContactsLoading, setLateEntryContactsLoading] = useState(false);
   const [lateEntrySubmitting, setLateEntrySubmitting] = useState(false);
   const [lateEntrySuccess, setLateEntrySuccess] = useState(false);
 
@@ -390,15 +391,17 @@ function TenantDashboard({ insets }: { insets: EdgeInsets }) {
       setLateEntryTime("");
       setLateEntryReason("");
       setLateEntryContactIdx(null);
-      setLateEntryContacts([]);
       setLateEntrySuccess(false);
       setShowLateEntry(true);
+      setLateEntryContactsLoading(true);
       void (async () => {
         try {
           const contacts = await (convex as any).query("complaints:getTenantEmergencyContacts", {});
           setLateEntryContacts(contacts ?? []);
+          setLateEntryContactsLoading(false);
         } catch {
           setLateEntryContacts([]);
+          setLateEntryContactsLoading(false);
         }
       })();
     } else if (key === "moveout") {
@@ -860,7 +863,11 @@ function TenantDashboard({ insets }: { insets: EdgeInsets }) {
               editable={!lateEntrySubmitting}
             />
             <Text style={[s.shiftFieldLabel, { marginTop: 14 }]}>Emergency Contact</Text>
-            {lateEntryContacts.length === 0 ? (
+            {lateEntryContactsLoading ? (
+              <View style={[s.shiftInput, { justifyContent: "center" }]}>
+                <ActivityIndicator size="small" color={colors.primary} />
+              </View>
+            ) : lateEntryContacts.length === 0 ? (
               <View style={[s.shiftInput, { justifyContent: "center" }]}>
                 <Text style={{ color: colors.muted, fontSize: 14 }}>No emergency contacts found</Text>
               </View>
@@ -1418,6 +1425,7 @@ export default function AppHome() {
   const [properties, setProperties] = useState<Property[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [discoverLoading, setDiscoverLoading] = useState(false);
   const [showDashboard, setShowDashboard] = useState(false);
 
   const propertiesRef = useRef<Property[]>([]);
@@ -1435,6 +1443,19 @@ export default function AppHome() {
     }
   }, [convex]);
 
+  // Fetches properties without touching the global loading flag (used on view-switch)
+  const fetchDiscoverProperties = useCallback(async () => {
+    setDiscoverLoading(true);
+    try {
+      const result = await (convex as any).query("properties:listForTenants", {});
+      if (result) setProperties(result);
+    } catch (err) {
+      console.warn("Failed to fetch properties:", err);
+    } finally {
+      setDiscoverLoading(false);
+    }
+  }, [convex]);
+
   // Listen for view switch events from profile screen
   useEffect(() => {
     const unsub = discoverEvents.on((target) => {
@@ -1443,12 +1464,12 @@ export default function AppHome() {
       } else {
         setShowDashboard(false);
         if (propertiesRef.current.length === 0) {
-          fetchProperties();
+          fetchDiscoverProperties();
         }
       }
     });
     return () => { unsub(); };
-  }, [fetchProperties]);
+  }, [fetchDiscoverProperties]);
 
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
