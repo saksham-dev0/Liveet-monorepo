@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState, useRef } from "react";
 import {
   View,
   Text,
@@ -30,6 +30,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import { discoverEvents } from "../../constants/discoverEvents";
 import { colors, radii, cardShadow } from "../../constants/theme";
 import LiveetTenantHero from "../../assets/images/Liveet-tenant.png";
 
@@ -180,6 +181,13 @@ const QUICK_ACTIONS = [
     sub: "Renew agreement",
     accent: "#10B981",
   },
+  {
+    key: "lateentry",
+    icon: "time-outline" as const,
+    title: "Late Entry Request",
+    sub: "Request after-hours access",
+    accent: "#8B5CF6",
+  },
 ];
 
 const OVERVIEW_ROWS = [
@@ -260,6 +268,14 @@ function TenantDashboard({ insets }: { insets: EdgeInsets }) {
   const [extendPaying, setExtendPaying] = useState(false);
   const [extendResult, setExtendResult] = useState<{ amount: number; description: string } | null>(null);
 
+  const [showLateEntry, setShowLateEntry] = useState(false);
+  const [lateEntryTime, setLateEntryTime] = useState("");
+  const [lateEntryReason, setLateEntryReason] = useState("");
+  const [lateEntryContactIdx, setLateEntryContactIdx] = useState<number | null>(null);
+  const [lateEntryContacts, setLateEntryContacts] = useState<{ name: string; phone: string; relation: string }[]>([]);
+  const [lateEntrySubmitting, setLateEntrySubmitting] = useState(false);
+  const [lateEntrySuccess, setLateEntrySuccess] = useState(false);
+
   const fetchNotifications = useCallback(async () => {
     try {
       const res = await (convex as any).query("complaints:getTenantNotifications", {});
@@ -321,6 +337,34 @@ function TenantDashboard({ insets }: { insets: EdgeInsets }) {
     }
   }
 
+  async function handleSubmitLateEntryRequest() {
+    const selectedContact = lateEntryContactIdx !== null ? lateEntryContacts[lateEntryContactIdx] : null;
+    if (!lateEntryTime.trim() || !lateEntryReason.trim() || !selectedContact) {
+      Alert.alert("Missing fields", "Please fill in all fields and select an emergency contact.");
+      return;
+    }
+    setLateEntrySubmitting(true);
+    try {
+      const activeApp = await (convex as any).query("complaints:getTenantActiveApplication", {});
+      if (!activeApp?.propertyId) {
+        Alert.alert("Error", "Could not find your active property. Please try again.");
+        return;
+      }
+      await (convex as any).mutation("lateEntryRequests:submitLateEntryRequest", {
+        propertyId: activeApp.propertyId,
+        applicationId: activeApp.applicationId,
+        entryTime: lateEntryTime.trim(),
+        reason: lateEntryReason.trim(),
+        emergencyContact: `${selectedContact.name} (${selectedContact.relation}) · ${selectedContact.phone}`,
+      });
+      setLateEntrySuccess(true);
+    } catch (e) {
+      Alert.alert("Error", e instanceof Error ? e.message : "Could not submit late entry request.");
+    } finally {
+      setLateEntrySubmitting(false);
+    }
+  }
+
   function handleQuickAction(key: string) {
     if (key === "complaint") {
       router.push("/(app)/complaint" as any);
@@ -340,6 +384,21 @@ function TenantDashboard({ insets }: { insets: EdgeInsets }) {
           setExtendRentInfo(info ?? null);
         } catch {
           setExtendRentInfo(null);
+        }
+      })();
+    } else if (key === "lateentry") {
+      setLateEntryTime("");
+      setLateEntryReason("");
+      setLateEntryContactIdx(null);
+      setLateEntryContacts([]);
+      setLateEntrySuccess(false);
+      setShowLateEntry(true);
+      void (async () => {
+        try {
+          const contacts = await (convex as any).query("complaints:getTenantEmergencyContacts", {});
+          setLateEntryContacts(contacts ?? []);
+        } catch {
+          setLateEntryContacts([]);
         }
       })();
     } else if (key === "moveout") {
@@ -746,6 +805,103 @@ function TenantDashboard({ insets }: { insets: EdgeInsets }) {
               </>
             )}
           </View>
+        )}
+      </BottomSheet>
+
+      {/* Late Entry Request BottomSheet */}
+      <BottomSheet
+        visible={showLateEntry}
+        onClose={() => setShowLateEntry(false)}
+        title="Late Entry Request"
+        showCloseButton
+        maxHeight="65%"
+        keyboardAvoiding
+      >
+        {lateEntrySuccess ? (
+          <View style={s.shiftSuccessWrap}>
+            <Ionicons name="checkmark-circle" size={48} color="#16A34A" />
+            <Text style={s.shiftSuccessTitle}>Request Submitted</Text>
+            <Text style={s.shiftSuccessBody}>
+              Your late entry request has been sent to your property manager. You'll be notified once it's reviewed.
+            </Text>
+            <TouchableOpacity
+              style={s.shiftSubmitBtn}
+              activeOpacity={0.8}
+              onPress={() => setShowLateEntry(false)}
+            >
+              <Text style={s.shiftSubmitBtnText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={[s.shiftFormWrap, { paddingBottom: 8 }]}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <Text style={s.shiftFieldLabel}>Entry Time</Text>
+            <TextInput
+              style={s.shiftInput}
+              placeholder="e.g. 11:30 PM"
+              placeholderTextColor={colors.muted}
+              value={lateEntryTime}
+              onChangeText={setLateEntryTime}
+              editable={!lateEntrySubmitting}
+            />
+            <Text style={[s.shiftFieldLabel, { marginTop: 14 }]}>Reason for Late Entry</Text>
+            <TextInput
+              style={[s.shiftInput, s.shiftInputMultiline]}
+              placeholder="Describe the reason for your late entry..."
+              placeholderTextColor={colors.muted}
+              value={lateEntryReason}
+              onChangeText={setLateEntryReason}
+              multiline
+              numberOfLines={3}
+              editable={!lateEntrySubmitting}
+            />
+            <Text style={[s.shiftFieldLabel, { marginTop: 14 }]}>Emergency Contact</Text>
+            {lateEntryContacts.length === 0 ? (
+              <View style={[s.shiftInput, { justifyContent: "center" }]}>
+                <Text style={{ color: colors.muted, fontSize: 14 }}>No emergency contacts found</Text>
+              </View>
+            ) : (
+              lateEntryContacts.map((contact, idx) => (
+                <TouchableOpacity
+                  key={idx}
+                  style={[
+                    s.extendOptionRow,
+                    lateEntryContactIdx === idx && s.extendOptionRowSelected,
+                    { marginBottom: 8 },
+                  ]}
+                  activeOpacity={0.7}
+                  disabled={lateEntrySubmitting}
+                  onPress={() => setLateEntryContactIdx(idx)}
+                >
+                  <View style={s.extendOptionLeft}>
+                    <Text style={[s.extendOptionLabel, lateEntryContactIdx === idx && { color: "#1D4ED8" }]}>
+                      {contact.name}
+                    </Text>
+                    <Text style={s.extendOptionSub}>{contact.relation} · {contact.phone}</Text>
+                  </View>
+                  {lateEntryContactIdx === idx && (
+                    <Ionicons name="checkmark-circle" size={20} color="#1D4ED8" />
+                  )}
+                </TouchableOpacity>
+              ))
+            )}
+            <TouchableOpacity
+              style={[s.shiftSubmitBtn, lateEntrySubmitting && { opacity: 0.6 }]}
+              activeOpacity={0.8}
+              disabled={lateEntrySubmitting}
+              onPress={() => void handleSubmitLateEntryRequest()}
+            >
+              {lateEntrySubmitting ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={s.shiftSubmitBtnText}>Submit Request</Text>
+              )}
+            </TouchableOpacity>
+          </ScrollView>
         )}
       </BottomSheet>
 
@@ -1264,6 +1420,36 @@ export default function AppHome() {
   const [loading, setLoading] = useState(true);
   const [showDashboard, setShowDashboard] = useState(false);
 
+  const propertiesRef = useRef<Property[]>([]);
+  propertiesRef.current = properties;
+
+  const fetchProperties = useCallback(async () => {
+    setLoading(true);
+    try {
+      const result = await (convex as any).query("properties:listForTenants", {});
+      if (result) setProperties(result);
+    } catch (err) {
+      console.warn("Failed to fetch properties:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, [convex]);
+
+  // Listen for view switch events from profile screen
+  useEffect(() => {
+    const unsub = discoverEvents.on((target) => {
+      if (target === "dashboard") {
+        setShowDashboard(true);
+      } else {
+        setShowDashboard(false);
+        if (propertiesRef.current.length === 0) {
+          fetchProperties();
+        }
+      }
+    });
+    return () => { unsub(); };
+  }, [fetchProperties]);
+
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
 
@@ -1276,8 +1462,10 @@ export default function AppHome() {
     (async () => {
       try {
         const gate = await (convex as any).query("moveIn:hasPaidMoveInForTenant", {});
-        if (!cancelled && gate?.shouldShowDashboard) {
+        // Only auto-show dashboard if the user hasn't manually overridden to discover
+        if (!cancelled && gate?.shouldShowDashboard && discoverEvents.getOverride() !== "discover") {
           setShowDashboard(true);
+          discoverEvents.setGateView("dashboard");
           setLoading(false);
           clearTimeout(timeout);
           return;

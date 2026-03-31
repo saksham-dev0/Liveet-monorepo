@@ -96,6 +96,33 @@ export const getTenantActiveApplication = query({
   },
 });
 
+export const getTenantEmergencyContacts = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) return [];
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) return [];
+
+    const apps = await ctx.db
+      .query("tenantMoveInApplications")
+      .withIndex("by_tenant", (q) => q.eq("tenantUserId", user._id))
+      .order("desc")
+      .take(10);
+
+    const active = apps.find(
+      (a) => a.status === "submitted" || a.assignedRoomId != null,
+    );
+    return active?.emergencyContacts ?? [];
+  },
+});
+
 /** For operator task details: get complaint by its own ID (passed as the task's applicationId param). */
 export const getComplaintById = query({
   args: { complaintId: v.id("complaints") },

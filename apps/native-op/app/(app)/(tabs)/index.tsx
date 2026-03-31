@@ -216,6 +216,14 @@ export default function TestScreen() {
               <Ionicons name="chevron-down" size={12} color="#9CA3AF" />
             </Pressable>
             <Pressable
+              style={styles.notificationButton}
+              onPress={() => router.push("/(app)/notifications" as Href)}
+              accessibilityRole="button"
+              accessibilityLabel="View notifications"
+            >
+              <Ionicons name="notifications-outline" size={18} color="#1E293B" />
+            </Pressable>
+            <Pressable
               style={styles.profileButton}
               onPress={() =>
                 router.push("/(app)/profile" as Href)
@@ -488,6 +496,14 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "600",
     color: "#1a1a1a",
+  },
+  notificationButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "#fff",
+    justifyContent: "center",
+    alignItems: "center",
   },
   profileButton: {
     width: 34,

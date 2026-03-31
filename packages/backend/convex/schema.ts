@@ -247,6 +247,71 @@ export default defineSchema({
     .index("by_property", ["propertyId"])
     .index("by_application", ["applicationId"]),
 
+  /** Notifications sent to operators (e.g. late entry requests, complaints). */
+  operatorNotifications: defineTable({
+    operatorUserId: v.id("users"),
+    type: v.string(),
+    title: v.string(),
+    body: v.string(),
+    read: v.optional(v.boolean()),
+    refId: v.optional(v.string()),
+  }).index("by_operator", ["operatorUserId"]),
+
+  /** Communities created by tenants/users. */
+  communities: defineTable({
+    name: v.string(),
+    description: v.optional(v.string()),
+    category: v.string(),
+    createdByUserId: v.id("users"),
+    isPublic: v.optional(v.boolean()),
+  }).index("by_creator", ["createdByUserId"]),
+
+  /** Community memberships. */
+  communityMembers: defineTable({
+    communityId: v.id("communities"),
+    userId: v.id("users"),
+  })
+    .index("by_community", ["communityId"])
+    .index("by_user", ["userId"])
+    .index("by_community_and_user", ["communityId", "userId"]),
+
+  /** Hangouts created within or outside a community. */
+  hangouts: defineTable({
+    communityId: v.optional(v.id("communities")),
+    createdByUserId: v.id("users"),
+    title: v.string(),
+    description: v.optional(v.string()),
+    location: v.optional(v.string()),
+    dateTime: v.string(),
+    maxAttendees: v.optional(v.number()),
+    status: v.optional(v.union(v.literal("open"), v.literal("closed"), v.literal("cancelled"))),
+  })
+    .index("by_creator", ["createdByUserId"])
+    .index("by_community", ["communityId"]),
+
+  /** Hangout join requests / RSVPs. */
+  hangoutAttendees: defineTable({
+    hangoutId: v.id("hangouts"),
+    userId: v.id("users"),
+    status: v.optional(v.union(v.literal("pending"), v.literal("accepted"), v.literal("rejected"))),
+  })
+    .index("by_hangout", ["hangoutId"])
+    .index("by_user", ["userId"])
+    .index("by_hangout_and_user", ["hangoutId", "userId"]),
+
+  /** Late entry requests filed by tenants. */
+  lateEntryRequests: defineTable({
+    tenantUserId: v.id("users"),
+    propertyId: v.id("properties"),
+    applicationId: v.optional(v.id("tenantMoveInApplications")),
+    entryTime: v.string(),
+    reason: v.string(),
+    emergencyContact: v.string(),
+    status: v.optional(v.union(v.literal("open"), v.literal("approved"), v.literal("rejected"))),
+  })
+    .index("by_tenant", ["tenantUserId"])
+    .index("by_property", ["propertyId"]),
+
   /** Tenant move-in (E-KYC + details) for a liked property; upserted per tenant+property. */
   tenantMoveInApplications: defineTable({
     tenantUserId: v.id("users"),

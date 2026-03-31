@@ -1,20 +1,33 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth, useUser } from "@clerk/clerk-expo";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, radii, cardShadow } from "../../constants/theme";
+import { discoverEvents } from "../../constants/discoverEvents";
 
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { signOut } = useAuth();
   const { user } = useUser();
+  const [activeView, setActiveView] = useState<"discover" | "dashboard">(discoverEvents.current);
+
+  // Stay in sync when index.tsx changes the view (e.g. gate sets dashboard on mount)
+  useEffect(() => {
+    return discoverEvents.on(setActiveView);
+  }, []);
 
   const handleLogout = async () => {
     await signOut();
     router.replace("/(auth)");
+  };
+
+  const handleSwitchView = (target: "discover" | "dashboard") => {
+    setActiveView(target);
+    discoverEvents.emit(target);
+    router.navigate("/(app)" as any);
   };
 
   return (
@@ -31,6 +44,35 @@ export default function ProfileScreen() {
         <Text style={s.email}>
           {user?.primaryEmailAddress?.emailAddress ?? ""}
         </Text>
+
+        <View style={s.toggle}>
+          <TouchableOpacity
+            style={[s.toggleBtn, activeView === "discover" && s.toggleBtnActive]}
+            onPress={() => handleSwitchView("discover")}
+          >
+            <Ionicons
+              name="compass-outline"
+              size={16}
+              color={activeView === "discover" ? colors.white : colors.navy}
+            />
+            <Text style={[s.toggleText, activeView === "discover" && s.toggleTextActive]}>
+              Discover
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[s.toggleBtn, activeView === "dashboard" && s.toggleBtnActive]}
+            onPress={() => handleSwitchView("dashboard")}
+          >
+            <Ionicons
+              name="home-outline"
+              size={16}
+              color={activeView === "dashboard" ? colors.white : colors.navy}
+            />
+            <Text style={[s.toggleText, activeView === "dashboard" && s.toggleTextActive]}>
+              My Home
+            </Text>
+          </TouchableOpacity>
+        </View>
 
         <View style={s.card}>
           <TouchableOpacity style={s.row}>
@@ -98,7 +140,34 @@ const s = StyleSheet.create({
     color: colors.navy,
     marginBottom: 4,
   },
-  email: { fontSize: 14, color: colors.muted, marginBottom: 28 },
+  email: { fontSize: 14, color: colors.muted, marginBottom: 20 },
+  toggle: {
+    flexDirection: "row",
+    backgroundColor: colors.cardBg,
+    borderRadius: 24,
+    padding: 4,
+    marginBottom: 20,
+    ...cardShadow,
+  },
+  toggleBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 18,
+    borderRadius: 20,
+  },
+  toggleBtnActive: {
+    backgroundColor: colors.primary,
+  },
+  toggleText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: colors.navy,
+  },
+  toggleTextActive: {
+    color: colors.white,
+  },
   card: {
     backgroundColor: colors.cardBg,
     borderRadius: radii.card,
