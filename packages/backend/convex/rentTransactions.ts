@@ -50,22 +50,21 @@ export const getTenantRentInfo = query({
     );
     if (!active) return null;
 
-    // Get rent amount from the selected room option.
+    // Resolve rent amount: prefer the selected room option, then fall back to
+    // the assigned room's option. Never pick an arbitrary property-wide option.
     let rentAmount: number | null = null;
     if (active.selectedRoomOptionId) {
       const roomOption = await ctx.db.get(active.selectedRoomOptionId);
       rentAmount = roomOption?.rentAmount ?? null;
     }
-    // Fall back to any room option in the property.
-    if (rentAmount == null) {
-      const opts = await ctx.db
-        .query("roomOptions")
-        .withIndex("by_property_and_category", (q) =>
-          q.eq("propertyId", active.propertyId),
-        )
-        .take(10);
-      rentAmount = opts.find((o) => o.rentAmount != null)?.rentAmount ?? null;
+    if (rentAmount == null && active.assignedRoomId) {
+      const room = await ctx.db.get(active.assignedRoomId);
+      if (room?.roomOptionId) {
+        const roomOption = await ctx.db.get(room.roomOptionId);
+        rentAmount = roomOption?.rentAmount ?? null;
+      }
     }
+    if (rentAmount == null) return null;
 
     const agreementDuration =
       active.onboardingAgreementDuration ?? null;
@@ -95,25 +94,24 @@ export const submitExtendStayPayment = mutation({
     const app = await ctx.db.get(args.applicationId);
     if (!app || app.tenantUserId !== user._id) throw new Error("Application not found.");
 
-    const property = await ctx.db.get(args.propertyId);
+    const property = await ctx.db.get(app.propertyId);
     if (!property) throw new Error("Property not found.");
 
-    // Resolve rent amount.
+    // Resolve rent amount: prefer the selected room option, then fall back to
+    // the assigned room's option. Never pick an arbitrary property-wide option.
     let rentAmount: number | null = null;
     if (app.selectedRoomOptionId) {
       const roomOption = await ctx.db.get(app.selectedRoomOptionId);
       rentAmount = roomOption?.rentAmount ?? null;
     }
-    if (rentAmount == null) {
-      const opts = await ctx.db
-        .query("roomOptions")
-        .withIndex("by_property_and_category", (q) =>
-          q.eq("propertyId", app.propertyId),
-        )
-        .take(10);
-      rentAmount = opts.find((o) => o.rentAmount != null)?.rentAmount ?? null;
+    if (rentAmount == null && app.assignedRoomId) {
+      const room = await ctx.db.get(app.assignedRoomId);
+      if (room?.roomOptionId) {
+        const roomOption = await ctx.db.get(room.roomOptionId);
+        rentAmount = roomOption?.rentAmount ?? null;
+      }
     }
-    if (!rentAmount) throw new Error("Could not determine rent amount for this property.");
+    if (!rentAmount) throw new Error("Could not determine rent amount: no room option is linked to your application.");
 
     const agreementDuration = app.onboardingAgreementDuration ?? null;
     const renewalMonths = agreementDuration ? parseDurationMonths(agreementDuration) : null;
@@ -138,7 +136,7 @@ export const submitExtendStayPayment = mutation({
 
     const txId = await ctx.db.insert("rentTransactions", {
       tenantUserId: user._id,
-      propertyId: args.propertyId,
+      propertyId: app.propertyId,
       applicationId: args.applicationId,
       type: args.type,
       months,

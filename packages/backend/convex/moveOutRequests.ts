@@ -28,6 +28,60 @@ function parseDurationMonths(duration: string): number | null {
   return null;
 }
 
+/** Extracts calendar { year, month (0-based), day } from a ms timestamp using local time. */
+function tsToYMD(ts: number): { year: number; month: number; day: number } {
+  const d = new Date(ts);
+  return { year: d.getFullYear(), month: d.getMonth(), day: d.getDate() };
+}
+
+/**
+ * Adds N months to a YMD date, clamping the day to the last valid day of the
+ * target month (e.g. Jan 31 + 1 month → Feb 28/29, not Mar 3).
+ */
+function addMonthsSafe(
+  ymd: { year: number; month: number; day: number },
+  months: number,
+): { year: number; month: number; day: number } {
+  const raw = ymd.month + months;
+  const year = ymd.year + Math.floor(raw / 12);
+  const month = ((raw % 12) + 12) % 12;
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  return { year, month, day: Math.min(ymd.day, daysInMonth) };
+}
+
+/** Compares two YMD dates. Returns negative / 0 / positive like Array.sort. */
+function cmpYMD(
+  a: { year: number; month: number; day: number },
+  b: { year: number; month: number; day: number },
+): number {
+  if (a.year !== b.year) return a.year - b.year;
+  if (a.month !== b.month) return a.month - b.month;
+  return a.day - b.day;
+}
+
+/** Parses a DD/MM/YYYY string to a YMD object, or null if malformed. */
+function parseDDMMYYYY(s: string): { year: number; month: number; day: number } | null {
+  const parts = s.trim().split("/");
+  if (parts.length !== 3) return null;
+  const [dd, mm, yyyy] = parts.map((p) => parseInt(p, 10));
+  if (isNaN(dd) || isNaN(mm) || isNaN(yyyy)) return null;
+  return { year: yyyy, month: mm - 1, day: dd };
+}
+
+/** Converts a YMD object to a midnight-local timestamp (ms) for client consumption. */
+function ymdToTs(ymd: { year: number; month: number; day: number }): number {
+  return new Date(ymd.year, ymd.month, ymd.day).getTime();
+}
+
+/** Formats a YMD object for display in error messages. */
+function ymdToDisplayString(ymd: { year: number; month: number; day: number }): string {
+  return new Date(ymd.year, ymd.month, ymd.day).toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
 /** Returns the tenant's active application info needed for move-out validation. */
 export const getTenantAgreementInfo = query({
   args: {},
@@ -68,12 +122,12 @@ export const getTenantAgreementInfo = query({
     const months = agreementDuration ? parseDurationMonths(agreementDuration) : null;
     const assignedAt = active.assignedAt ?? null;
 
-    // Compute agreement end timestamp (ms) when we have both inputs.
+    // Compute agreement end as a date-only midnight timestamp to avoid
+    // time-of-day mismatches and month-overflow rollovers.
     let agreementEndsAt: number | null = null;
     if (assignedAt != null && months != null) {
-      const d = new Date(assignedAt);
-      d.setMonth(d.getMonth() + months);
-      agreementEndsAt = d.getTime();
+      const endYmd = addMonthsSafe(tsToYMD(assignedAt), months);
+      agreementEndsAt = ymdToTs(endYmd);
     }
 
     return {
@@ -101,40 +155,39 @@ export const submitMoveOutRequest = mutation({
     const property = await ctx.db.get(args.propertyId);
     if (!property) throw new Error("Property not found.");
 
-    // Server-side validation: ensure move-out date is not before agreement expiry.
+    // Validate the caller-supplied applicationId — fetch it from the DB and
+    // verify ownership and property match before trusting it.
+    let validatedApplicationId: typeof args.applicationId = undefined;
     if (args.applicationId) {
       const app = await ctx.db.get(args.applicationId);
-      if (app) {
-        let agreementDuration = app.onboardingAgreementDuration ?? null;
-        if (!agreementDuration) {
-          const propertyAgreement = await ctx.db
-            .query("propertyAgreement")
-            .withIndex("by_property", (q) => q.eq("propertyId", app.propertyId))
-            .unique();
-          agreementDuration = propertyAgreement?.agreementDuration ?? null;
-        }
-        const months = agreementDuration ? parseDurationMonths(agreementDuration) : null;
-        const assignedAt = app.assignedAt ?? null;
+      if (!app) throw new Error("Application not found.");
+      if (app.tenantUserId !== user._id)
+        throw new Error("Not authorised: application does not belong to you.");
+      if (app.propertyId !== args.propertyId)
+        throw new Error("Not authorised: application does not match the given property.");
 
-        if (assignedAt != null && months != null) {
-          const endDate = new Date(assignedAt);
-          endDate.setMonth(endDate.getMonth() + months);
+      // Use the DB-verified _id from here on (not the raw incoming value).
+      validatedApplicationId = app._id;
 
-          // Parse DD/MM/YYYY
-          const parts = requestedMoveOutDate.split("/");
-          if (parts.length === 3) {
-            const [dd, mm, yyyy] = parts;
-            const moveOutTs = new Date(
-              parseInt(yyyy, 10),
-              parseInt(mm, 10) - 1,
-              parseInt(dd, 10),
-            ).getTime();
-            if (moveOutTs < endDate.getTime()) {
-              throw new Error(
-                `Move-out date must be on or after your agreement end date (${endDate.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}).`,
-              );
-            }
-          }
+      // Server-side validation: ensure move-out date is not before agreement expiry.
+      let agreementDuration = app.onboardingAgreementDuration ?? null;
+      if (!agreementDuration) {
+        const propertyAgreement = await ctx.db
+          .query("propertyAgreement")
+          .withIndex("by_property", (q) => q.eq("propertyId", app.propertyId))
+          .unique();
+        agreementDuration = propertyAgreement?.agreementDuration ?? null;
+      }
+      const months = agreementDuration ? parseDurationMonths(agreementDuration) : null;
+      const assignedAt = app.assignedAt ?? null;
+
+      if (assignedAt != null && months != null) {
+        const endYmd = addMonthsSafe(tsToYMD(assignedAt), months);
+        const moveOutYmd = parseDDMMYYYY(requestedMoveOutDate);
+        if (moveOutYmd !== null && cmpYMD(moveOutYmd, endYmd) < 0) {
+          throw new Error(
+            `Move-out date must be on or after your agreement end date (${ymdToDisplayString(endYmd)}).`,
+          );
         }
       }
     }
@@ -142,7 +195,7 @@ export const submitMoveOutRequest = mutation({
     const moveOutRequestId = await ctx.db.insert("moveOutRequests", {
       tenantUserId: user._id,
       propertyId: args.propertyId,
-      applicationId: args.applicationId,
+      applicationId: validatedApplicationId,
       requestedMoveOutDate,
       status: "open",
     });
@@ -157,11 +210,24 @@ export const getMoveOutRequestById = query({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity?.tokenIdentifier) return null;
 
+    const caller = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!caller) return null;
+
     const req = await ctx.db.get(args.moveOutRequestId);
     if (!req) return null;
 
-    const tenant = await ctx.db.get(req.tenantUserId);
     const property = await ctx.db.get(req.propertyId);
+
+    const isTenant = caller._id === req.tenantUserId;
+    const isOperator = !!property && property.userId === caller._id;
+    if (!isTenant && !isOperator) return null;
+
+    const tenant = await ctx.db.get(req.tenantUserId);
 
     let assignedRoomNumber: string | null = null;
     if (req.applicationId) {
