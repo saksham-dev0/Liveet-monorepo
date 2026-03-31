@@ -76,34 +76,45 @@ export default function NotificationsScreen() {
   const [detailSheet, setDetailSheet] = useState<{ type: string; refId: string } | null>(null);
   const [lateEntryDetail, setLateEntryDetail] = useState<LateEntryDetail | null | undefined>(undefined);
 
-  const refreshNotifications = useCallback(async () => {
+  const refreshNotifications = useCallback(async (): Promise<NotificationItem[] | null> => {
     try {
       const data = await (convex as any).query(
         "notifications:getOperatorNotifications",
         { limit: 30 },
       );
       const items = data?.items;
-      setNotifications(Array.isArray(items) ? items : []);
+      const list: NotificationItem[] = Array.isArray(items) ? items : [];
+      setNotifications(list);
+      return list;
     } catch {
-      setNotifications([]);
+      setNotifications((prev) => prev ?? []);
+      return null;
     }
   }, [convex]);
 
-  const markAllRead = useCallback(async () => {
+  const markAllRead = useCallback(async (snapshot: NotificationItem[]) => {
     try {
-      await (convex as any).mutation("notifications:markAllOperatorNotificationsRead", {});
-      setNotifications((prev) => prev?.map((n) => ({ ...n, read: true })) ?? prev);
+      const ids = snapshot.filter((n) => !n.read).map((n) => n._id);
+      if (ids.length === 0) return;
+      await (convex as any).mutation(
+        "notifications:markAllOperatorNotificationsRead",
+        { notificationIds: ids },
+      );
+      setNotifications((prev) =>
+        prev?.map((n) => (ids.includes(n._id) ? { ...n, read: true } : n)) ?? prev,
+      );
     } catch {
-      // silent
+      // silent — will retry on next focus
     }
   }, [convex]);
 
   useFocusEffect(
     useCallback(() => {
       if (!authLoaded || !isSignedIn) return;
-      void refreshNotifications().then(() => {
-        void markAllRead();
-      });
+      void (async () => {
+        const snapshot = await refreshNotifications();
+        if (snapshot !== null) void markAllRead(snapshot);
+      })();
     }, [authLoaded, isSignedIn, refreshNotifications, markAllRead]),
   );
 

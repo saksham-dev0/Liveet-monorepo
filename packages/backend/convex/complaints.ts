@@ -80,8 +80,7 @@ export const getTenantActiveApplication = query({
     const apps = await ctx.db
       .query("tenantMoveInApplications")
       .withIndex("by_tenant", (q) => q.eq("tenantUserId", user._id))
-      .order("desc")
-      .take(10);
+      .collect();
 
     // Return the most recent submitted/assigned application
     const active = apps.find(
@@ -113,8 +112,7 @@ export const getTenantEmergencyContacts = query({
     const apps = await ctx.db
       .query("tenantMoveInApplications")
       .withIndex("by_tenant", (q) => q.eq("tenantUserId", user._id))
-      .order("desc")
-      .take(10);
+      .collect();
 
     const active = apps.find(
       (a) => a.status === "submitted" || a.assignedRoomId != null,
