@@ -44,19 +44,25 @@ export const submitLateEntryRequest = mutation({
         throw new Error("Not authorised: application does not belong to you.");
       if (app.propertyId !== args.propertyId)
         throw new Error("Not authorised: application does not match the given property.");
+      const isActive = app.status === "submitted" || app.assignedRoomId != null;
+      if (!isActive)
+        throw new Error("Not authorised: application is not currently active.");
       validatedApplicationId = app._id;
     } else {
-      // No applicationId supplied — verify the caller has a move-in application
+      // No applicationId supplied — verify the caller has an active move-in application
       // for this property before allowing the request.
-      const app = await ctx.db
+      const apps = await ctx.db
         .query("tenantMoveInApplications")
         .withIndex("by_tenant_and_property", (q) =>
           q.eq("tenantUserId", user._id).eq("propertyId", args.propertyId),
         )
-        .first();
-      if (!app)
+        .collect();
+      const active = apps.find(
+        (a) => a.status === "submitted" || a.assignedRoomId != null,
+      );
+      if (!active)
         throw new Error(
-          "Not authorised: no move-in application found for this property.",
+          "Not authorised: no active move-in application found for this property.",
         );
     }
 

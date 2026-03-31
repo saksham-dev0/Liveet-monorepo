@@ -106,12 +106,7 @@ export const listCommunities = query({
           .withIndex("by_community", (q) => q.eq("communityId", c._id))
           .collect();
         const isMember = currentUserId
-          ? (await ctx.db
-              .query("communityMembers")
-              .withIndex("by_community_and_user", (q) =>
-                q.eq("communityId", c._id).eq("userId", currentUserId as any),
-              )
-              .unique()) !== null
+          ? members.some((m) => m.userId === currentUserId)
           : false;
         const creator = await ctx.db.get(c.createdByUserId);
         return {
@@ -247,12 +242,7 @@ export const listHangouts = query({
           .withIndex("by_hangout", (q) => q.eq("hangoutId", h._id))
           .collect();
         const isGoing = currentUserId
-          ? (await ctx.db
-              .query("hangoutAttendees")
-              .withIndex("by_hangout_and_user", (q) =>
-                q.eq("hangoutId", h._id).eq("userId", currentUserId as any),
-              )
-              .unique()) !== null
+          ? attendees.some((a) => a.userId === currentUserId)
           : false;
         const creator = await ctx.db.get(h.createdByUserId);
         const community = h.communityId
