@@ -1,5 +1,6 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { Stack, usePathname, useRouter } from "expo-router";
+import { discoverEvents } from "../../constants/discoverEvents";
 import {
   View,
   StyleSheet,
@@ -20,7 +21,6 @@ import { colors } from "../../constants/theme";
 
 const BAR_SIDE_MARGIN = 24;
 const BAR_H_PADDING = 6;
-const PLUS_GAP = 76; // reserved space for the "+" in the center of the bar
 const EASE = Easing.bezier(0.4, 0, 0.2, 1);
 
 const NAV_TABS = [
@@ -52,7 +52,7 @@ function getActiveRouteName(pathname: string | null | undefined) {
   return last && last !== "(app)" ? last : "index";
 }
 
-function BottomTabBar({ activeRouteName }: { activeRouteName: string }) {
+function BottomTabBar({ activeRouteName, isDashboard }: { activeRouteName: string; isDashboard: boolean }) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { width: screenWidth } = useWindowDimensions();
@@ -64,13 +64,12 @@ function BottomTabBar({ activeRouteName }: { activeRouteName: string }) {
 
   const pillInnerWidth = screenWidth - BAR_SIDE_MARGIN * 2;
   const tabWidth =
-    (pillInnerWidth - BAR_H_PADDING * 2 - PLUS_GAP) / NAV_TABS.length;
+    (pillInnerWidth - BAR_H_PADDING * 2) / NAV_TABS.length;
 
   const highlightX = useSharedValue(0);
 
   useEffect(() => {
-    const x =
-      safeActiveTabIndex * tabWidth + (safeActiveTabIndex >= 2 ? PLUS_GAP : 0);
+    const x = safeActiveTabIndex * tabWidth;
     highlightX.value = withTiming(x, { duration: 300, easing: EASE });
   }, [safeActiveTabIndex, tabWidth]);
 
@@ -90,22 +89,24 @@ function BottomTabBar({ activeRouteName }: { activeRouteName: string }) {
             ]}
           />
 
-          {NAV_TABS.slice(0, 2).map((tab) => {
+          {NAV_TABS.map((tab) => {
             const isActive = tab.routeName === activeRouteName;
+            const isHomeTab = tab.routeName === "index";
+            const label = isHomeTab && isDashboard ? "Home" : tab.label;
+            const activeIcon = isHomeTab && isDashboard ? "home" : tab.icon;
+            const inactiveIcon = isHomeTab && isDashboard ? "home-outline" : tab.iconOutline;
             return (
               <Pressable
                 key={tab.routeName}
                 style={[styles.navTab, { width: tabWidth }]}
                 onPress={() => {
                   const href = tab.routeName === "index" ? "/(app)" : `/(app)/${tab.routeName}`;
-                  // Use `navigate` so the previous tab screen isn't removed from the stack,
-                  // which would cause Discover to remount and refetch its properties.
                   router.navigate(href as any);
                 }}
               >
                 <View style={styles.navTabContent}>
                   <Ionicons
-                    name={isActive ? tab.icon : tab.iconOutline}
+                    name={isActive ? activeIcon : inactiveIcon}
                     size={22}
                     color={isActive ? "#fff" : "rgba(255,255,255,0.45)"}
                   />
@@ -119,45 +120,7 @@ function BottomTabBar({ activeRouteName }: { activeRouteName: string }) {
                       },
                     ]}
                   >
-                    {tab.label}
-                  </Text>
-                </View>
-              </Pressable>
-            );
-          })}
-
-          {/* center gap for the "+" */}
-          <View style={{ width: PLUS_GAP }} />
-
-          {NAV_TABS.slice(2).map((tab) => {
-            const isActive = tab.routeName === activeRouteName;
-            return (
-              <Pressable
-                key={tab.routeName}
-                style={[styles.navTab, { width: tabWidth }]}
-                onPress={() => {
-                  const href = tab.routeName === "index" ? "/(app)" : `/(app)/${tab.routeName}`;
-                  // Keep other tab screens mounted for a better UX.
-                  router.navigate(href as any);
-                }}
-              >
-                <View style={styles.navTabContent}>
-                  <Ionicons
-                    name={isActive ? tab.icon : tab.iconOutline}
-                    size={22}
-                    color={isActive ? "#fff" : "rgba(255,255,255,0.45)"}
-                  />
-                  <Text
-                    style={[
-                      styles.navLabel,
-                      {
-                        color: isActive
-                          ? "#fff"
-                          : "rgba(255,255,255,0.45)",
-                      },
-                    ]}
-                  >
-                    {tab.label}
+                    {label}
                   </Text>
                 </View>
               </Pressable>
@@ -166,15 +129,6 @@ function BottomTabBar({ activeRouteName }: { activeRouteName: string }) {
         </View>
       </View>
 
-      {/* Center "+" button (visual only for now) */}
-      <Pressable
-        style={styles.plusBtn}
-        onPress={() => router.navigate("/(app)")}
-        accessibilityRole="button"
-        accessibilityLabel="Add"
-      >
-        <Ionicons name="add" size={30} color={colors.primary} />
-      </Pressable>
     </View>
   );
 }
@@ -185,6 +139,12 @@ export default function AppLayout() {
   // Hide tab bar on pushed stacks (favorites, chat thread).
   const path = pathname ?? "";
   const showTabBar = !path.includes("/favorites") && !path.includes("/chats/") && !path.includes("/kyc/") && !path.endsWith("/complaint");
+
+  const [isDashboard, setIsDashboard] = useState(discoverEvents.current() === "dashboard");
+  useEffect(() => {
+    const unsub = discoverEvents.on((view) => setIsDashboard(view === "dashboard"));
+    return () => { unsub(); };
+  }, []);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.pageBg }}>
@@ -210,7 +170,7 @@ export default function AppLayout() {
         <Stack.Screen name="complaint" options={{ animation: "slide_from_right" } as any} />
       </Stack>
 
-      {showTabBar ? <BottomTabBar activeRouteName={activeRouteName} /> : null}
+      {showTabBar ? <BottomTabBar activeRouteName={activeRouteName} isDashboard={isDashboard} /> : null}
     </View>
   );
 }
@@ -246,24 +206,6 @@ const styles = StyleSheet.create({
   },
   navTab: {
     flex: 0,
-  },
-  plusBtn: {
-    position: "absolute",
-    left: "50%",
-    top: "50%",
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: colors.white,
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 10,
-    elevation: 12,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-    transform: [{ translateX: -30 }, { translateY: -30 }],
   },
   navTabContent: {
     alignItems: "center",
