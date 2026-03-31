@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   FlatList,
   Alert,
+  TextInput,
 } from "react-native";
 import { BottomSheet } from "../../components/BottomSheet";
 import { Image } from "expo-image";
@@ -230,6 +231,35 @@ function TenantDashboard({ insets }: { insets: EdgeInsets }) {
   const [showNotifications, setShowNotifications] = useState(false);
   const [confirmedComplaintIds, setConfirmedComplaintIds] = useState<Set<string>>(new Set());
 
+  const [showShiftRequest, setShowShiftRequest] = useState(false);
+  const [shiftCurrentRoom, setShiftCurrentRoom] = useState("");
+  const [shiftReason, setShiftReason] = useState("");
+  const [shiftSubmitting, setShiftSubmitting] = useState(false);
+  const [shiftSuccess, setShiftSuccess] = useState(false);
+
+  const [showMoveOut, setShowMoveOut] = useState(false);
+  const [moveOutDate, setMoveOutDate] = useState("");
+  const [moveOutAgreementInfo, setMoveOutAgreementInfo] = useState<{
+    applicationId: string;
+    propertyId: string;
+    agreementEndsAt: number | null;
+    agreementDuration: string | null;
+  } | null>(null);
+  const [moveOutSubmitting, setMoveOutSubmitting] = useState(false);
+  const [moveOutSuccess, setMoveOutSuccess] = useState(false);
+
+  const [showExtendStay, setShowExtendStay] = useState(false);
+  const [extendOption, setExtendOption] = useState<"monthly" | "quarterly" | "renewal" | null>(null);
+  const [extendRentInfo, setExtendRentInfo] = useState<{
+    applicationId: string;
+    propertyId: string;
+    rentAmount: number | null;
+    renewalMonths: number | null;
+    agreementDuration: string | null;
+  } | null>(null);
+  const [extendPaying, setExtendPaying] = useState(false);
+  const [extendResult, setExtendResult] = useState<{ amount: number; description: string } | null>(null);
+
   const fetchNotifications = useCallback(async () => {
     try {
       const res = await (convex as any).query("complaints:getTenantNotifications", {});
@@ -265,9 +295,131 @@ function TenantDashboard({ insets }: { insets: EdgeInsets }) {
     }
   }
 
+  async function handleSubmitShiftRequest() {
+    if (!shiftCurrentRoom.trim() || !shiftReason.trim()) {
+      Alert.alert("Missing fields", "Please fill in both fields.");
+      return;
+    }
+    setShiftSubmitting(true);
+    try {
+      const activeApp = await (convex as any).query("complaints:getTenantActiveApplication", {});
+      if (!activeApp?.propertyId) {
+        Alert.alert("Error", "Could not find your active property. Please try again.");
+        return;
+      }
+      await (convex as any).mutation("shiftRequests:submitShiftRequest", {
+        propertyId: activeApp.propertyId,
+        applicationId: activeApp.applicationId,
+        currentRoomNumber: shiftCurrentRoom.trim(),
+        reason: shiftReason.trim(),
+      });
+      setShiftSuccess(true);
+    } catch (e) {
+      Alert.alert("Error", e instanceof Error ? e.message : "Could not submit shift request.");
+    } finally {
+      setShiftSubmitting(false);
+    }
+  }
+
   function handleQuickAction(key: string) {
     if (key === "complaint") {
       router.push("/(app)/complaint" as any);
+    } else if (key === "shift") {
+      setShiftCurrentRoom("");
+      setShiftReason("");
+      setShiftSuccess(false);
+      setShowShiftRequest(true);
+    } else if (key === "extend") {
+      setExtendOption(null);
+      setExtendResult(null);
+      setExtendRentInfo(null);
+      setShowExtendStay(true);
+      void (async () => {
+        try {
+          const info = await (convex as any).query("rentTransactions:getTenantRentInfo", {});
+          if (info) setExtendRentInfo(info);
+        } catch {}
+      })();
+    } else if (key === "moveout") {
+      setMoveOutDate("");
+      setMoveOutSuccess(false);
+      setMoveOutAgreementInfo(null);
+      setShowMoveOut(true);
+      // Load agreement info in background
+      void (async () => {
+        try {
+          const info = await (convex as any).query("moveOutRequests:getTenantAgreementInfo", {});
+          if (info) setMoveOutAgreementInfo(info);
+        } catch {}
+      })();
+    }
+  }
+
+  /** Parse DD/MM/YYYY → timestamp, or null if invalid. */
+  function parseDDMMYYYY(dateStr: string): number | null {
+    const parts = dateStr.trim().split("/");
+    if (parts.length !== 3) return null;
+    const [dd, mm, yyyy] = parts;
+    const d = new Date(parseInt(yyyy, 10), parseInt(mm, 10) - 1, parseInt(dd, 10));
+    if (isNaN(d.getTime())) return null;
+    return d.getTime();
+  }
+
+  /** Returns validation state for the entered move-out date. */
+  function getMoveOutValidation(): { ok: boolean; message: string } | null {
+    if (!moveOutDate.trim()) return null;
+    const ts = parseDDMMYYYY(moveOutDate);
+    if (ts === null) return { ok: false, message: "Enter a valid date in DD/MM/YYYY format." };
+    if (!moveOutAgreementInfo?.agreementEndsAt) return null; // Can't validate without agreement info
+    if (ts < moveOutAgreementInfo.agreementEndsAt) {
+      const endDateStr = new Date(moveOutAgreementInfo.agreementEndsAt).toLocaleDateString("en-IN", {
+        day: "2-digit", month: "short", year: "numeric",
+      });
+      return {
+        ok: false,
+        message: `Not applicable — your agreement hasn't expired yet. It ends on ${endDateStr}.`,
+      };
+    }
+    return { ok: true, message: "Valid move-out date." };
+  }
+
+  async function handleExtendPay() {
+    if (!extendOption || !extendRentInfo) return;
+    setExtendPaying(true);
+    try {
+      const res = await (convex as any).mutation("rentTransactions:submitExtendStayPayment", {
+        applicationId: extendRentInfo.applicationId,
+        propertyId: extendRentInfo.propertyId,
+        type: extendOption,
+      });
+      setExtendResult({ amount: res.amount, description: res.description });
+    } catch (e) {
+      Alert.alert("Error", e instanceof Error ? e.message : "Could not process payment.");
+    } finally {
+      setExtendPaying(false);
+    }
+  }
+
+  async function handleSubmitMoveOutRequest() {
+    const validation = getMoveOutValidation();
+    if (!validation?.ok) return;
+    setMoveOutSubmitting(true);
+    try {
+      const info = moveOutAgreementInfo ?? await (convex as any).query("moveOutRequests:getTenantAgreementInfo", {});
+      if (!info?.propertyId) {
+        Alert.alert("Error", "Could not find your active property.");
+        return;
+      }
+      await (convex as any).mutation("moveOutRequests:submitMoveOutRequest", {
+        propertyId: info.propertyId,
+        applicationId: info.applicationId,
+        requestedMoveOutDate: moveOutDate.trim(),
+      });
+      setMoveOutSuccess(true);
+    } catch (e) {
+      Alert.alert("Error", e instanceof Error ? e.message : "Could not submit move-out request.");
+    } finally {
+      setMoveOutSubmitting(false);
     }
   }
 
@@ -295,9 +447,23 @@ function TenantDashboard({ insets }: { insets: EdgeInsets }) {
               <View style={[s.notifItem, !item.read && s.notifItemUnread]}>
                 <View style={s.notifIconWrap}>
                   <Ionicons
-                    name={item.type === "complaint_resolved" ? "checkmark-circle" : "notifications"}
+                    name={
+                      item.type === "complaint_resolved" ? "checkmark-circle" :
+                      item.type === "shift_request_approved" ? "swap-horizontal" :
+                      item.type === "shift_request_rejected" ? "close-circle" :
+                      item.type === "move_out_approved" ? "exit" :
+                      item.type === "move_out_rejected" ? "close-circle" :
+                      "notifications"
+                    }
                     size={20}
-                    color={item.type === "complaint_resolved" ? "#16A34A" : colors.primary}
+                    color={
+                      item.type === "complaint_resolved" ? "#16A34A" :
+                      item.type === "shift_request_approved" ? "#3B82F6" :
+                      item.type === "shift_request_rejected" ? "#DC2626" :
+                      item.type === "move_out_approved" ? "#F59E0B" :
+                      item.type === "move_out_rejected" ? "#DC2626" :
+                      colors.primary
+                    }
                   />
                 </View>
                 <View style={s.notifTextWrap}>
@@ -326,6 +492,249 @@ function TenantDashboard({ insets }: { insets: EdgeInsets }) {
               </View>
             )}
           />
+        )}
+      </BottomSheet>
+
+      {/* Shift Request BottomSheet */}
+      <BottomSheet
+        visible={showShiftRequest}
+        onClose={() => setShowShiftRequest(false)}
+        title="Shift Request"
+        showCloseButton
+        maxHeight="60%"
+        keyboardAvoiding
+      >
+        {shiftSuccess ? (
+          <View style={s.shiftSuccessWrap}>
+            <Ionicons name="checkmark-circle" size={48} color="#16A34A" />
+            <Text style={s.shiftSuccessTitle}>Request Submitted</Text>
+            <Text style={s.shiftSuccessBody}>
+              Your shift request has been sent to your property manager. You'll be notified once it's reviewed.
+            </Text>
+            <TouchableOpacity
+              style={s.shiftSubmitBtn}
+              activeOpacity={0.8}
+              onPress={() => setShowShiftRequest(false)}
+            >
+              <Text style={s.shiftSubmitBtnText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={s.shiftFormWrap}>
+            <Text style={s.shiftFieldLabel}>Current Room Number</Text>
+            <TextInput
+              style={s.shiftInput}
+              placeholder="e.g. 203"
+              placeholderTextColor={colors.muted}
+              value={shiftCurrentRoom}
+              onChangeText={setShiftCurrentRoom}
+              editable={!shiftSubmitting}
+            />
+            <Text style={[s.shiftFieldLabel, { marginTop: 14 }]}>Reason for Shift</Text>
+            <TextInput
+              style={[s.shiftInput, s.shiftInputMultiline]}
+              placeholder="Describe why you'd like to shift rooms..."
+              placeholderTextColor={colors.muted}
+              value={shiftReason}
+              onChangeText={setShiftReason}
+              multiline
+              numberOfLines={3}
+              editable={!shiftSubmitting}
+            />
+            <TouchableOpacity
+              style={[s.shiftSubmitBtn, shiftSubmitting && { opacity: 0.6 }]}
+              activeOpacity={0.8}
+              disabled={shiftSubmitting}
+              onPress={() => void handleSubmitShiftRequest()}
+            >
+              {shiftSubmitting ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={s.shiftSubmitBtnText}>Submit Request</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
+      </BottomSheet>
+
+      {/* Move-out Request BottomSheet */}
+      <BottomSheet
+        visible={showMoveOut}
+        onClose={() => setShowMoveOut(false)}
+        title="Move-out Request"
+        showCloseButton
+        maxHeight="60%"
+        keyboardAvoiding
+      >
+        {moveOutSuccess ? (
+          <View style={s.shiftSuccessWrap}>
+            <Ionicons name="checkmark-circle" size={48} color="#16A34A" />
+            <Text style={s.shiftSuccessTitle}>Request Submitted</Text>
+            <Text style={s.shiftSuccessBody}>
+              Your move-out request has been sent to your property manager. You'll be notified once it's reviewed.
+            </Text>
+            <TouchableOpacity
+              style={s.shiftSubmitBtn}
+              activeOpacity={0.8}
+              onPress={() => setShowMoveOut(false)}
+            >
+              <Text style={s.shiftSubmitBtnText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={s.shiftFormWrap}>
+            <Text style={s.shiftFieldLabel}>Requested Move-out Date</Text>
+            <TextInput
+              style={s.shiftInput}
+              placeholder="DD/MM/YYYY"
+              placeholderTextColor={colors.muted}
+              value={moveOutDate}
+              onChangeText={setMoveOutDate}
+              keyboardType="numbers-and-punctuation"
+              editable={!moveOutSubmitting}
+            />
+
+            {(() => {
+              const v = getMoveOutValidation();
+              if (!v) return null;
+              return (
+                <View style={[s.moveOutValidationRow, { backgroundColor: v.ok ? "#DCFCE7" : "#FEF3C7" }]}>
+                  <Ionicons
+                    name={v.ok ? "checkmark-circle-outline" : "alert-circle-outline"}
+                    size={16}
+                    color={v.ok ? "#16A34A" : "#D97706"}
+                  />
+                  <Text style={[s.moveOutValidationText, { color: v.ok ? "#166534" : "#92400E" }]}>
+                    {v.message}
+                  </Text>
+                </View>
+              );
+            })()}
+
+            <TouchableOpacity
+              style={[
+                s.shiftSubmitBtn,
+                (!getMoveOutValidation()?.ok || moveOutSubmitting) && { opacity: 0.5 },
+              ]}
+              activeOpacity={0.8}
+              disabled={!getMoveOutValidation()?.ok || moveOutSubmitting}
+              onPress={() => void handleSubmitMoveOutRequest()}
+            >
+              {moveOutSubmitting ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={s.shiftSubmitBtnText}>Submit Request</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
+      </BottomSheet>
+
+      {/* Extend Stay BottomSheet */}
+      <BottomSheet
+        visible={showExtendStay}
+        onClose={() => setShowExtendStay(false)}
+        title="Extend Stay"
+        showCloseButton
+        maxHeight="65%"
+      >
+        {extendResult ? (
+          <View style={s.shiftSuccessWrap}>
+            <Ionicons name="checkmark-circle" size={48} color="#16A34A" />
+            <Text style={s.shiftSuccessTitle}>Payment Successful</Text>
+            <Text style={s.shiftSuccessBody}>
+              ₹{extendResult.amount.toLocaleString("en-IN")} paid · {extendResult.description}
+            </Text>
+            <TouchableOpacity
+              style={s.shiftSubmitBtn}
+              activeOpacity={0.8}
+              onPress={() => setShowExtendStay(false)}
+            >
+              <Text style={s.shiftSubmitBtnText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={s.shiftFormWrap}>
+            {extendRentInfo === null ? (
+              <View style={{ alignItems: "center", paddingVertical: 24 }}>
+                <ActivityIndicator size="small" color={colors.primary} />
+              </View>
+            ) : (
+              <>
+                <Text style={s.shiftFieldLabel}>Choose extension type</Text>
+                {(
+                  [
+                    {
+                      key: "monthly" as const,
+                      label: "Monthly",
+                      sub: "1 month",
+                      amount: extendRentInfo.rentAmount,
+                    },
+                    {
+                      key: "quarterly" as const,
+                      label: "Quarterly",
+                      sub: "3 months",
+                      amount: extendRentInfo.rentAmount != null ? extendRentInfo.rentAmount * 3 : null,
+                    },
+                    {
+                      key: "renewal" as const,
+                      label: "Renew Agreement",
+                      sub: extendRentInfo.agreementDuration ?? "Previous duration",
+                      amount:
+                        extendRentInfo.rentAmount != null && extendRentInfo.renewalMonths != null
+                          ? extendRentInfo.rentAmount * extendRentInfo.renewalMonths
+                          : null,
+                    },
+                  ] as const
+                ).map((opt) => (
+                  <TouchableOpacity
+                    key={opt.key}
+                    style={[s.extendOptionRow, extendOption === opt.key && s.extendOptionRowSelected]}
+                    activeOpacity={0.7}
+                    onPress={() => setExtendOption(opt.key)}
+                  >
+                    <View style={s.extendOptionLeft}>
+                      <Text style={[s.extendOptionLabel, extendOption === opt.key && { color: "#1D4ED8" }]}>
+                        {opt.label}
+                      </Text>
+                      <Text style={s.extendOptionSub}>{opt.sub}</Text>
+                    </View>
+                    <Text style={[s.extendOptionAmount, extendOption === opt.key && { color: "#1D4ED8" }]}>
+                      {opt.amount != null
+                        ? `₹${opt.amount.toLocaleString("en-IN")}`
+                        : "—"}
+                    </Text>
+                    {extendOption === opt.key && (
+                      <Ionicons name="checkmark-circle" size={20} color="#1D4ED8" style={{ marginLeft: 8 }} />
+                    )}
+                  </TouchableOpacity>
+                ))}
+
+                <TouchableOpacity
+                  style={[s.shiftSubmitBtn, { marginTop: 18 }, (!extendOption || extendPaying) && { opacity: 0.5 }]}
+                  activeOpacity={0.8}
+                  disabled={!extendOption || extendPaying}
+                  onPress={() => void handleExtendPay()}
+                >
+                  {extendPaying ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={s.shiftSubmitBtnText}>
+                      {extendOption
+                        ? `Pay ₹${(
+                            extendOption === "monthly"
+                              ? extendRentInfo.rentAmount
+                              : extendOption === "quarterly"
+                              ? (extendRentInfo.rentAmount ?? 0) * 3
+                              : (extendRentInfo.rentAmount ?? 0) * (extendRentInfo.renewalMonths ?? 1)
+                          )?.toLocaleString("en-IN") ?? "—"}`
+                        : "Select an option"}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
         )}
       </BottomSheet>
 
@@ -1516,5 +1925,65 @@ const s = StyleSheet.create({
     fontSize: 12,
     fontWeight: "700",
     color: colors.white,
+  },
+
+  // Shift request bottom sheet
+  shiftFormWrap: { paddingBottom: 8 },
+  shiftFieldLabel: { fontSize: 13, fontWeight: "600", color: colors.navy, marginBottom: 6 },
+  shiftInput: {
+    borderWidth: 1,
+    borderColor: "#D1D5DB",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: colors.black,
+    backgroundColor: "#F8FAFC",
+  },
+  shiftInputMultiline: { minHeight: 80, textAlignVertical: "top" },
+  shiftSubmitBtn: {
+    marginTop: 18,
+    backgroundColor: colors.primary,
+    borderRadius: 999,
+    paddingVertical: 13,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  shiftSubmitBtnText: { fontSize: 14, fontWeight: "700", color: colors.white },
+  extendOptionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 10,
+    backgroundColor: "#F8FAFC",
+  },
+  extendOptionRowSelected: {
+    borderColor: "#93C5FD",
+    backgroundColor: "#EFF6FF",
+  },
+  extendOptionLeft: { flex: 1 },
+  extendOptionLabel: { fontSize: 14, fontWeight: "700", color: colors.black },
+  extendOptionSub: { fontSize: 12, color: colors.muted, marginTop: 2 },
+  extendOptionAmount: { fontSize: 15, fontWeight: "800", color: colors.black },
+  moveOutValidationRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    marginTop: 10,
+    borderRadius: 10,
+    padding: 10,
+  },
+  moveOutValidationText: { fontSize: 13, fontWeight: "600", flex: 1, lineHeight: 18 },
+  shiftSuccessWrap: { alignItems: "center", paddingVertical: 24, gap: 10 },
+  shiftSuccessTitle: { fontSize: 18, fontWeight: "800", color: colors.black },
+  shiftSuccessBody: {
+    fontSize: 13,
+    color: colors.muted,
+    textAlign: "center",
+    lineHeight: 19,
+    paddingHorizontal: 8,
   },
 });

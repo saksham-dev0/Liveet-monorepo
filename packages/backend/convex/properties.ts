@@ -1057,6 +1057,56 @@ export const getRoomAssignmentTasksForOperator = query({
       }
     }
 
+    // Pull open move-out request tasks for this operator's properties.
+    for (const property of properties) {
+      const moveOutRequests = await ctx.db
+        .query("moveOutRequests")
+        .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+        .order("desc")
+        .take(100);
+
+      for (const mr of moveOutRequests) {
+        if (mr.status === "approved" || mr.status === "rejected") continue;
+        const tenant = await ctx.db.get(mr.tenantUserId);
+        const tenantName = tenant?.name?.trim() || "Tenant";
+        collected.push({
+          applicationId: mr._id as any,
+          priority: "High" as RoomTaskPriority,
+          description: `Move-out Request: ${mr.requestedMoveOutDate}`,
+          tenantName,
+          dueLabel: `Move-out: ${mr.requestedMoveOutDate}`,
+          _dueTs: null,
+          _creationTime: mr._creationTime,
+        });
+        if (collected.length >= limit * 2) break;
+      }
+    }
+
+    // Pull open shift request tasks for this operator's properties.
+    for (const property of properties) {
+      const shiftRequests = await ctx.db
+        .query("shiftRequests")
+        .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+        .order("desc")
+        .take(100);
+
+      for (const sr of shiftRequests) {
+        if (sr.status === "approved" || sr.status === "rejected") continue;
+        const tenant = await ctx.db.get(sr.tenantUserId);
+        const tenantName = tenant?.name?.trim() || "Tenant";
+        collected.push({
+          applicationId: sr._id as any,
+          priority: "Medium" as RoomTaskPriority,
+          description: `Shift Request: ${sr.reason}`,
+          tenantName,
+          dueLabel: "Needs attention",
+          _dueTs: null,
+          _creationTime: sr._creationTime,
+        });
+        if (collected.length >= limit * 2) break;
+      }
+    }
+
     collected.sort((a, b) => {
       const pw = priorityWeight(a.priority) - priorityWeight(b.priority);
       if (pw !== 0) return pw;
