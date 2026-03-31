@@ -194,6 +194,43 @@ export default defineSchema({
     refId: v.optional(v.string()),
   }).index("by_tenant", ["tenantUserId"]),
 
+  /** Rent transactions (extend-stay payments made by tenants). */
+  rentTransactions: defineTable({
+    tenantUserId: v.id("users"),
+    propertyId: v.id("properties"),
+    applicationId: v.id("tenantMoveInApplications"),
+    type: v.union(v.literal("monthly"), v.literal("quarterly"), v.literal("renewal")),
+    months: v.number(),
+    amount: v.number(),
+    status: v.union(v.literal("paid"), v.literal("pending")),
+    description: v.string(),
+  })
+    .index("by_tenant", ["tenantUserId"])
+    .index("by_application", ["applicationId"]),
+
+  /** Move-out requests filed by tenants. */
+  moveOutRequests: defineTable({
+    tenantUserId: v.id("users"),
+    propertyId: v.id("properties"),
+    applicationId: v.optional(v.id("tenantMoveInApplications")),
+    requestedMoveOutDate: v.string(),
+    status: v.optional(v.union(v.literal("open"), v.literal("approved"), v.literal("rejected"))),
+  })
+    .index("by_tenant", ["tenantUserId"])
+    .index("by_property", ["propertyId"]),
+
+  /** Shift requests filed by tenants to change their room. */
+  shiftRequests: defineTable({
+    tenantUserId: v.id("users"),
+    propertyId: v.id("properties"),
+    applicationId: v.optional(v.id("tenantMoveInApplications")),
+    currentRoomNumber: v.string(),
+    reason: v.string(),
+    status: v.optional(v.union(v.literal("open"), v.literal("approved"), v.literal("rejected"))),
+  })
+    .index("by_tenant", ["tenantUserId"])
+    .index("by_property", ["propertyId"]),
+
   /** Complaints filed by tenants against their property. */
   complaints: defineTable({
     tenantUserId: v.id("users"),
@@ -248,6 +285,9 @@ export default defineSchema({
         relation: v.string(),
       }),
     )),
+
+    /** Set when a move-out request is approved by the operator */
+    moveOutDate: v.optional(v.string()),
 
     /** Operator onboarding fields set when processing a quick move-in request */
     onboardingSecurityDeposit: v.optional(v.number()),

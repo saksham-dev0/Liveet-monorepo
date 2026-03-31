@@ -49,6 +49,29 @@ type ComplaintData = {
   createdAt: number;
 };
 
+type ShiftRequestData = {
+  shiftRequestId: string;
+  applicationId: string | null;
+  currentRoomNumber: string;
+  reason: string;
+  status: "open" | "approved" | "rejected";
+  tenantName: string;
+  propertyName: string;
+  createdAt: number;
+  availableRooms: Array<{ roomId: string; roomLabel: string }>;
+};
+
+type MoveOutRequestData = {
+  moveOutRequestId: string;
+  applicationId: string | null;
+  requestedMoveOutDate: string;
+  status: "open" | "approved" | "rejected";
+  tenantName: string;
+  propertyName: string;
+  assignedRoomNumber: string | null;
+  createdAt: number;
+};
+
 type AssignmentPayload =
   | { notFound: true }
   | {
@@ -67,8 +90,10 @@ type AssignmentPayload =
     };
 
 function getPriorityTone(priority: Priority) {
-  if (priority === "High") return { bg: "#FEE2E2", border: "#FECACA", text: "#B91C1C" };
-  if (priority === "Medium") return { bg: "#FEF3C7", border: "#FDE68A", text: "#92400E" };
+  if (priority === "High")
+    return { bg: "#FEE2E2", border: "#FECACA", text: "#B91C1C" };
+  if (priority === "Medium")
+    return { bg: "#FEF3C7", border: "#FDE68A", text: "#92400E" };
   return { bg: "#DCFCE7", border: "#BBF7D0", text: "#166534" };
 }
 
@@ -95,12 +120,28 @@ export default function TaskDetailsScreen() {
       tenantName?: string;
     }>();
 
-  const [quickRequestData, setQuickRequestData] = useState<QuickRequestData | null>(null);
-  const [resolvedTenantName, setResolvedTenantName] = useState<string | null>(null);
+  const [quickRequestData, setQuickRequestData] =
+    useState<QuickRequestData | null>(null);
+  const [resolvedTenantName, setResolvedTenantName] = useState<string | null>(
+    null,
+  );
   const [propertyName, setPropertyName] = useState<string | null>(null);
-  const [assignmentData, setAssignmentData] = useState<AssignmentPayload | null>(null);
-  const [complaintData, setComplaintData] = useState<ComplaintData | null>(null);
+  const [assignmentData, setAssignmentData] =
+    useState<AssignmentPayload | null>(null);
+  const [complaintData, setComplaintData] = useState<ComplaintData | null>(
+    null,
+  );
   const [resolvingComplaint, setResolvingComplaint] = useState(false);
+  const [shiftRequestData, setShiftRequestData] =
+    useState<ShiftRequestData | null>(null);
+  const [selectedShiftRoomId, setSelectedShiftRoomId] = useState<string | null>(
+    null,
+  );
+  const [actingOnShift, setActingOnShift] = useState(false);
+  const [shiftMessage, setShiftMessage] = useState<string | null>(null);
+  const [moveOutData, setMoveOutData] = useState<MoveOutRequestData | null>(null);
+  const [actingOnMoveOut, setActingOnMoveOut] = useState(false);
+  const [moveOutMessage, setMoveOutMessage] = useState<string | null>(null);
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
   const [assigning, setAssigning] = useState(false);
   const [markingPaid, setMarkingPaid] = useState(false);
@@ -109,7 +150,15 @@ export default function TaskDetailsScreen() {
   const [loading, setLoading] = useState(true);
 
   const isQuickRequest = taskDescription === "Move-in request by new user";
-  const isComplaintTask = typeof taskDescription === "string" && taskDescription.startsWith("Complaint: ");
+  const isComplaintTask =
+    typeof taskDescription === "string" &&
+    taskDescription.startsWith("Complaint: ");
+  const isShiftRequestTask =
+    typeof taskDescription === "string" &&
+    taskDescription.startsWith("Shift Request: ");
+  const isMoveOutRequestTask =
+    typeof taskDescription === "string" &&
+    taskDescription.startsWith("Move-out Request: ");
 
   const load = useCallback(async () => {
     if (!applicationId || typeof applicationId !== "string") {
@@ -117,11 +166,31 @@ export default function TaskDetailsScreen() {
       return;
     }
     try {
-      if (isComplaintTask) {
+      if (isMoveOutRequestTask) {
         const res = await (convex as any).query(
-          "complaints:getComplaintById",
-          { complaintId: applicationId },
+          "moveOutRequests:getMoveOutRequestById",
+          { moveOutRequestId: applicationId },
         );
+        if (res) {
+          setMoveOutData(res as MoveOutRequestData);
+          setResolvedTenantName(res.tenantName ?? null);
+          setPropertyName(res.propertyName ?? null);
+        }
+      } else if (isShiftRequestTask) {
+        const res = await (convex as any).query(
+          "shiftRequests:getShiftRequestById",
+          { shiftRequestId: applicationId },
+        );
+        if (res) {
+          setShiftRequestData(res as ShiftRequestData);
+          setResolvedTenantName(res.tenantName ?? null);
+          setPropertyName(res.propertyName ?? null);
+          setSelectedShiftRoomId(res.availableRooms?.[0]?.roomId ?? null);
+        }
+      } else if (isComplaintTask) {
+        const res = await (convex as any).query("complaints:getComplaintById", {
+          complaintId: applicationId,
+        });
         if (res) {
           setComplaintData(res as ComplaintData);
           setResolvedTenantName(res.tenantName ?? null);
@@ -151,8 +220,12 @@ export default function TaskDetailsScreen() {
         }
       } else {
         const [manageRes, assignmentRes] = await Promise.all([
-          (convex as any).query("properties:getTenantManageDetails", { applicationId }),
-          (convex as any).query("properties:getRoomAssignmentTask", { applicationId }),
+          (convex as any).query("properties:getTenantManageDetails", {
+            applicationId,
+          }),
+          (convex as any).query("properties:getRoomAssignmentTask", {
+            applicationId,
+          }),
         ]);
         if (manageRes && !manageRes.notFound) {
           const data = manageRes as ManagePayload;
@@ -160,7 +233,11 @@ export default function TaskDetailsScreen() {
           setPropertyName(data.propertyName);
         }
         setAssignmentData((assignmentRes ?? null) as AssignmentPayload | null);
-        if (assignmentRes && !assignmentRes.notFound && !assignmentRes.alreadyAssigned) {
+        if (
+          assignmentRes &&
+          !assignmentRes.notFound &&
+          !assignmentRes.alreadyAssigned
+        ) {
           setSelectedRoomId(assignmentRes.availableRooms[0]?.roomId ?? null);
         }
       }
@@ -184,23 +261,33 @@ export default function TaskDetailsScreen() {
   const finalTenantName = resolvedTenantName ?? tenantName ?? "Tenant";
 
   const assignRoom = useCallback(async () => {
-    if (!applicationId || typeof applicationId !== "string" || !selectedRoomId) return;
+    if (!applicationId || typeof applicationId !== "string" || !selectedRoomId)
+      return;
     setAssigning(true);
     setAssignMessage(null);
     try {
-      const res = await (convex as any).mutation("properties:assignRoomToTenant", {
-        applicationId,
-        roomId: selectedRoomId,
-      });
+      const res = await (convex as any).mutation(
+        "properties:assignRoomToTenant",
+        {
+          applicationId,
+          roomId: selectedRoomId,
+        },
+      );
       const roomNumber =
-        typeof res?.assignedRoomNumber === "string" ? res.assignedRoomNumber : null;
+        typeof res?.assignedRoomNumber === "string"
+          ? res.assignedRoomNumber
+          : null;
       setAssignMessage(
-        roomNumber ? `Room ${roomNumber} assigned successfully.` : "Room assigned successfully.",
+        roomNumber
+          ? `Room ${roomNumber} assigned successfully.`
+          : "Room assigned successfully.",
       );
       await load();
     } catch (err) {
       setAssignMessage(
-        err instanceof Error ? err.message : "Could not assign room. Please try again.",
+        err instanceof Error
+          ? err.message
+          : "Could not assign room. Please try again.",
       );
     } finally {
       setAssigning(false);
@@ -212,7 +299,9 @@ export default function TaskDetailsScreen() {
     setMarkingPaid(true);
     setAssignMessage(null);
     try {
-      await (convex as any).mutation("properties:markCashPaymentReceived", { applicationId });
+      await (convex as any).mutation("properties:markCashPaymentReceived", {
+        applicationId,
+      });
       setAssignMessage("Payment marked as paid.");
       await load();
     } catch (err) {
@@ -229,7 +318,9 @@ export default function TaskDetailsScreen() {
     setMarkingPaid(true);
     setAssignMessage(null);
     try {
-      await (convex as any).mutation("properties:markPaymentReceived", { applicationId });
+      await (convex as any).mutation("properties:markPaymentReceived", {
+        applicationId,
+      });
       setAssignMessage("Payment marked as received.");
       await load();
     } catch (err) {
@@ -270,7 +361,10 @@ export default function TaskDetailsScreen() {
       if (res?.conversationId) {
         router.push({
           pathname: "/(app)/chats/[conversationId]",
-          params: { conversationId: res.conversationId, title: finalTenantName },
+          params: {
+            conversationId: res.conversationId,
+            title: finalTenantName,
+          },
         } as any);
       }
     } catch (err) {
@@ -283,14 +377,103 @@ export default function TaskDetailsScreen() {
     }
   }, [applicationId, convex, finalTenantName, router]);
 
+  const assignRoomForShift = useCallback(async () => {
+    if (
+      !applicationId ||
+      typeof applicationId !== "string" ||
+      !selectedShiftRoomId
+    )
+      return;
+    setActingOnShift(true);
+    setShiftMessage(null);
+    try {
+      const res = await (convex as any).mutation(
+        "shiftRequests:assignRoomForShiftRequest",
+        {
+          shiftRequestId: applicationId,
+          roomId: selectedShiftRoomId,
+        },
+      );
+      setShiftMessage(
+        `Room ${res?.assignedRoomNumber ?? ""} assigned successfully.`,
+      );
+      await load();
+    } catch (err) {
+      setShiftMessage(
+        err instanceof Error ? err.message : "Could not assign room.",
+      );
+    } finally {
+      setActingOnShift(false);
+    }
+  }, [applicationId, convex, load, selectedShiftRoomId]);
+
+  const rejectShiftRequest = useCallback(async () => {
+    if (!applicationId || typeof applicationId !== "string") return;
+    setActingOnShift(true);
+    setShiftMessage(null);
+    try {
+      await (convex as any).mutation("shiftRequests:markShiftRequestRejected", {
+        shiftRequestId: applicationId,
+      });
+      setShiftMessage("Shift request rejected.");
+      await load();
+    } catch (err) {
+      setShiftMessage(
+        err instanceof Error ? err.message : "Could not reject request.",
+      );
+    } finally {
+      setActingOnShift(false);
+    }
+  }, [applicationId, convex, load]);
+
+  const approveMoveOut = useCallback(async () => {
+    if (!applicationId || typeof applicationId !== "string") return;
+    setActingOnMoveOut(true);
+    setMoveOutMessage(null);
+    try {
+      await (convex as any).mutation("moveOutRequests:markMoveOutRequestApproved", {
+        moveOutRequestId: applicationId,
+      });
+      setMoveOutMessage("Move-out request approved.");
+      await load();
+    } catch (err) {
+      setMoveOutMessage(err instanceof Error ? err.message : "Could not approve request.");
+    } finally {
+      setActingOnMoveOut(false);
+    }
+  }, [applicationId, convex, load]);
+
+  const rejectMoveOut = useCallback(async () => {
+    if (!applicationId || typeof applicationId !== "string") return;
+    setActingOnMoveOut(true);
+    setMoveOutMessage(null);
+    try {
+      await (convex as any).mutation("moveOutRequests:markMoveOutRequestRejected", {
+        moveOutRequestId: applicationId,
+      });
+      setMoveOutMessage("Move-out request rejected.");
+      await load();
+    } catch (err) {
+      setMoveOutMessage(err instanceof Error ? err.message : "Could not reject request.");
+    } finally {
+      setActingOnMoveOut(false);
+    }
+  }, [applicationId, convex, load]);
+
   const isCashTask = finalTaskDescription === "User will pay cash on reception";
   const isPendingPaymentTask = finalTaskDescription === "Complete rent payment";
   const isAlreadyAssigned =
-    assignmentData !== null && !assignmentData.notFound && assignmentData.alreadyAssigned === true;
+    assignmentData !== null &&
+    !assignmentData.notFound &&
+    assignmentData.alreadyAssigned === true;
   const paymentIsPaid =
-    assignmentData && !assignmentData.notFound ? assignmentData.paymentStatus === "paid" : false;
+    assignmentData && !assignmentData.notFound
+      ? assignmentData.paymentStatus === "paid"
+      : false;
   const paymentMethod =
-    assignmentData && !assignmentData.notFound ? assignmentData.paymentMethod ?? null : null;
+    assignmentData && !assignmentData.notFound
+      ? (assignmentData.paymentMethod ?? null)
+      : null;
 
   return (
     <View style={s.root}>
@@ -319,7 +502,12 @@ export default function TaskDetailsScreen() {
         {/* Task header card */}
         <View style={s.card}>
           <View style={s.topRow}>
-            <View style={[s.priorityTag, { backgroundColor: tone.bg, borderColor: tone.border }]}>
+            <View
+              style={[
+                s.priorityTag,
+                { backgroundColor: tone.bg, borderColor: tone.border },
+              ]}
+            >
               <Text style={[s.priorityTagText, { color: tone.text }]}>
                 {finalPriority} Priority
               </Text>
@@ -362,12 +550,21 @@ export default function TaskDetailsScreen() {
             <View style={s.sectionCard}>
               <Text style={s.sectionTitle}>Tenant Details</Text>
 
-              <DetailRow label="Full name" value={quickRequestData.tenantName} />
+              <DetailRow
+                label="Full name"
+                value={quickRequestData.tenantName}
+              />
               <DetailRow label="Phone" value={quickRequestData.phone} />
               <DetailRow label="Email" value={quickRequestData.email} />
-              <DetailRow label="Date of birth" value={quickRequestData.dateOfBirth} />
+              <DetailRow
+                label="Date of birth"
+                value={quickRequestData.dateOfBirth}
+              />
               <DetailRow label="Address" value={quickRequestData.address} />
-              <DetailRow label="Preferred move-in" value={quickRequestData.moveInDate} />
+              <DetailRow
+                label="Preferred move-in"
+                value={quickRequestData.moveInDate}
+              />
               {quickRequestData.selectedRoomOptionLabel ? (
                 <DetailRow
                   label="Room type requested"
@@ -379,7 +576,11 @@ export default function TaskDetailsScreen() {
             {/* Action buttons */}
             <View style={s.actionRow}>
               <Pressable
-                style={[s.actionBtn, s.actionBtnOutline, contactingTenant && { opacity: 0.6 }]}
+                style={[
+                  s.actionBtn,
+                  s.actionBtnOutline,
+                  contactingTenant && { opacity: 0.6 },
+                ]}
                 onPress={() => void contactTenant()}
                 disabled={contactingTenant}
               >
@@ -428,36 +629,58 @@ export default function TaskDetailsScreen() {
               <>
                 <View style={s.detailRow}>
                   <Text style={s.detailLabel}>Problem</Text>
-                  <Text style={s.detailValue}>{complaintData.problemTitle}</Text>
+                  <Text style={s.detailValue}>
+                    {complaintData.problemTitle}
+                  </Text>
                 </View>
-                <View style={[s.detailRow, { flexDirection: "column", alignItems: "flex-start", gap: 4 }]}>
+                <View
+                  style={[
+                    s.detailRow,
+                    {
+                      flexDirection: "column",
+                      alignItems: "flex-start",
+                      gap: 4,
+                    },
+                  ]}
+                >
                   <Text style={s.detailLabel}>Description</Text>
-                  <Text style={[s.detailValue, { textAlign: "left", flex: 0 }]}>{complaintData.description}</Text>
+                  <Text style={[s.detailValue, { textAlign: "left", flex: 0 }]}>
+                    {complaintData.description}
+                  </Text>
                 </View>
                 <View style={s.detailRow}>
                   <Text style={s.detailLabel}>Status</Text>
-                  <Text style={[s.detailValue, {
-                    color: complaintData.status === "resolved"
-                      ? "#16A34A"
-                      : complaintData.status === "pending_confirmation"
-                      ? "#D97706"
-                      : "#EF4444",
-                  }]}>
+                  <Text
+                    style={[
+                      s.detailValue,
+                      {
+                        color:
+                          complaintData.status === "resolved"
+                            ? "#16A34A"
+                            : complaintData.status === "pending_confirmation"
+                              ? "#D97706"
+                              : "#EF4444",
+                      },
+                    ]}
+                  >
                     {complaintData.status === "resolved"
                       ? "Resolved"
                       : complaintData.status === "pending_confirmation"
-                      ? "Awaiting tenant confirmation"
-                      : "Open"}
+                        ? "Awaiting tenant confirmation"
+                        : "Open"}
                   </Text>
                 </View>
                 <View style={s.detailRow}>
                   <Text style={s.detailLabel}>Filed on</Text>
                   <Text style={s.detailValue}>
-                    {new Date(complaintData.createdAt).toLocaleDateString("en-IN", {
-                      day: "2-digit",
-                      month: "short",
-                      year: "numeric",
-                    })}
+                    {new Date(complaintData.createdAt).toLocaleDateString(
+                      "en-IN",
+                      {
+                        day: "2-digit",
+                        month: "short",
+                        year: "numeric",
+                      },
+                    )}
                   </Text>
                 </View>
                 {complaintData.imageUrl ? (
@@ -473,7 +696,10 @@ export default function TaskDetailsScreen() {
 
                 {complaintData.status === "open" ? (
                   <Pressable
-                    style={[s.resolveBtn, resolvingComplaint && s.assignBtnDisabled]}
+                    style={[
+                      s.resolveBtn,
+                      resolvingComplaint && s.assignBtnDisabled,
+                    ]}
                     disabled={resolvingComplaint}
                     onPress={() => void resolveComplaint()}
                   >
@@ -481,7 +707,12 @@ export default function TaskDetailsScreen() {
                       <ActivityIndicator size="small" color={colors.white} />
                     ) : (
                       <>
-                        <Ionicons name="checkmark-circle-outline" size={18} color={colors.white} style={{ marginRight: 8 }} />
+                        <Ionicons
+                          name="checkmark-circle-outline"
+                          size={18}
+                          color={colors.white}
+                          style={{ marginRight: 8 }}
+                        />
                         <Text style={s.assignBtnText}>Mark as Resolved</Text>
                       </>
                     )}
@@ -489,11 +720,17 @@ export default function TaskDetailsScreen() {
                 ) : complaintData.status === "pending_confirmation" ? (
                   <View style={s.pendingConfirmBadge}>
                     <Ionicons name="time-outline" size={16} color="#D97706" />
-                    <Text style={s.pendingConfirmText}>Awaiting tenant confirmation</Text>
+                    <Text style={s.pendingConfirmText}>
+                      Awaiting tenant confirmation
+                    </Text>
                   </View>
                 ) : (
                   <View style={s.resolvedBadge}>
-                    <Ionicons name="checkmark-circle" size={16} color="#16A34A" />
+                    <Ionicons
+                      name="checkmark-circle"
+                      size={16}
+                      color="#16A34A"
+                    />
                     <Text style={s.resolvedBadgeText}>Resolved by tenant</Text>
                   </View>
                 )}
@@ -505,7 +742,10 @@ export default function TaskDetailsScreen() {
         ) : null}
 
         {/* ─── Pending payment task ─── */}
-        {!loading && !isComplaintTask && !isQuickRequest && isPendingPaymentTask ? (
+        {!loading &&
+        !isComplaintTask &&
+        !isQuickRequest &&
+        isPendingPaymentTask ? (
           <View style={s.sectionCard}>
             <Text style={s.sectionTitle}>Payment Status</Text>
 
@@ -528,9 +768,9 @@ export default function TaskDetailsScreen() {
                   </View>
                 </View>
                 <Text style={s.paymentPendingBody}>
-                  The tenant has submitted their KYC. Once you receive the payment
-                  via {paymentMethod ?? "the chosen method"}, mark it as received
-                  below.
+                  The tenant has submitted their KYC. Once you receive the
+                  payment via {paymentMethod ?? "the chosen method"}, mark it as
+                  received below.
                 </Text>
                 <Pressable
                   style={[s.assignBtn, markingPaid && s.assignBtnDisabled]}
@@ -544,20 +784,289 @@ export default function TaskDetailsScreen() {
               </>
             )}
 
-            {assignMessage ? <Text style={s.infoText}>{assignMessage}</Text> : null}
+            {assignMessage ? (
+              <Text style={s.infoText}>{assignMessage}</Text>
+            ) : null}
+          </View>
+        ) : null}
+
+        {/* ─── Shift request task ─── */}
+        {!loading && isShiftRequestTask ? (
+          <View style={s.sectionCard}>
+            <Text style={s.sectionTitle}>Shift Request Details</Text>
+
+            {shiftRequestData ? (
+              <>
+                <View style={s.detailRow}>
+                  <Text style={s.detailLabel}>Current Room</Text>
+                  <Text style={s.detailValue}>
+                    {shiftRequestData.currentRoomNumber}
+                  </Text>
+                </View>
+                <View
+                  style={[
+                    s.detailRow,
+                    {
+                      flexDirection: "column",
+                      alignItems: "flex-start",
+                      gap: 4,
+                    },
+                  ]}
+                >
+                  <Text style={s.detailLabel}>Reason</Text>
+                  <Text style={[s.detailValue, { textAlign: "left", flex: 0 }]}>
+                    {shiftRequestData.reason}
+                  </Text>
+                </View>
+                <View style={s.detailRow}>
+                  <Text style={s.detailLabel}>Status</Text>
+                  <Text
+                    style={[
+                      s.detailValue,
+                      {
+                        color:
+                          shiftRequestData.status === "approved"
+                            ? "#16A34A"
+                            : shiftRequestData.status === "rejected"
+                              ? "#DC2626"
+                              : "#D97706",
+                      },
+                    ]}
+                  >
+                    {shiftRequestData.status === "approved"
+                      ? "Approved"
+                      : shiftRequestData.status === "rejected"
+                        ? "Rejected"
+                        : "Pending"}
+                  </Text>
+                </View>
+                <View style={s.detailRow}>
+                  <Text style={s.detailLabel}>Requested on</Text>
+                  <Text style={s.detailValue}>
+                    {new Date(shiftRequestData.createdAt).toLocaleDateString(
+                      "en-IN",
+                      {
+                        day: "2-digit",
+                        month: "short",
+                        year: "numeric",
+                      },
+                    )}
+                  </Text>
+                </View>
+
+                {shiftRequestData.status === "open" ? (
+                  <>
+                    <Text
+                      style={[
+                        s.sectionTitle,
+                        { marginTop: 16, marginBottom: 4 },
+                      ]}
+                    >
+                      Available Rooms
+                    </Text>
+                    <Text style={s.sectionBody}>
+                      Select a room to assign to the tenant.
+                    </Text>
+
+                    {shiftRequestData.availableRooms.length === 0 ? (
+                      <Text style={s.infoText}>
+                        No available rooms at this time.
+                      </Text>
+                    ) : (
+                      <View style={s.roomGrid}>
+                        {shiftRequestData.availableRooms.map((room) => {
+                          const selected = selectedShiftRoomId === room.roomId;
+                          return (
+                            <Pressable
+                              key={room.roomId}
+                              style={[
+                                s.roomChip,
+                                selected ? s.roomChipSelected : null,
+                              ]}
+                              onPress={() =>
+                                setSelectedShiftRoomId(room.roomId)
+                              }
+                            >
+                              <Text
+                                style={[
+                                  s.roomChipText,
+                                  selected ? s.roomChipTextSelected : null,
+                                ]}
+                              >
+                                {room.roomLabel}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+                    )}
+
+                    <Pressable
+                      style={[
+                        s.assignBtn,
+                        (!selectedShiftRoomId ||
+                          actingOnShift ||
+                          shiftRequestData.availableRooms.length === 0) &&
+                          s.assignBtnDisabled,
+                        { marginTop: 14 },
+                      ]}
+                      disabled={
+                        !selectedShiftRoomId ||
+                        actingOnShift ||
+                        shiftRequestData.availableRooms.length === 0
+                      }
+                      onPress={() => void assignRoomForShift()}
+                    >
+                      <Text style={s.assignBtnText}>
+                        {actingOnShift ? "Assigning..." : "Assign & Approve"}
+                      </Text>
+                    </Pressable>
+
+                    <Pressable
+                      style={[
+                        s.rejectShiftBtn,
+                        actingOnShift && s.assignBtnDisabled,
+                      ]}
+                      disabled={actingOnShift}
+                      onPress={() => void rejectShiftRequest()}
+                    >
+                      <Text style={s.rejectShiftBtnText}>Reject Request</Text>
+                    </Pressable>
+                  </>
+                ) : shiftRequestData.status === "approved" ? (
+                  <View style={s.resolvedBadge}>
+                    <Ionicons
+                      name="checkmark-circle"
+                      size={16}
+                      color="#16A34A"
+                    />
+                    <Text style={s.resolvedBadgeText}>
+                      Shift request approved
+                    </Text>
+                  </View>
+                ) : (
+                  <View
+                    style={[s.resolvedBadge, { backgroundColor: "#FEE2E2" }]}
+                  >
+                    <Ionicons name="close-circle" size={16} color="#DC2626" />
+                    <Text style={[s.resolvedBadgeText, { color: "#DC2626" }]}>
+                      Shift request rejected
+                    </Text>
+                  </View>
+                )}
+
+                {shiftMessage ? (
+                  <Text style={s.infoText}>{shiftMessage}</Text>
+                ) : null}
+              </>
+            ) : (
+              <Text style={s.infoText}>
+                Could not load shift request details.
+              </Text>
+            )}
+          </View>
+        ) : null}
+
+        {/* ─── Move-out request task ─── */}
+        {!loading && isMoveOutRequestTask ? (
+          <View style={s.sectionCard}>
+            <Text style={s.sectionTitle}>Move-out Request Details</Text>
+            {moveOutData ? (
+              <>
+                <View style={s.detailRow}>
+                  <Text style={s.detailLabel}>Requested Date</Text>
+                  <Text style={s.detailValue}>{moveOutData.requestedMoveOutDate}</Text>
+                </View>
+                {moveOutData.assignedRoomNumber ? (
+                  <View style={s.detailRow}>
+                    <Text style={s.detailLabel}>Current Room</Text>
+                    <Text style={s.detailValue}>{moveOutData.assignedRoomNumber}</Text>
+                  </View>
+                ) : null}
+                <View style={s.detailRow}>
+                  <Text style={s.detailLabel}>Status</Text>
+                  <Text style={[s.detailValue, {
+                    color: moveOutData.status === "approved" ? "#16A34A"
+                      : moveOutData.status === "rejected" ? "#DC2626"
+                      : "#D97706",
+                  }]}>
+                    {moveOutData.status === "approved" ? "Approved"
+                      : moveOutData.status === "rejected" ? "Rejected"
+                      : "Pending"}
+                  </Text>
+                </View>
+                <View style={s.detailRow}>
+                  <Text style={s.detailLabel}>Requested on</Text>
+                  <Text style={s.detailValue}>
+                    {new Date(moveOutData.createdAt).toLocaleDateString("en-IN", {
+                      day: "2-digit", month: "short", year: "numeric",
+                    })}
+                  </Text>
+                </View>
+
+                {moveOutData.status === "open" ? (
+                  <>
+                    <Pressable
+                      style={[s.resolveBtn, actingOnMoveOut && s.assignBtnDisabled, { marginTop: 16 }]}
+                      disabled={actingOnMoveOut}
+                      onPress={() => void approveMoveOut()}
+                    >
+                      {actingOnMoveOut ? (
+                        <ActivityIndicator size="small" color={colors.white} />
+                      ) : (
+                        <>
+                          <Ionicons name="checkmark-circle-outline" size={18} color={colors.white} style={{ marginRight: 8 }} />
+                          <Text style={s.assignBtnText}>Approve Move-out</Text>
+                        </>
+                      )}
+                    </Pressable>
+                    <Pressable
+                      style={[s.rejectShiftBtn, actingOnMoveOut && s.assignBtnDisabled]}
+                      disabled={actingOnMoveOut}
+                      onPress={() => void rejectMoveOut()}
+                    >
+                      <Text style={s.rejectShiftBtnText}>Reject Request</Text>
+                    </Pressable>
+                  </>
+                ) : moveOutData.status === "approved" ? (
+                  <View style={s.resolvedBadge}>
+                    <Ionicons name="checkmark-circle" size={16} color="#16A34A" />
+                    <Text style={s.resolvedBadgeText}>Move-out approved for {moveOutData.requestedMoveOutDate}</Text>
+                  </View>
+                ) : (
+                  <View style={[s.resolvedBadge, { backgroundColor: "#FEE2E2" }]}>
+                    <Ionicons name="close-circle" size={16} color="#DC2626" />
+                    <Text style={[s.resolvedBadgeText, { color: "#DC2626" }]}>Move-out request rejected</Text>
+                  </View>
+                )}
+
+                {moveOutMessage ? <Text style={s.infoText}>{moveOutMessage}</Text> : null}
+              </>
+            ) : (
+              <Text style={s.infoText}>Could not load move-out request details.</Text>
+            )}
           </View>
         ) : null}
 
         {/* ─── Standard task: room assignment ─── */}
-        {!loading && !isComplaintTask && !isQuickRequest && !isPendingPaymentTask ? (
+        {!loading &&
+        !isComplaintTask &&
+        !isQuickRequest &&
+        !isPendingPaymentTask &&
+        !isShiftRequestTask &&
+        !isMoveOutRequestTask ? (
           <View style={s.sectionCard}>
             <Text style={s.sectionTitle}>Available Rooms</Text>
-            <Text style={s.sectionBody}>Select a room and assign it to this tenant.</Text>
+            <Text style={s.sectionBody}>
+              Select a room and assign it to this tenant.
+            </Text>
 
             {isCashTask && !isAlreadyAssigned && !paymentIsPaid ? (
               <View style={s.cashPaymentCard}>
                 <Text style={s.cashTitle}>Cash Payment</Text>
-                <Text style={s.cashBody}>Confirm when you receive cash at reception.</Text>
+                <Text style={s.cashBody}>
+                  Confirm when you receive cash at reception.
+                </Text>
                 <Pressable
                   style={[
                     s.assignBtn,
@@ -577,13 +1086,18 @@ export default function TaskDetailsScreen() {
               <Text style={s.infoText}>Room assignment task not found.</Text>
             ) : null}
 
-            {assignmentData && !assignmentData.notFound && assignmentData.alreadyAssigned ? (
+            {assignmentData &&
+            !assignmentData.notFound &&
+            assignmentData.alreadyAssigned ? (
               <Text style={s.infoText}>
-                Already assigned to room {assignmentData.assignedRoomNumber ?? "—"}.
+                Already assigned to room{" "}
+                {assignmentData.assignedRoomNumber ?? "—"}.
               </Text>
             ) : null}
 
-            {assignmentData && !assignmentData.notFound && !assignmentData.alreadyAssigned ? (
+            {assignmentData &&
+            !assignmentData.notFound &&
+            !assignmentData.alreadyAssigned ? (
               <>
                 <View style={s.roomGrid}>
                   {assignmentData.availableRooms.map((room) => {
@@ -591,7 +1105,10 @@ export default function TaskDetailsScreen() {
                     return (
                       <Pressable
                         key={room.roomId}
-                        style={[s.roomChip, selected ? s.roomChipSelected : null]}
+                        style={[
+                          s.roomChip,
+                          selected ? s.roomChipSelected : null,
+                        ]}
                         onPress={() => setSelectedRoomId(room.roomId)}
                       >
                         <Text
@@ -610,10 +1127,16 @@ export default function TaskDetailsScreen() {
                 <Pressable
                   style={[
                     s.assignBtn,
-                    (!selectedRoomId || assigning || (isCashTask && !paymentIsPaid)) &&
+                    (!selectedRoomId ||
+                      assigning ||
+                      (isCashTask && !paymentIsPaid)) &&
                       s.assignBtnDisabled,
                   ]}
-                  disabled={!selectedRoomId || assigning || (isCashTask && !paymentIsPaid)}
+                  disabled={
+                    !selectedRoomId ||
+                    assigning ||
+                    (isCashTask && !paymentIsPaid)
+                  }
                   onPress={() => void assignRoom()}
                 >
                   <Text style={s.assignBtnText}>
@@ -622,12 +1145,16 @@ export default function TaskDetailsScreen() {
                 </Pressable>
 
                 {isCashTask && !paymentIsPaid ? (
-                  <Text style={s.infoText}>Mark payment as paid before assigning a room.</Text>
+                  <Text style={s.infoText}>
+                    Mark payment as paid before assigning a room.
+                  </Text>
                 ) : null}
               </>
             ) : null}
 
-            {assignMessage ? <Text style={s.infoText}>{assignMessage}</Text> : null}
+            {assignMessage ? (
+              <Text style={s.infoText}>{assignMessage}</Text>
+            ) : null}
           </View>
         ) : null}
       </ScrollView>
@@ -752,7 +1279,12 @@ const s = StyleSheet.create({
     borderBottomColor: "#F1F5F9",
     gap: 12,
   },
-  detailLabel: { fontSize: 13, color: colors.muted, fontWeight: "600", flex: 1 },
+  detailLabel: {
+    fontSize: 13,
+    color: colors.muted,
+    fontWeight: "600",
+    flex: 1,
+  },
   detailValue: {
     fontSize: 13,
     color: colors.black,
@@ -807,7 +1339,12 @@ const s = StyleSheet.create({
   },
   assignBtnDisabled: { opacity: 0.5 },
   assignBtnText: { fontSize: 14, fontWeight: "700", color: colors.white },
-  infoText: { marginTop: 12, fontSize: 13, lineHeight: 19, color: colors.muted },
+  infoText: {
+    marginTop: 12,
+    fontSize: 13,
+    lineHeight: 19,
+    color: colors.muted,
+  },
   cashPaymentCard: {
     marginTop: 12,
     borderRadius: 12,
@@ -816,7 +1353,12 @@ const s = StyleSheet.create({
     backgroundColor: "#FDF2F8",
     padding: 12,
   },
-  cashTitle: { fontSize: 13, fontWeight: "800", color: "#9D174D", marginBottom: 4 },
+  cashTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#9D174D",
+    marginBottom: 4,
+  },
   cashBody: { fontSize: 13, color: "#831843", marginBottom: 10 },
 
   paymentPaidBadge: {
@@ -841,9 +1383,24 @@ const s = StyleSheet.create({
     marginBottom: 10,
   },
   paymentPendingTitle: { fontSize: 14, fontWeight: "700", color: "#92400E" },
-  paymentPendingMethod: { fontSize: 12, color: "#92400E", fontWeight: "500", marginTop: 2 },
-  paymentPendingBody: { fontSize: 13, color: colors.muted, lineHeight: 19, marginBottom: 14 },
-  complaintImage: { width: "100%", height: 200, borderRadius: 10, marginTop: 8 },
+  paymentPendingMethod: {
+    fontSize: 12,
+    color: "#92400E",
+    fontWeight: "500",
+    marginTop: 2,
+  },
+  paymentPendingBody: {
+    fontSize: 13,
+    color: colors.muted,
+    lineHeight: 19,
+    marginBottom: 14,
+  },
+  complaintImage: {
+    width: "100%",
+    height: 200,
+    borderRadius: 10,
+    marginTop: 8,
+  },
   resolveBtn: {
     marginTop: 14,
     flexDirection: "row",
@@ -887,4 +1444,15 @@ const s = StyleSheet.create({
     borderColor: "#FECACA",
   },
   taskTypeBadgeText: { fontSize: 11, fontWeight: "700", color: "#EF4444" },
+  rejectShiftBtn: {
+    marginTop: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 999,
+    paddingVertical: 12,
+    borderWidth: 1.5,
+    borderColor: "#FECACA",
+    backgroundColor: "#FEF2F2",
+  },
+  rejectShiftBtnText: { fontSize: 14, fontWeight: "700", color: "#DC2626" },
 });
