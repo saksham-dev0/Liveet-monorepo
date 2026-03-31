@@ -244,7 +244,7 @@ function TenantDashboard({ insets }: { insets: EdgeInsets }) {
     propertyId: string;
     agreementEndsAt: number | null;
     agreementDuration: string | null;
-  } | null>(null);
+  } | null | undefined>(null);
   const [moveOutSubmitting, setMoveOutSubmitting] = useState(false);
   const [moveOutSuccess, setMoveOutSuccess] = useState(false);
 
@@ -256,7 +256,7 @@ function TenantDashboard({ insets }: { insets: EdgeInsets }) {
     rentAmount: number | null;
     renewalMonths: number | null;
     agreementDuration: string | null;
-  } | null>(null);
+  } | null | undefined>(null);
   const [extendPaying, setExtendPaying] = useState(false);
   const [extendResult, setExtendResult] = useState<{ amount: number; description: string } | null>(null);
 
@@ -332,25 +332,29 @@ function TenantDashboard({ insets }: { insets: EdgeInsets }) {
     } else if (key === "extend") {
       setExtendOption(null);
       setExtendResult(null);
-      setExtendRentInfo(null);
+      setExtendRentInfo(undefined);
       setShowExtendStay(true);
       void (async () => {
         try {
           const info = await (convex as any).query("rentTransactions:getTenantRentInfo", {});
-          if (info) setExtendRentInfo(info);
-        } catch {}
+          setExtendRentInfo(info ?? null);
+        } catch {
+          setExtendRentInfo(null);
+        }
       })();
     } else if (key === "moveout") {
       setMoveOutDate("");
       setMoveOutSuccess(false);
-      setMoveOutAgreementInfo(null);
+      setMoveOutAgreementInfo(undefined);
       setShowMoveOut(true);
       // Load agreement info in background
       void (async () => {
         try {
           const info = await (convex as any).query("moveOutRequests:getTenantAgreementInfo", {});
-          if (info) setMoveOutAgreementInfo(info);
-        } catch {}
+          setMoveOutAgreementInfo(info ?? null);
+        } catch {
+          setMoveOutAgreementInfo(null);
+        }
       })();
     }
   }
@@ -370,7 +374,8 @@ function TenantDashboard({ insets }: { insets: EdgeInsets }) {
     if (!moveOutDate.trim()) return null;
     const ts = parseDDMMYYYY(moveOutDate);
     if (ts === null) return { ok: false, message: "Enter a valid date in DD/MM/YYYY format." };
-    if (!moveOutAgreementInfo?.agreementEndsAt) return null; // Can't validate without agreement info
+    if (moveOutAgreementInfo === undefined) return null; // still loading — block submission
+    if (!moveOutAgreementInfo?.agreementEndsAt) return { ok: true, message: "Date looks good." }; // no agreement info — allow, server will validate
     if (ts < moveOutAgreementInfo.agreementEndsAt) {
       const endDateStr = new Date(moveOutAgreementInfo.agreementEndsAt).toLocaleDateString("en-IN", {
         day: "2-digit", month: "short", year: "numeric",
@@ -655,9 +660,15 @@ function TenantDashboard({ insets }: { insets: EdgeInsets }) {
           </View>
         ) : (
           <View style={s.shiftFormWrap}>
-            {extendRentInfo === null ? (
+            {extendRentInfo === undefined ? (
               <View style={{ alignItems: "center", paddingVertical: 24 }}>
                 <ActivityIndicator size="small" color={colors.primary} />
+              </View>
+            ) : extendRentInfo === null ? (
+              <View style={{ alignItems: "center", paddingVertical: 24 }}>
+                <Text style={{ color: colors.muted, fontSize: 14 }}>
+                  Rent information is not available. Please try again later.
+                </Text>
               </View>
             ) : (
               <>

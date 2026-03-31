@@ -33,10 +33,22 @@ export const submitShiftRequest = mutation({
     const property = await ctx.db.get(args.propertyId);
     if (!property) throw new Error("Property not found.");
 
+    // Validate caller-supplied applicationId — verify ownership and property match.
+    let validatedApplicationId: typeof args.applicationId = undefined;
+    if (args.applicationId) {
+      const app = await ctx.db.get(args.applicationId);
+      if (!app) throw new Error("Application not found.");
+      if (app.tenantUserId !== user._id)
+        throw new Error("Not authorised: application does not belong to you.");
+      if (app.propertyId !== args.propertyId)
+        throw new Error("Not authorised: application does not match the given property.");
+      validatedApplicationId = app._id;
+    }
+
     const shiftRequestId = await ctx.db.insert("shiftRequests", {
       tenantUserId: user._id,
       propertyId: args.propertyId,
-      applicationId: args.applicationId,
+      applicationId: validatedApplicationId,
       currentRoomNumber,
       reason,
       status: "open",
@@ -52,11 +64,24 @@ export const getShiftRequestById = query({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity?.tokenIdentifier) return null;
 
+    const caller = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!caller) return null;
+
     const shiftRequest = await ctx.db.get(args.shiftRequestId);
     if (!shiftRequest) return null;
 
-    const tenant = await ctx.db.get(shiftRequest.tenantUserId);
     const property = await ctx.db.get(shiftRequest.propertyId);
+
+    const isTenant = caller._id === shiftRequest.tenantUserId;
+    const isOperator = !!property && property.userId === caller._id;
+    if (!isTenant && !isOperator) return null;
+
+    const tenant = await ctx.db.get(shiftRequest.tenantUserId);
 
     // Find all rooms assigned to current tenants in this property
     const apps = await ctx.db
