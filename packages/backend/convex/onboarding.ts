@@ -936,3 +936,63 @@ export const completeOnboarding = mutation({
   },
 });
 
+/**
+ * Returns all data needed for the add-property multi-step flow for a
+ * specific property (not necessarily the primary property).
+ */
+export const getPropertyFlowData = query({
+  args: { propertyId: v.id("properties") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) return null;
+    const property = await ctx.db.get(args.propertyId);
+    if (!property || property.userId !== user._id) return null;
+
+    const roomOptions = await ctx.db
+      .query("roomOptions")
+      .withIndex("by_property_and_category", (q) =>
+        q.eq("propertyId", args.propertyId),
+      )
+      .take(100);
+
+    const floors = await ctx.db
+      .query("floors")
+      .withIndex("by_property", (q) => q.eq("propertyId", args.propertyId))
+      .collect();
+
+    const rooms = await ctx.db
+      .query("rooms")
+      .withIndex("by_property", (q) => q.eq("propertyId", args.propertyId))
+      .collect();
+
+    const tenantDetails = await ctx.db
+      .query("propertyTenantDetails")
+      .withIndex("by_property", (q) => q.eq("propertyId", args.propertyId))
+      .unique();
+
+    const agreement = await ctx.db
+      .query("propertyAgreement")
+      .withIndex("by_property", (q) => q.eq("propertyId", args.propertyId))
+      .unique();
+
+    const rent = await ctx.db
+      .query("propertyRent")
+      .withIndex("by_property", (q) => q.eq("propertyId", args.propertyId))
+      .unique();
+
+    const extraCharges = await ctx.db
+      .query("propertyExtraCharges")
+      .withIndex("by_property", (q) => q.eq("propertyId", args.propertyId))
+      .unique();
+
+    return { property, roomOptions, floors, rooms, tenantDetails, agreement, rent, extraCharges };
+  },
+});
+

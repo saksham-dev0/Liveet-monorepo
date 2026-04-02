@@ -277,10 +277,16 @@ export const getDashboardPropertyStats = query({
       return null;
     }
 
-    const properties = await ctx.db
-      .query("properties")
-      .withIndex("by_user", (q) => q.eq("userId", user._id))
-      .take(500);
+    let properties: Doc<"properties">[];
+    if (user.primaryPropertyId) {
+      const primary = await ctx.db.get(user.primaryPropertyId);
+      properties = primary && primary.userId === user._id ? [primary] : [];
+    } else {
+      properties = await ctx.db
+        .query("properties")
+        .withIndex("by_user", (q) => q.eq("userId", user._id))
+        .take(500);
+    }
 
     let vacantUnits = 0;
     let occupiedUnits = 0;
@@ -367,10 +373,16 @@ export const getRecentKycTenantsForDashboard = query({
       return null;
     }
 
-    const properties = await ctx.db
-      .query("properties")
-      .withIndex("by_user", (q) => q.eq("userId", user._id))
-      .take(500);
+    let properties: Doc<"properties">[];
+    if (user.primaryPropertyId) {
+      const primary = await ctx.db.get(user.primaryPropertyId);
+      properties = primary && primary.userId === user._id ? [primary] : [];
+    } else {
+      properties = await ctx.db
+        .query("properties")
+        .withIndex("by_user", (q) => q.eq("userId", user._id))
+        .take(500);
+    }
 
     type Collected = {
       _creationTime: number;
@@ -741,10 +753,16 @@ export const getRecentCreditedTransactionsForDashboard = query({
       return null;
     }
 
-    const properties = await ctx.db
-      .query("properties")
-      .withIndex("by_user", (q) => q.eq("userId", user._id))
-      .take(500);
+    let properties: Doc<"properties">[];
+    if (user.primaryPropertyId) {
+      const primary = await ctx.db.get(user.primaryPropertyId);
+      properties = primary && primary.userId === user._id ? [primary] : [];
+    } else {
+      properties = await ctx.db
+        .query("properties")
+        .withIndex("by_user", (q) => q.eq("userId", user._id))
+        .take(500);
+    }
     if (properties.length === 0) {
       return { items: [] as Array<never> };
     }
@@ -835,10 +853,16 @@ export const syncVacantUnitsForDashboard = mutation({
       throw new Error("User not found");
     }
 
-    const properties = await ctx.db
-      .query("properties")
-      .withIndex("by_user", (q) => q.eq("userId", user._id))
-      .take(500);
+    let properties: Doc<"properties">[];
+    if (user.primaryPropertyId) {
+      const primary = await ctx.db.get(user.primaryPropertyId);
+      properties = primary && primary.userId === user._id ? [primary] : [];
+    } else {
+      properties = await ctx.db
+        .query("properties")
+        .withIndex("by_user", (q) => q.eq("userId", user._id))
+        .take(500);
+    }
 
     let updatedProperties = 0;
 
@@ -1361,6 +1385,55 @@ export const getPropertyRoomOptionsForTenant = query({
         category: o.category,
       })),
     };
+  },
+});
+
+/** Returns all properties owned by the current operator. */
+export const getOperatorProperties = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) return null;
+    const properties = await ctx.db
+      .query("properties")
+      .withIndex("by_user", (q) => q.eq("userId", user._id))
+      .collect();
+    return {
+      primaryPropertyId: user.primaryPropertyId ?? null,
+      properties: properties.map((p) => ({
+        id: p._id,
+        name: p.name ?? null,
+        city: p.city ?? null,
+      })),
+    };
+  },
+});
+
+/** Sets the operator's active/primary property. */
+export const setPrimaryProperty = mutation({
+  args: { propertyId: v.id("properties") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) throw new Error("User not found");
+    const property = await ctx.db.get(args.propertyId);
+    if (!property || property.userId !== user._id) {
+      throw new Error("Property not found or not owned by user");
+    }
+    await ctx.db.patch(user._id, { primaryPropertyId: args.propertyId });
   },
 });
 

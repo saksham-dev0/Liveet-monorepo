@@ -7,6 +7,7 @@ import {
   Text,
   TouchableOpacity,
   Image,
+  Modal,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, type Href } from "expo-router";
@@ -99,6 +100,12 @@ export default function TestScreen() {
     RecentKycTenantItem[] | null
   >(null);
   const [greetingName, setGreetingName] = useState("user");
+  const [propertyName, setPropertyName] = useState<string | null>(null);
+  const [propertyDropdownVisible, setPropertyDropdownVisible] = useState(false);
+  const [operatorProperties, setOperatorProperties] = useState<
+    Array<{ id: string; name: string | null; city: string | null }>
+  >([]);
+  const [activePrimaryPropertyId, setActivePrimaryPropertyId] = useState<string | null>(null);
   const [recentTransactions, setRecentTransactions] = useState<
     RecentCreditedTransactionItem[] | null
   >(null);
@@ -113,6 +120,9 @@ export default function TestScreen() {
       const maybeName =
         typeof data?.user?.name === "string" ? data.user.name.trim() : "";
       setGreetingName(getFirstName(maybeName) || "user");
+      const maybePropName =
+        typeof data?.property?.name === "string" ? data.property.name.trim() : "";
+      setPropertyName(maybePropName || null);
     } catch {
       setListingChecklistComplete(false);
       setGreetingName("user");
@@ -164,6 +174,54 @@ export default function TestScreen() {
     }
   }, [convex]);
 
+  const refreshOperatorProperties = useCallback(async () => {
+    try {
+      const data = await (convex as any).query(
+        "properties:getOperatorProperties",
+        {},
+      );
+      if (data) {
+        setOperatorProperties(data.properties ?? []);
+        setActivePrimaryPropertyId(data.primaryPropertyId ?? null);
+      }
+    } catch {
+      // ignore
+    }
+  }, [convex]);
+
+  const handleSwitchProperty = useCallback(
+    async (propertyId: string) => {
+      try {
+        await (convex as any).mutation("properties:setPrimaryProperty", {
+          propertyId,
+        });
+        setPropertyDropdownVisible(false);
+        // Clear stale data immediately before fetching new property's data
+        setDashboardStats(null);
+        setRecentKycTenants(null);
+        setRecentTransactions(null);
+        setPropertyName(null);
+        setListingChecklistComplete(null);
+        // Refresh all dashboard data for the new active property
+        void refreshListingStatus();
+        void refreshDashboardStats();
+        void refreshRecentKycTenants();
+        void refreshRecentTransactions();
+        void refreshOperatorProperties();
+      } catch {
+        // ignore
+      }
+    },
+    [
+      convex,
+      refreshListingStatus,
+      refreshDashboardStats,
+      refreshRecentKycTenants,
+      refreshOperatorProperties,
+      // refreshRecentTransactions defined below — stable ref via useCallback
+    ],
+  );
+
   const refreshRecentTransactions = useCallback(async () => {
     try {
       const data = await (convex as any).query(
@@ -184,6 +242,7 @@ export default function TestScreen() {
       void refreshDashboardStats();
       void refreshRecentKycTenants();
       void refreshRecentTransactions();
+      void refreshOperatorProperties();
     }, [
       authLoaded,
       isSignedIn,
@@ -191,6 +250,7 @@ export default function TestScreen() {
       refreshDashboardStats,
       refreshRecentKycTenants,
       refreshRecentTransactions,
+      refreshOperatorProperties,
     ]),
   );
 
@@ -210,9 +270,14 @@ export default function TestScreen() {
             <Text style={styles.greetingName}>{greetingName}</Text>
           </View>
           <View style={styles.headerRight}>
-            <Pressable style={styles.orgPill}>
+            <Pressable
+              style={styles.orgPill}
+              onPress={() => setPropertyDropdownVisible(true)}
+            >
               <View style={styles.orgDot} />
-              <Text style={styles.orgText}>Acme Inc</Text>
+              <Text style={styles.orgText} numberOfLines={1}>
+                {propertyName ?? "My Property"}
+              </Text>
               <Ionicons name="chevron-down" size={12} color="#9CA3AF" />
             </Pressable>
             <Pressable
@@ -422,6 +487,76 @@ export default function TestScreen() {
             ))
           )}
         </View>
+
+        {/* Property switcher modal */}
+        <Modal
+          visible={propertyDropdownVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setPropertyDropdownVisible(false)}
+        >
+          <Pressable
+            style={styles.modalBackdrop}
+            onPress={() => setPropertyDropdownVisible(false)}
+          >
+            <Pressable style={styles.propertyDropdown} onPress={() => {}}>
+              <Text style={styles.propertyDropdownTitle}>Your Properties</Text>
+              {operatorProperties.map((p) => {
+                const isActive = p.id === activePrimaryPropertyId;
+                return (
+                  <Pressable
+                    key={p.id}
+                    style={[
+                      styles.propertyDropdownItem,
+                      isActive && styles.propertyDropdownItemActive,
+                    ]}
+                    onPress={() => handleSwitchProperty(p.id)}
+                  >
+                    <View style={styles.propertyDropdownItemLeft}>
+                      <View
+                        style={[
+                          styles.propertyDropdownDot,
+                          isActive && styles.propertyDropdownDotActive,
+                        ]}
+                      />
+                      <View>
+                        <Text
+                          style={[
+                            styles.propertyDropdownName,
+                            isActive && styles.propertyDropdownNameActive,
+                          ]}
+                          numberOfLines={1}
+                        >
+                          {p.name ?? "Unnamed property"}
+                        </Text>
+                        {p.city ? (
+                          <Text style={styles.propertyDropdownCity}>
+                            {p.city}
+                          </Text>
+                        ) : null}
+                      </View>
+                    </View>
+                    {isActive && (
+                      <Ionicons name="checkmark" size={16} color="#1E293B" />
+                    )}
+                  </Pressable>
+                );
+              })}
+              <Pressable
+                style={styles.addPropertyButton}
+                onPress={() => {
+                  setPropertyDropdownVisible(false);
+                  router.push("/(app)/add-property");
+                }}
+              >
+                <Ionicons name="add" size={18} color="#1a1a1a" />
+                <Text style={styles.addPropertyButtonText}>
+                  Add new property
+                </Text>
+              </Pressable>
+            </Pressable>
+          </Pressable>
+        </Modal>
 
         {/* Footer */}
         <View style={styles.footer}>
@@ -756,6 +891,91 @@ const styles = StyleSheet.create({
   transactionAmount: {
     fontSize: 16,
     fontWeight: "600",
+  },
+  // Property switcher modal
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "flex-start",
+    alignItems: "flex-end",
+    paddingTop: 104,
+    paddingRight: 20,
+  },
+  propertyDropdown: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 8,
+    minWidth: 220,
+    maxWidth: 300,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  propertyDropdownTitle: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#9CA3AF",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  propertyDropdownItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  propertyDropdownItemActive: {
+    backgroundColor: "#F3F4F6",
+  },
+  propertyDropdownItemLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    flex: 1,
+    marginRight: 8,
+  },
+  propertyDropdownDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#D1D5DB",
+  },
+  propertyDropdownDotActive: {
+    backgroundColor: "#34D399",
+  },
+  propertyDropdownName: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#6B7280",
+  },
+  propertyDropdownNameActive: {
+    color: "#1a1a1a",
+  },
+  propertyDropdownCity: {
+    fontSize: 12,
+    color: "#9CA3AF",
+    marginTop: 1,
+  },
+  addPropertyButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "#E5E7EB",
+    marginTop: 4,
+  },
+  addPropertyButtonText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#1a1a1a",
   },
   // Footer
   footer: {
