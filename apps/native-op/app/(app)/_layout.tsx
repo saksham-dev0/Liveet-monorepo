@@ -67,6 +67,38 @@ export default function AppStackLayout() {
           fullScreenGestureEnabled: true,
         }}
       />
+      <Stack.Screen
+        name="add-property/index"
+        options={{ gestureEnabled: true, fullScreenGestureEnabled: true }}
+      />
+      <Stack.Screen
+        name="add-property/tenant"
+        options={{ gestureEnabled: true, fullScreenGestureEnabled: true }}
+      />
+      <Stack.Screen
+        name="add-property/rooms"
+        options={{ gestureEnabled: true, fullScreenGestureEnabled: true }}
+      />
+      <Stack.Screen
+        name="add-property/room-category"
+        options={{ gestureEnabled: true, fullScreenGestureEnabled: true }}
+      />
+      <Stack.Screen
+        name="add-property/room-config"
+        options={{ gestureEnabled: true, fullScreenGestureEnabled: true }}
+      />
+      <Stack.Screen
+        name="add-property/agreement"
+        options={{ gestureEnabled: true, fullScreenGestureEnabled: true }}
+      />
+      <Stack.Screen
+        name="add-property/rent"
+        options={{ gestureEnabled: true, fullScreenGestureEnabled: true }}
+      />
+      <Stack.Screen
+        name="add-property/charges"
+        options={{ gestureEnabled: true, fullScreenGestureEnabled: true }}
+      />
     </Stack>
   );
 }
