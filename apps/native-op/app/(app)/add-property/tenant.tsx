@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   ScrollView,
   Text,
@@ -43,9 +43,29 @@ export default function AddPropertyTenantScreen() {
   const [bestStudent, setBestStudent] = useState(false);
   const [bestWorking, setBestWorking] = useState(false);
 
+  useEffect(() => {
+    if (!propertyId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await (convex as any).query("onboarding:getPropertyFlowData", { propertyId });
+        if (cancelled || !data?.tenantDetails) return;
+        const t = data.tenantDetails;
+        setCanStayMale(!!t.canStayMale);
+        setCanStayFemale(!!t.canStayFemale);
+        setCanStayOthers(!!t.canStayOthers);
+        setBestStudent(!!t.bestForStudent);
+        setBestWorking(!!t.bestForWorkingProfessional);
+      } catch {
+        // ignore — form stays at defaults if fetch fails
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [convex, propertyId]);
+
   const toggle = (value: boolean, setter: (v: boolean) => void) => setter(!value);
 
-  const handleSave = async () => {
+  const handleSave = async (saveAsDraft = false) => {
     if (!propertyId) {
       setError("Missing property ID. Please go back and try again.");
       return;
@@ -61,10 +81,12 @@ export default function AddPropertyTenantScreen() {
         bestForStudent: bestStudent,
         bestForWorkingProfessional: bestWorking,
       });
-      router.push({
-        pathname: "/(app)/add-property/rooms",
-        params: { propertyId },
-      } as any);
+      if (!saveAsDraft) {
+        router.push({
+          pathname: "/(app)/add-property/rooms",
+          params: { propertyId },
+        } as any);
+      }
     } catch (err: any) {
       setError(err?.message ?? "Something went wrong. Please try again.");
     } finally {
@@ -112,13 +134,13 @@ export default function AddPropertyTenantScreen() {
         </View>
 
         <View style={footerRow}>
-          <TouchableOpacity style={secondaryButton} onPress={handleSave}>
+          <TouchableOpacity style={secondaryButton} onPress={() => handleSave(true)}>
             <Text style={secondaryButtonText}>Save as draft</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[primaryButton, saving && primaryButtonDisabled]}
             disabled={saving}
-            onPress={handleSave}
+            onPress={() => handleSave(false)}
           >
             <Text style={primaryButtonText}>{saving ? "Saving…" : "Next"}</Text>
           </TouchableOpacity>

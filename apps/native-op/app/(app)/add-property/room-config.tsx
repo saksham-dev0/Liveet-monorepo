@@ -71,17 +71,20 @@ export default function AddPropertyRoomConfigScreen() {
         });
       }
 
-      if (data.roomOptions?.length > 0 && !selectedCategory) {
-        setSelectedCategory(data.roomOptions[0]._id);
-      }
     } catch {
       // ignore
     } finally {
       setLoading(false);
     }
-  }, [convex, propertyId, selectedCategory]);
+  }, [convex, propertyId]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (roomOptions.length > 0 && !selectedCategory) {
+      setSelectedCategory(roomOptions[0]._id);
+    }
+  }, [roomOptions, selectedCategory]);
 
   const currentRoomCount = floors.reduce((sum, f) => sum + f.rooms.length, 0);
   const roomsRemaining = Math.max(0, totalUnits - currentRoomCount);

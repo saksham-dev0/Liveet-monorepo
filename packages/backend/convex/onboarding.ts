@@ -121,7 +121,7 @@ async function getOnboardingStatusPayload(ctx: QueryCtx) {
       .withIndex("by_property_and_category", (q) =>
         q.eq("propertyId", property._id),
       )
-      .take(100));
+      .collect());
 
   const floors =
     property &&
@@ -960,7 +960,7 @@ export const getPropertyFlowData = query({
       .withIndex("by_property_and_category", (q) =>
         q.eq("propertyId", args.propertyId),
       )
-      .take(100);
+      .collect();
 
     const floors = await ctx.db
       .query("floors")

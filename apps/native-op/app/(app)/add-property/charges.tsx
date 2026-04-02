@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   ScrollView,
   StyleSheet,
@@ -42,30 +42,56 @@ export default function AddPropertyChargesScreen() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [initialized, setInitialized] = useState(false);
   const [isChargingExtra, setIsChargingExtra] = useState<boolean | null>(null);
   const [type, setType] = useState("");
   const [amount, setAmount] = useState("");
   const [repetition, setRepetition] = useState<(typeof REPETITIONS)[number] | null>(null);
   const [gracePeriod, setGracePeriod] = useState<number | null>(null);
 
+  useEffect(() => {
+    if (!propertyId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await (convex as any).query("onboarding:getPropertyFlowData", { propertyId });
+        if (cancelled) return;
+        const ec = data?.extraCharges;
+        if (ec) {
+          if (ec.isChargingExtra != null) setIsChargingExtra(ec.isChargingExtra);
+          if (ec.type) setType(ec.type);
+          if (ec.amount != null) setAmount(String(ec.amount));
+          if (ec.repetition) setRepetition(ec.repetition as (typeof REPETITIONS)[number]);
+          if (ec.gracePeriodDays != null) setGracePeriod(ec.gracePeriodDays);
+        }
+      } catch {
+        // ignore — form stays at defaults if fetch fails
+      } finally {
+        if (!cancelled) setInitialized(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [convex, propertyId]);
+
   const handleFinish = async () => {
     if (!propertyId) { setError("Missing property ID."); return; }
     setSaving(true); setError(null);
     try {
-      await (convex as any).mutation("onboarding:upsertExtraCharges", {
-        propertyId,
-        isChargingExtra: isChargingExtra === null ? undefined : isChargingExtra,
-        type: type || undefined,
-        amount: amount ? Number(amount) : undefined,
-        repetition: repetition || undefined,
-        gracePeriodDays: gracePeriod ?? undefined,
-      });
+      const payload: Record<string, unknown> = { propertyId };
+      if (isChargingExtra !== null) payload.isChargingExtra = isChargingExtra;
+      if (isChargingExtra === true) {
+        if (type) payload.type = type;
+        if (amount) payload.amount = Number(amount);
+        if (repetition) payload.repetition = repetition;
+        if (gracePeriod != null) payload.gracePeriodDays = gracePeriod;
+      }
+      await (convex as any).mutation("onboarding:upsertExtraCharges", payload);
 
       // Switch dashboard to this new property
       await (convex as any).mutation("properties:setPrimaryProperty", { propertyId });
 
       // Navigate back to home dashboard
-      router.replace("/(app)/(tabs)/");
+      router.replace("/(app)/(tabs)/" as any);
     } catch (err: any) {
       setError(err?.message ?? "Something went wrong. Please try again.");
     } finally {
@@ -137,7 +163,7 @@ export default function AddPropertyChargesScreen() {
         )}
 
         <View style={footerRow}>
-          <TouchableOpacity style={[primaryButton, { flex: 1 }, saving && primaryButtonDisabled]} disabled={saving} onPress={handleFinish}>
+          <TouchableOpacity style={[primaryButton, { flex: 1 }, (!initialized || saving) && primaryButtonDisabled]} disabled={!initialized || saving} onPress={handleFinish}>
             <Text style={primaryButtonText}>{saving ? "Saving…" : "Add property"}</Text>
           </TouchableOpacity>
         </View>
