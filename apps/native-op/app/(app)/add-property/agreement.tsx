@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   ScrollView,
   StyleSheet,
@@ -42,23 +42,48 @@ export default function AddPropertyAgreementScreen() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [initialized, setInitialized] = useState(false);
   const [securityDepositDuration, setSecurityDepositDuration] = useState("");
   const [agreementDuration, setAgreementDuration] = useState("");
   const [lockInPeriod, setLockInPeriod] = useState("");
   const [noticePeriod, setNoticePeriod] = useState("");
 
-  const handleSave = async () => {
+  useEffect(() => {
+    if (!propertyId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await (convex as any).query("onboarding:getPropertyFlowData", { propertyId });
+        if (cancelled) return;
+        const a = data?.agreement;
+        if (a) {
+          if (a.securityDepositDuration) setSecurityDepositDuration(a.securityDepositDuration);
+          if (a.agreementDuration) setAgreementDuration(a.agreementDuration);
+          if (a.lockInPeriod) setLockInPeriod(a.lockInPeriod);
+          if (a.noticePeriod) setNoticePeriod(a.noticePeriod);
+        }
+      } catch {
+        // ignore — form stays at defaults if fetch fails
+      } finally {
+        if (!cancelled) setInitialized(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [convex, propertyId]);
+
+  const handleSave = async (saveAsDraft = false) => {
     if (!propertyId) { setError("Missing property ID."); return; }
     setSaving(true); setError(null);
     try {
-      await (convex as any).mutation("onboarding:upsertAgreementDetails", {
-        propertyId,
-        securityDepositDuration: securityDepositDuration && securityDepositDuration !== CUSTOM_VALUE ? securityDepositDuration : undefined,
-        agreementDuration: agreementDuration && agreementDuration !== CUSTOM_VALUE ? agreementDuration : undefined,
-        lockInPeriod: lockInPeriod && lockInPeriod !== CUSTOM_VALUE ? lockInPeriod : undefined,
-        noticePeriod: noticePeriod && noticePeriod !== CUSTOM_VALUE ? noticePeriod : undefined,
-      });
-      router.push({ pathname: "/(app)/add-property/rent", params: { propertyId } } as any);
+      const payload: Record<string, unknown> = { propertyId };
+      if (securityDepositDuration && securityDepositDuration !== CUSTOM_VALUE) payload.securityDepositDuration = securityDepositDuration;
+      if (agreementDuration && agreementDuration !== CUSTOM_VALUE) payload.agreementDuration = agreementDuration;
+      if (lockInPeriod && lockInPeriod !== CUSTOM_VALUE) payload.lockInPeriod = lockInPeriod;
+      if (noticePeriod && noticePeriod !== CUSTOM_VALUE) payload.noticePeriod = noticePeriod;
+      await (convex as any).mutation("onboarding:upsertAgreementDetails", payload);
+      if (!saveAsDraft) {
+        router.push({ pathname: "/(app)/add-property/rent", params: { propertyId } } as any);
+      }
     } catch (err: any) {
       setError(err?.message ?? "Something went wrong. Please try again.");
     } finally {
@@ -118,10 +143,10 @@ export default function AddPropertyAgreementScreen() {
         {renderOptionRow("Notice period", noticePeriod, setNoticePeriod)}
 
         <View style={footerRow}>
-          <TouchableOpacity style={secondaryButton} onPress={handleSave}>
+          <TouchableOpacity style={[secondaryButton, !initialized && primaryButtonDisabled]} disabled={!initialized} onPress={() => handleSave(true)}>
             <Text style={secondaryButtonText}>Save as draft</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[primaryButton, saving && primaryButtonDisabled]} disabled={saving} onPress={handleSave}>
+          <TouchableOpacity style={[primaryButton, (!initialized || saving) && primaryButtonDisabled]} disabled={!initialized || saving} onPress={() => handleSave(false)}>
             <Text style={primaryButtonText}>{saving ? "Saving…" : "Next"}</Text>
           </TouchableOpacity>
         </View>

@@ -106,6 +106,7 @@ export default function TestScreen() {
     Array<{ id: string; name: string | null; city: string | null }>
   >([]);
   const [activePrimaryPropertyId, setActivePrimaryPropertyId] = useState<string | null>(null);
+  const [switchingPropertyId, setSwitchingPropertyId] = useState<string | null>(null);
   const [recentTransactions, setRecentTransactions] = useState<
     RecentCreditedTransactionItem[] | null
   >(null);
@@ -191,6 +192,8 @@ export default function TestScreen() {
 
   const handleSwitchProperty = useCallback(
     async (propertyId: string) => {
+      if (switchingPropertyId) return;
+      setSwitchingPropertyId(propertyId);
       try {
         await (convex as any).mutation("properties:setPrimaryProperty", {
           propertyId,
@@ -210,10 +213,13 @@ export default function TestScreen() {
         void refreshOperatorProperties();
       } catch {
         // ignore
+      } finally {
+        setSwitchingPropertyId(null);
       }
     },
     [
       convex,
+      switchingPropertyId,
       refreshListingStatus,
       refreshDashboardStats,
       refreshRecentKycTenants,
@@ -510,6 +516,7 @@ export default function TestScreen() {
                       styles.propertyDropdownItem,
                       isActive && styles.propertyDropdownItemActive,
                     ]}
+                    disabled={!!switchingPropertyId}
                     onPress={() => handleSwitchProperty(p.id)}
                   >
                     <View style={styles.propertyDropdownItemLeft}>
