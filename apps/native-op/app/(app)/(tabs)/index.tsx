@@ -45,6 +45,7 @@ type RecentCreditedTransactionItem = {
   applicationId: string;
   tenantName: string;
   amount: number;
+  breakdown: string;
   createdAt: number;
   type: "credit";
 };
@@ -419,14 +420,13 @@ export default function TestScreen() {
         <View style={styles.card}>
           <Text style={[styles.cardTitle, styles.kycCardTitle]}>Upcoming Move-Ins</Text>
           <Text style={styles.cardSubtitle}>
-            Tenants who have completed E-KYC and are scheduled to move in soon
+            Tenants who have completed payment and are scheduled to move in
           </Text>
           {recentKycTenants === null ? (
             <Text style={styles.kycEmptyText}>Loading…</Text>
           ) : recentKycTenants.length === 0 ? (
             <Text style={styles.kycEmptyText}>
-              No completed move-in applications yet. Tenants who finish E-KYC in
-              the tenant app will appear here.
+              No upcoming move-ins yet. Tenants who complete payment will appear here.
             </Text>
           ) : (
             recentKycTenants.map((item) => (

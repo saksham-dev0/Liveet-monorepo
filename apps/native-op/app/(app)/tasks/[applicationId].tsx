@@ -302,16 +302,14 @@ export default function TaskDetailsScreen() {
       await (convex as any).mutation("properties:markCashPaymentReceived", {
         applicationId,
       });
-      setAssignMessage("Payment marked as paid.");
-      await load();
+      router.back();
     } catch (err) {
       setAssignMessage(
         err instanceof Error ? err.message : "Could not update payment status.",
       );
-    } finally {
       setMarkingPaid(false);
     }
-  }, [applicationId, convex, load]);
+  }, [applicationId, convex, router]);
 
   const markPaymentReceived = useCallback(async () => {
     if (!applicationId || typeof applicationId !== "string") return;
@@ -321,16 +319,14 @@ export default function TaskDetailsScreen() {
       await (convex as any).mutation("properties:markPaymentReceived", {
         applicationId,
       });
-      setAssignMessage("Payment marked as received.");
-      await load();
+      router.back();
     } catch (err) {
       setAssignMessage(
         err instanceof Error ? err.message : "Could not update payment status.",
       );
-    } finally {
       setMarkingPaid(false);
     }
-  }, [applicationId, convex, load]);
+  }, [applicationId, convex, router]);
 
   const resolveComplaint = useCallback(async () => {
     if (!applicationId || typeof applicationId !== "string") return;

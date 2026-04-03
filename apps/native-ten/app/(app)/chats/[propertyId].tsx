@@ -303,8 +303,7 @@ export default function ChatThreadScreen() {
 
             if (item.kind === "onboarding") {
               const isExpired = Date.now() - item.createdAt > OB_EXPIRY_MS;
-              const isCompleted =
-                kycStatus?.status === "submitted" || kycStatus?.status === "onboarded";
+              const isCompleted = kycStatus?.status === "submitted";
               const isDisabled = isExpired || isCompleted;
 
               return (

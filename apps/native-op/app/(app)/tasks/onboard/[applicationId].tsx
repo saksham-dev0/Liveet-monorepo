@@ -31,7 +31,22 @@ type AppData = {
   onboardingRentCycle: string | null;
   onboardingRentCycleCustomDay: number | null;
   onboardingExtraCharges: string | null;
+  selectedRentAmount: number | null;
 };
+
+/** Parses "1 month", "11 months", "1 year", "2 years" → number of months, or null */
+function parseMonths(duration: string): number | null {
+  const s = duration.trim().toLowerCase();
+  const yearMatch = s.match(/^(\d+)\s*year/);
+  if (yearMatch) return parseInt(yearMatch[1], 10) * 12;
+  const monthMatch = s.match(/^(\d+)\s*month/);
+  if (monthMatch) return parseInt(monthMatch[1], 10);
+  return null;
+}
+
+function formatINR(amount: number): string {
+  return `₹${amount.toLocaleString("en-IN")}`;
+}
 
 const RENT_CYCLES = [
   { key: "1st", label: "1st of every month" },
@@ -324,6 +339,51 @@ export default function OnboardTenantScreen() {
               </View>
             ) : null}
 
+            {/* ─── Payment Summary ─── */}
+            {(() => {
+              const months = parseMonths(agreementDuration);
+              const rent = appData.selectedRentAmount;
+              if (!months) return null;
+              if (months === 1) {
+                return (
+                  <View style={s.paymentSummaryCard}>
+                    <Text style={s.paymentSummaryTitle}>Payment summary</Text>
+                    <Text style={s.paymentSummaryLine}>
+                      1-month agreement — tenant pays the monthly rent cycle only.
+                    </Text>
+                    {rent != null && (
+                      <Text style={s.paymentSummaryTotal}>
+                        {formatINR(rent)}/month
+                      </Text>
+                    )}
+                  </View>
+                );
+              }
+              const deposit = parseFloat(securityDeposit) || 0;
+              const rentPerMonth = rent ?? 0;
+              const total = deposit + months * rentPerMonth;
+              return (
+                <View style={s.paymentSummaryCard}>
+                  <Text style={s.paymentSummaryTitle}>Payment summary</Text>
+                  {deposit > 0 && (
+                    <Text style={s.paymentSummaryLine}>
+                      Security deposit: {formatINR(deposit)}
+                    </Text>
+                  )}
+                  {rentPerMonth > 0 && (
+                    <Text style={s.paymentSummaryLine}>
+                      Rent: {formatINR(rentPerMonth)} × {months} months = {formatINR(rentPerMonth * months)}
+                    </Text>
+                  )}
+                  {(deposit > 0 || rentPerMonth > 0) && (
+                    <Text style={s.paymentSummaryTotal}>
+                      Total due: {formatINR(total)}
+                    </Text>
+                  )}
+                </View>
+              );
+            })()}
+
             {/* ─── Extra Charges ─── */}
             <SectionHeader title="Extra Charges" />
             <FieldLabel text="Details" optional />
@@ -489,6 +549,36 @@ const s = StyleSheet.create({
     padding: 14,
   },
   emptyCardText: { fontSize: 13, color: colors.muted, flex: 1, lineHeight: 18 },
+
+  // Payment summary
+  paymentSummaryCard: {
+    marginTop: 16,
+    backgroundColor: colors.inputBg,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 14,
+    gap: 6,
+  },
+  paymentSummaryTitle: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: colors.muted,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+    marginBottom: 2,
+  },
+  paymentSummaryLine: {
+    fontSize: 13,
+    color: colors.navy,
+    fontWeight: "500",
+  },
+  paymentSummaryTotal: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: colors.primary,
+    marginTop: 4,
+  },
 
   // Submit button
   submitBtn: {

@@ -233,6 +233,8 @@ function isMoveInKycComplete(
 ): boolean {
   return (
     app.status === "submitted" ||
+    app.status === "onboarded" ||
+    app.status === "quick_request" ||
     app.status === undefined ||
     app.status === null
   );
@@ -288,6 +290,15 @@ export const getDashboardPropertyStats = query({
         .take(500);
     }
 
+    function parseDurationMonthsForStats(duration: string): number | null {
+      const s = duration.trim().toLowerCase();
+      const monthMatch = s.match(/^(\d+)\s*month/);
+      if (monthMatch) return parseInt(monthMatch[1], 10);
+      const yearMatch = s.match(/^(\d+)\s*year/);
+      if (yearMatch) return parseInt(yearMatch[1], 10) * 12;
+      return null;
+    }
+
     let vacantUnits = 0;
     let occupiedUnits = 0;
     let totalPaidRentAmount = 0;
@@ -332,12 +343,21 @@ export const getDashboardPropertyStats = query({
         if (!roomOption || roomOption.propertyId !== p._id) {
           continue;
         }
+        const rentAmount = roomOption.rentAmount;
         if (
-          typeof roomOption.rentAmount === "number" &&
-          !Number.isNaN(roomOption.rentAmount) &&
-          roomOption.rentAmount > 0
+          typeof rentAmount === "number" &&
+          !Number.isNaN(rentAmount) &&
+          rentAmount > 0
         ) {
-          totalPaidRentAmount += roomOption.rentAmount;
+          const agreementMonths = app.onboardingAgreementDuration
+            ? parseDurationMonthsForStats(app.onboardingAgreementDuration)
+            : null;
+          const rentMonths = agreementMonths && agreementMonths > 0 ? agreementMonths : 1;
+          const securityDeposit =
+            typeof app.onboardingSecurityDeposit === "number" && app.onboardingSecurityDeposit > 0
+              ? app.onboardingSecurityDeposit
+              : 0;
+          totalPaidRentAmount += rentAmount * rentMonths + securityDeposit;
         }
       }
     }
@@ -402,9 +422,15 @@ export const getRecentKycTenantsForDashboard = query({
         .take(200);
 
       for (const app of apps) {
-        if (!isMoveInKycComplete(app)) {
+        // Only show tenants who have paid
+        if (app.paymentStatus !== "paid") {
           continue;
         }
+        // Skip tenants who have already moved out
+        if (app.moveOutDate) {
+          continue;
+        }
+        // Skip tenants whose move-in date has already passed
         if (isMoveInDatePast(app.moveInDate)) {
           continue;
         }
@@ -784,11 +810,21 @@ export const getRecentCreditedTransactionsForDashboard = query({
 
     const roomOptionCache = new Map<Id<"roomOptions">, Doc<"roomOptions"> | null>();
 
+    function parseDurationMonths(duration: string): number | null {
+      const s = duration.trim().toLowerCase();
+      const monthMatch = s.match(/^(\d+)\s*month/);
+      if (monthMatch) return parseInt(monthMatch[1], 10);
+      const yearMatch = s.match(/^(\d+)\s*year/);
+      if (yearMatch) return parseInt(yearMatch[1], 10) * 12;
+      return null;
+    }
+
     const creditedRows: Array<{
       applicationId: Id<"tenantMoveInApplications">;
       _creationTime: number;
       tenantName: string;
       amount: number;
+      breakdown: string;
     }> = [];
 
     for (const app of paidApps) {
@@ -803,16 +839,40 @@ export const getRecentCreditedTransactionsForDashboard = query({
       if (!roomOption) continue;
       if (!propertyIdSet.has(roomOption.propertyId)) continue;
 
-      const amount = roomOption.rentAmount;
-      if (typeof amount !== "number" || Number.isNaN(amount) || amount <= 0) {
+      const rentAmount = roomOption.rentAmount;
+      if (typeof rentAmount !== "number" || Number.isNaN(rentAmount) || rentAmount <= 0) {
         continue;
       }
+
+      const securityDeposit =
+        typeof app.onboardingSecurityDeposit === "number" && app.onboardingSecurityDeposit > 0
+          ? app.onboardingSecurityDeposit
+          : 0;
+
+      const agreementDuration = app.onboardingAgreementDuration ?? null;
+      const agreementMonths = agreementDuration ? parseDurationMonths(agreementDuration) : null;
+      const rentMonths = agreementMonths && agreementMonths > 0 ? agreementMonths : 1;
+
+      const totalRent = rentAmount * rentMonths;
+      const totalAmount = totalRent + securityDeposit;
+
+      const parts: string[] = [];
+      if (rentMonths > 1) {
+        parts.push(`Rent ×${rentMonths}mo`);
+      } else {
+        parts.push("Rent");
+      }
+      if (securityDeposit > 0) {
+        parts.push("Security");
+      }
+      const breakdown = parts.join(" + ");
 
       creditedRows.push({
         applicationId: app._id,
         _creationTime: app._creationTime,
         tenantName: app.legalNameAsOnId ?? "",
-        amount,
+        amount: totalAmount,
+        breakdown,
       });
     }
 
@@ -823,6 +883,7 @@ export const getRecentCreditedTransactionsForDashboard = query({
         applicationId: row.applicationId,
         tenantName: row.tenantName,
         amount: row.amount,
+        breakdown: row.breakdown,
         createdAt: row._creationTime,
         type: "credit" as const,
       })),
@@ -1189,6 +1250,8 @@ export const getRoomAssignmentTask = query({
         notFound: false as const,
         alreadyAssigned: true as const,
         assignedRoomNumber: app.assignedRoomNumber ?? null,
+        paymentStatus: app.paymentStatus ?? null,
+        paymentMethod: app.paymentMethod ?? null,
       };
     }
 

@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   ScrollView,
   StyleSheet,
@@ -13,6 +14,7 @@ import {
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useConvex } from "convex/react";
+import { Ionicons } from "@expo/vector-icons";
 import {
   colors,
   errorText,
@@ -44,6 +46,26 @@ type Floor = {
   rooms: Room[];
 };
 
+type RoomOccupancy = {
+  occupantCount: number;
+  hasPendingPayment: boolean;
+  hasPendingRent: boolean;
+};
+
+type UnassignedTenant = {
+  applicationId: string;
+  tenantName: string;
+  phone: string;
+  email: string;
+  moveInDate: string;
+};
+
+function roomCapacity(category?: string): number {
+  if (category === "double") return 2;
+  if (category === "triple") return 3;
+  return 1;
+}
+
 const FLOOR_LABELS: Record<number, string> = {
   0: "Ground floor",
   1: "1st floor",
@@ -73,13 +95,22 @@ export default function RoomConfigScreen() {
   const [floors, setFloors] = useState<Floor[]>([]);
   const [totalUnits, setTotalUnits] = useState<number>(0);
 
+  const [roomOccupancies, setRoomOccupancies] = useState<Record<string, RoomOccupancy>>({});
+
   const [floorChoices, setFloorChoices] = useState<number[]>([0, 1, 2, 3, 4, 5]);
   const [selectedFloor, setSelectedFloor] = useState("0");
   const [selectedCategory, setSelectedCategory] = useState("");
   const [numRooms, setNumRooms] = useState("");
 
-  const [editingRoomId, setEditingRoomId] = useState<string | null>(null);
-  const [editingRoomNumber, setEditingRoomNumber] = useState("");
+
+  const [editModalRoom, setEditModalRoom] = useState<Room | null>(null);
+  const [editModalNumber, setEditModalNumber] = useState("");
+  const [editModalCategory, setEditModalCategory] = useState("");
+
+  const [assigningRoom, setAssigningRoom] = useState<Room | null>(null);
+  const [unassignedTenants, setUnassignedTenants] = useState<UnassignedTenant[]>([]);
+  const [assignLoading, setAssignLoading] = useState(false);
+  const [assignSaving, setAssignSaving] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
@@ -132,9 +163,66 @@ export default function RoomConfigScreen() {
     }
   }, [convex, pidParam, selectedCategory]);
 
+  const loadOccupancy = useCallback(async () => {
+    try {
+      const assignments: Array<{
+        roomId: string;
+        hasPendingPayment: boolean;
+        isRentDue: boolean;
+      }> = await (convex as any).query("onboarding:listActiveRoomAssignments", {});
+      if (!Array.isArray(assignments)) return;
+      const map: Record<string, RoomOccupancy> = {};
+      for (const a of assignments) {
+        if (!map[a.roomId]) {
+          map[a.roomId] = { occupantCount: 0, hasPendingPayment: false, hasPendingRent: false };
+        }
+        map[a.roomId].occupantCount++;
+        if (a.hasPendingPayment) map[a.roomId].hasPendingPayment = true;
+        if (a.isRentDue) map[a.roomId].hasPendingRent = true;
+      }
+      setRoomOccupancies(map);
+    } catch {
+      // silently fail — rooms just show without colour
+    }
+  }, [convex]);
+
+  const openAssignModal = useCallback(async (room: Room) => {
+    setAssigningRoom(room);
+    setAssignLoading(true);
+    try {
+      const tenants: UnassignedTenant[] = await (convex as any).query(
+        "onboarding:listUnassignedTenants",
+        {},
+      );
+      setUnassignedTenants(Array.isArray(tenants) ? tenants : []);
+    } catch {
+      setUnassignedTenants([]);
+    } finally {
+      setAssignLoading(false);
+    }
+  }, [convex]);
+
+  const handleAssignTenant = async (applicationId: string) => {
+    if (!assigningRoom) return;
+    setAssignSaving(true);
+    try {
+      await (convex as any).mutation("onboarding:assignRoomToTenant", {
+        applicationId,
+        roomId: assigningRoom._id,
+      });
+      await loadOccupancy();
+      setAssigningRoom(null);
+    } catch (err: any) {
+      Alert.alert("Error", err?.message ?? "Failed to assign room.");
+    } finally {
+      setAssignSaving(false);
+    }
+  };
+
   useEffect(() => {
     loadData();
-  }, [loadData]);
+    loadOccupancy();
+  }, [loadData, loadOccupancy]);
 
   const currentRoomCount = floors.reduce((sum, f) => sum + f.rooms.length, 0);
   const roomsRemaining = Math.max(0, totalUnits - currentRoomCount);
@@ -220,26 +308,33 @@ export default function RoomConfigScreen() {
     }
   };
 
-  const handleUpdateRoom = async () => {
-    if (!editingRoomId || !editingRoomNumber.trim()) return;
+  const handleEditRoomSave = async () => {
+    if (!editModalRoom || !editModalNumber.trim()) return;
     setSaving(true);
     try {
+      const selectedOption = roomOptions.find((o) => o._id === editModalCategory);
       await (convex as any).mutation("onboarding:updateRoom", {
-        roomId: editingRoomId,
-        roomNumber: editingRoomNumber.trim(),
+        roomId: editModalRoom._id,
+        roomNumber: editModalNumber.trim(),
+        roomOptionId: selectedOption?._id,
+        category: selectedOption?.category,
       });
       setFloors((prev) =>
         prev.map((f) => ({
           ...f,
           rooms: f.rooms.map((r) =>
-            r._id === editingRoomId
-              ? { ...r, roomNumber: editingRoomNumber.trim() }
+            r._id === editModalRoom._id
+              ? {
+                  ...r,
+                  roomNumber: editModalNumber.trim(),
+                  roomOptionId: selectedOption?._id,
+                  category: selectedOption?.category,
+                }
               : r,
           ),
         })),
       );
-      setEditingRoomId(null);
-      setEditingRoomNumber("");
+      setEditModalRoom(null);
     } catch {
       setError("Failed to update room.");
     } finally {
@@ -521,47 +616,61 @@ export default function RoomConfigScreen() {
                     </View>
 
                     <View style={styles.roomGrid}>
-                      {floor.rooms.map((room) => (
-                        <View key={room._id} style={styles.roomChip}>
-                          {editingRoomId === room._id ? (
-                            <View style={styles.editRoomRow}>
-                              <TextInput
-                                style={styles.roomEditInput}
-                                value={editingRoomNumber}
-                                onChangeText={setEditingRoomNumber}
-                                autoFocus
-                                selectTextOnFocus
-                                onSubmitEditing={handleUpdateRoom}
-                                returnKeyType="done"
+                      {floor.rooms.map((room) => {
+                        const occ = roomOccupancies[room._id];
+                        const count = occ?.occupantCount ?? 0;
+                        const cap = roomCapacity(room.category);
+                        const hasDue = occ?.hasPendingPayment || occ?.hasPendingRent;
+                        const chipColor =
+                          count === 0
+                            ? {}
+                            : count >= cap
+                            ? styles.roomChipFull
+                            : styles.roomChipPartial;
+                        return (
+                        <View key={room._id} style={[styles.roomChip, chipColor]}>
+                          <TouchableOpacity
+                            style={styles.roomChipInner}
+                            onPress={() => openAssignModal(room)}
+                          >
+                            <Text style={styles.roomNumber}>
+                              {room.roomNumber}
+                            </Text>
+                            <Text style={styles.roomCat}>
+                              {room.category
+                                ? room.category.charAt(0).toUpperCase()
+                                : ""}
+                            </Text>
+                            {hasDue && (
+                              <Ionicons
+                                name="hourglass-outline"
+                                size={10}
+                                color={colors.muted}
+                                style={{ marginTop: 2 }}
                               />
-                              <TouchableOpacity
-                                onPress={handleUpdateRoom}
-                                style={styles.roomEditDone}
-                              >
-                                <Text style={styles.roomEditDoneText}>✓</Text>
-                              </TouchableOpacity>
-                            </View>
-                          ) : (
+                            )}
+                          </TouchableOpacity>
+                          <View style={styles.roomChipActions}>
                             <TouchableOpacity
-                              style={styles.roomChipInner}
+                              hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
                               onPress={() => {
-                                setEditingRoomId(room._id);
-                                setEditingRoomNumber(room.roomNumber);
+                                setEditModalRoom(room);
+                                setEditModalNumber(room.roomNumber);
+                                setEditModalCategory(room.roomOptionId ?? "");
                               }}
-                              onLongPress={() => handleDeleteRoom(room)}
                             >
-                              <Text style={styles.roomNumber}>
-                                {room.roomNumber}
-                              </Text>
-                              <Text style={styles.roomCat}>
-                                {room.category
-                                  ? room.category.charAt(0).toUpperCase()
-                                  : ""}
-                              </Text>
+                              <Ionicons name="pencil-outline" size={11} color={colors.primary} />
                             </TouchableOpacity>
-                          )}
+                            <TouchableOpacity
+                              hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+                              onPress={() => handleDeleteRoom(room)}
+                            >
+                              <Ionicons name="trash-outline" size={11} color={colors.error} />
+                            </TouchableOpacity>
+                          </View>
                         </View>
-                      ))}
+                        );
+                      })}
                     </View>
                   </View>
                 ))}
@@ -581,6 +690,134 @@ export default function RoomConfigScreen() {
           </>
         )}
       </ScrollView>
+
+      <Modal
+        visible={!!editModalRoom}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setEditModalRoom(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Edit room</Text>
+              <TouchableOpacity onPress={() => setEditModalRoom(null)}>
+                <Ionicons name="close" size={22} color={colors.navy} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.editModalBody}>
+              <Text style={label}>Room number</Text>
+              <TextInput
+                style={[input, { marginBottom: 16 }]}
+                value={editModalNumber}
+                onChangeText={setEditModalNumber}
+                autoCorrect={false}
+                autoCapitalize="characters"
+                returnKeyType="done"
+              />
+
+              <Text style={label}>Room type</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.chipRow}
+              >
+                {categoryOptions.map((opt) => (
+                  <TouchableOpacity
+                    key={opt.id}
+                    style={[
+                      styles.chip,
+                      editModalCategory === opt.id && styles.chipActive,
+                    ]}
+                    onPress={() => setEditModalCategory(opt.id)}
+                  >
+                    <Text
+                      style={[
+                        styles.chipText,
+                        editModalCategory === opt.id && styles.chipTextActive,
+                      ]}
+                    >
+                      {opt.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+
+              <TouchableOpacity
+                style={[styles.proceedButton, { marginTop: 24 }]}
+                onPress={handleEditRoomSave}
+                disabled={saving || !editModalNumber.trim()}
+              >
+                <Text style={styles.proceedButtonText}>
+                  {saving ? "Saving..." : "Save changes"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={!!assigningRoom}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setAssigningRoom(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>
+                Assign tenant to room {assigningRoom?.roomNumber}
+              </Text>
+              <TouchableOpacity onPress={() => setAssigningRoom(null)}>
+                <Ionicons name="close" size={22} color={colors.navy} />
+              </TouchableOpacity>
+            </View>
+
+            {assignLoading ? (
+              <View style={styles.modalLoading}>
+                <ActivityIndicator color={colors.primary} />
+              </View>
+            ) : unassignedTenants.length === 0 ? (
+              <View style={styles.modalEmpty}>
+                <Text style={styles.modalEmptyText}>
+                  No unassigned tenants found.{"\n"}Onboard a tenant first before assigning a room.
+                </Text>
+              </View>
+            ) : (
+              <ScrollView
+                style={styles.tenantList}
+                showsVerticalScrollIndicator={false}
+              >
+                {unassignedTenants.map((tenant) => (
+                  <TouchableOpacity
+                    key={tenant.applicationId}
+                    style={styles.tenantRow}
+                    onPress={() => handleAssignTenant(tenant.applicationId)}
+                    disabled={assignSaving}
+                  >
+                    <View style={styles.tenantInfo}>
+                      <Text style={styles.tenantName}>{tenant.tenantName}</Text>
+                      {!!tenant.phone && (
+                        <Text style={styles.tenantMeta}>{tenant.phone}</Text>
+                      )}
+                      {!!tenant.moveInDate && (
+                        <Text style={styles.tenantMeta}>Move-in: {tenant.moveInDate}</Text>
+                      )}
+                    </View>
+                    {assignSaving ? (
+                      <ActivityIndicator size="small" color={colors.primary} />
+                    ) : (
+                      <Ionicons name="chevron-forward" size={16} color={colors.muted} />
+                    )}
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -731,6 +968,14 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     overflow: "hidden",
   },
+  roomChipFull: {
+    backgroundColor: "#D1FAE5",
+    borderColor: "#6EE7B7",
+  },
+  roomChipPartial: {
+    backgroundColor: "#FEF9C3",
+    borderColor: "#FDE68A",
+  },
   roomChipInner: {
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -778,5 +1023,83 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
     color: colors.white,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "flex-end",
+  },
+  modalSheet: {
+    backgroundColor: colors.white,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: "70%",
+    paddingBottom: 32,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  modalTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: colors.navy,
+    flex: 1,
+    marginRight: 12,
+  },
+  modalLoading: {
+    paddingVertical: 40,
+    alignItems: "center",
+  },
+  modalEmpty: {
+    paddingHorizontal: 20,
+    paddingVertical: 32,
+    alignItems: "center",
+  },
+  modalEmptyText: {
+    fontSize: 14,
+    color: colors.muted,
+    textAlign: "center",
+    lineHeight: 20,
+  },
+  tenantList: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+  },
+  tenantRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 14,
+    paddingHorizontal: 4,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  tenantInfo: { flex: 1 },
+  tenantName: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: colors.navy,
+  },
+  tenantMeta: {
+    fontSize: 12,
+    color: colors.muted,
+    marginTop: 2,
+  },
+  roomChipActions: {
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 10,
+    paddingBottom: 6,
+    paddingTop: 2,
+  },
+  editModalBody: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 32,
   },
 });
