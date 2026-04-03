@@ -387,16 +387,52 @@ export const getApplicationForOnboarding = query({
       .query("tenantMoveInApplications")
       .withIndex("by_property", (q) => q.eq("propertyId", property._id))
       .take(500);
-    const assignedRoomIds = new Set(apps.filter((a) => a.assignedRoomId).map((a) => a.assignedRoomId!));
+
+    // Count active occupants per room (exclude moved-out tenants and this tenant)
+    const occupancyMap = new Map<string, number>();
+    for (const a of apps) {
+      if (a.assignedRoomId && !a.moveOutDate && a._id !== args.applicationId) {
+        occupancyMap.set(a.assignedRoomId, (occupancyMap.get(a.assignedRoomId) ?? 0) + 1);
+      }
+    }
 
     const rooms = await ctx.db
       .query("rooms")
       .withIndex("by_property", (q) => q.eq("propertyId", property._id))
       .take(200);
 
+    // Get the room category the tenant requested
+    const selectedOption = app.selectedRoomOptionId
+      ? await ctx.db.get(app.selectedRoomOptionId)
+      : null;
+    const requestedCategory = selectedOption?.category ?? null;
+
+    function roomCapacity(category?: string): number {
+      if (category === "double") return 2;
+      if (category === "triple") return 3;
+      return 1;
+    }
+
     const availableRooms = rooms
-      .filter((r) => !assignedRoomIds.has(r._id) || app.assignedRoomId === r._id)
-      .map((r) => ({ roomId: r._id, roomLabel: r.roomNumber }));
+      .filter((r) => {
+        // Always show the room currently assigned to this tenant
+        if (app.assignedRoomId === r._id) return true;
+        // Filter by the tenant's requested room type
+        if (requestedCategory && r.category !== requestedCategory) return false;
+        // Show room only if it still has capacity
+        const cap = roomCapacity(r.category);
+        const count = occupancyMap.get(r._id) ?? 0;
+        return count < cap;
+      })
+      .map((r) => {
+        const cap = roomCapacity(r.category);
+        const count = occupancyMap.get(r._id) ?? 0;
+        const label =
+          cap > 1 && count > 0
+            ? `${r.roomNumber} (${count}/${cap} occupied)`
+            : r.roomNumber;
+        return { roomId: r._id, roomLabel: label };
+      });
 
     return {
       notFound: false as const,
@@ -409,11 +445,8 @@ export const getApplicationForOnboarding = query({
       dateOfBirth: app.dateOfBirth ?? "",
       address: app.address ?? "",
       moveInDate: app.moveInDate ?? "",
-      selectedRoomOptionLabel: app.selectedRoomOptionId
-        ? (await ctx.db.get(app.selectedRoomOptionId))?.typeName ??
-          (await ctx.db.get(app.selectedRoomOptionId))?.category ??
-          null
-        : null,
+      selectedRoomOptionLabel: selectedOption?.typeName ?? selectedOption?.category ?? null,
+      selectedRentAmount: selectedOption?.rentAmount ?? null,
       assignedRoomId: app.assignedRoomId ?? null,
       assignedRoomNumber: app.assignedRoomNumber ?? null,
       onboardingSecurityDeposit: app.onboardingSecurityDeposit ?? null,

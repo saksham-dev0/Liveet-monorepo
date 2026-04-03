@@ -850,6 +850,8 @@ export const updateRoom = mutation({
     roomId: v.id("rooms"),
     roomNumber: v.optional(v.string()),
     displayName: v.optional(v.string()),
+    roomOptionId: v.optional(v.id("roomOptions")),
+    category: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     await getCurrentUserDoc(ctx);
@@ -858,6 +860,8 @@ export const updateRoom = mutation({
     await ctx.db.patch(args.roomId, {
       ...(args.roomNumber !== undefined && { roomNumber: args.roomNumber }),
       ...(args.displayName !== undefined && { displayName: args.displayName }),
+      ...(args.roomOptionId !== undefined && { roomOptionId: args.roomOptionId }),
+      ...(args.category !== undefined && { category: args.category }),
     });
   },
 });
@@ -996,3 +1000,164 @@ export const getPropertyFlowData = query({
   },
 });
 
+/**
+ * Returns a flat list of active room assignments for the operator's property,
+ * including whether rent is currently due for each tenant.
+ *
+ * Rent-due logic:
+ *   paidUntil = assignedAt + (1 initial month + sum of paid rentTransaction months)
+ *   isRentDue  = now > paidUntil + gracePeriodDays
+ */
+export const listActiveRoomAssignments = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) return [];
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) return [];
+
+    const property = await getOperatorPropertyForUser(ctx, user);
+    if (!property) return [];
+
+    // Grace period from the property's rent settings (default 0 days)
+    const propertyRent = await ctx.db
+      .query("propertyRent")
+      .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+      .unique();
+    const gracePeriodMs = (propertyRent?.gracePeriodDays ?? 0) * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+
+    const apps = await ctx.db
+      .query("tenantMoveInApplications")
+      .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+      .collect();
+
+    const result: Array<{
+      roomId: string;
+      hasPendingPayment: boolean;
+      isRentDue: boolean;
+    }> = [];
+
+    for (const app of apps) {
+      if (app.assignedRoomId == null || app.moveOutDate) continue;
+
+      const hasPendingPayment = app.paymentStatus !== "paid";
+
+      // Months covered: 1 for the initial payment (if paid) + each paid rent transaction
+      const initialMonths = app.paymentStatus === "paid" ? 1 : 0;
+      const transactions = await ctx.db
+        .query("rentTransactions")
+        .withIndex("by_application", (q) => q.eq("applicationId", app._id))
+        .collect();
+      const extraMonths = transactions
+        .filter((t) => t.status === "paid")
+        .reduce((sum, t) => sum + t.months, 0);
+
+      const totalPaidMonths = initialMonths + extraMonths;
+
+      // paidUntil = assignedAt (or now if missing) + totalPaidMonths calendar months
+      const startMs = app.assignedAt ?? now;
+      const paidUntilDate = new Date(startMs);
+      paidUntilDate.setMonth(paidUntilDate.getMonth() + totalPaidMonths);
+      const isRentDue = now > paidUntilDate.getTime() + gracePeriodMs;
+
+      result.push({
+        roomId: app.assignedRoomId as string,
+        hasPendingPayment,
+        isRentDue,
+      });
+    }
+
+    return result;
+  },
+});
+
+/**
+ * Returns onboarded tenants for the operator's property who have no room assigned yet.
+ */
+export const listUnassignedTenants = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) return [];
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) return [];
+
+    const property = await getOperatorPropertyForUser(ctx, user);
+    if (!property) return [];
+
+    const apps = await ctx.db
+      .query("tenantMoveInApplications")
+      .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+      .collect();
+
+    const result: Array<{
+      applicationId: string;
+      tenantName: string;
+      phone: string;
+      email: string;
+      moveInDate: string;
+    }> = [];
+
+    for (const app of apps) {
+      if (app.status !== "onboarded") continue;
+      if (app.assignedRoomId) continue;
+      if (app.moveOutDate) continue;
+      result.push({
+        applicationId: app._id,
+        tenantName: app.legalNameAsOnId ?? "Unknown",
+        phone: app.phone ?? "",
+        email: app.email ?? "",
+        moveInDate: app.moveInDate ?? "",
+      });
+    }
+
+    return result;
+  },
+});
+
+/**
+ * Assigns a room to an onboarded tenant.
+ */
+export const assignRoomToTenant = mutation({
+  args: {
+    applicationId: v.id("tenantMoveInApplications"),
+    roomId: v.id("rooms"),
+  },
+  handler: async (ctx, args) => {
+    const operator = await getCurrentUserDoc(ctx);
+
+    const app = await ctx.db.get(args.applicationId);
+    if (!app) throw new Error("Application not found");
+
+    const property = await ctx.db.get(app.propertyId);
+    if (!property || property.userId !== operator._id) {
+      throw new Error("You do not have access to this application");
+    }
+
+    const room = await ctx.db.get(args.roomId);
+    if (!room || room.propertyId !== property._id) {
+      throw new Error("Room does not belong to this property");
+    }
+
+    await ctx.db.patch(args.applicationId, {
+      assignedRoomId: args.roomId,
+      assignedRoomNumber: room.roomNumber,
+      assignedAt: Date.now(),
+    });
+
+    return { success: true };
+  },
+});
