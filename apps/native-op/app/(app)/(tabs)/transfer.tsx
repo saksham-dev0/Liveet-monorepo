@@ -1,258 +1,377 @@
+import React, { useCallback, useState } from "react";
 import {
   View,
   Text,
   StyleSheet,
-  TouchableOpacity,
   ScrollView,
+  Pressable,
+  Image,
+  ActivityIndicator,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { colors, radii, card as cardStyle, cardShadow } from "../../../constants/theme";
+import { useRouter } from "expo-router";
+import { useAuth } from "@clerk/clerk-expo";
+import { useConvex } from "convex/react";
+import { useFocusEffect } from "@react-navigation/native";
+import { colors, radii, cardShadow } from "../../../constants/theme";
 
-const RECIPIENTS = [
-  { id: "1", name: "Alex Johnson", handle: "@alexj", avatar: "person" },
-  { id: "2", name: "Sam Wilson", handle: "@samw", avatar: "person" },
-  { id: "3", name: "Jordan Lee", handle: "@jordanl", avatar: "person" },
-];
+type PaymentItem = {
+  id: string;
+  applicationId: string;
+  type: "move_in" | "extend";
+  tenantName: string;
+  tenantImageUrl?: string;
+  roomNumber?: string;
+  propertyName?: string;
+  amount: number;
+  rentAmount: number;
+  months: number;
+  securityDeposit: number;
+  paymentMethod?: string;
+  paidAt: number;
+  status: "paid" | "pending";
+  description: string;
+  periodStart: number;
+  periodEnd: number;
+};
 
-const RECENT_TRANSFERS = [
-  { id: "1", to: "Alex Johnson", amount: 50, date: "Today" },
-  { id: "2", to: "Sam Wilson", amount: 120, date: "Yesterday" },
-];
+function formatPeriod(start: number, end: number): string {
+  const s = new Date(start);
+  const e = new Date(end - 1); // subtract 1ms to not bleed into next month
+  const opts: Intl.DateTimeFormatOptions = { day: "2-digit", month: "short" };
+  const yearOpts: Intl.DateTimeFormatOptions = { ...opts, year: "2-digit" };
+  const startStr = s.toLocaleDateString("en-IN", opts);
+  const endStr = e.toLocaleDateString("en-IN", yearOpts);
+  return `${startStr} – ${endStr}`;
+}
 
-export default function TransferScreen() {
+function formatInr(amount: number): string {
+  return `₹${Math.round(amount).toLocaleString("en-IN")}`;
+}
+
+function formatDate(ts: number): string {
+  return new Date(ts).toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+export default function PaymentsScreen() {
+  const router = useRouter();
+  const { isLoaded: authLoaded, isSignedIn } = useAuth();
+  const convex = useConvex();
+
+  const [payments, setPayments] = useState<PaymentItem[] | null>(null);
+  const [totalReceived, setTotalReceived] = useState(0);
+  const [tab, setTab] = useState<"paid" | "pending">("paid");
+
+  const refreshPayments = useCallback(async () => {
+    try {
+      const data = await (convex as any).query(
+        "properties:getAllPaymentsForOperator",
+        {},
+      );
+      const items: PaymentItem[] = data?.items ?? [];
+      setPayments(items);
+      setTotalReceived(
+        items
+          .filter((p) => p.status === "paid")
+          .reduce((sum, p) => sum + p.amount, 0),
+      );
+    } catch {
+      setPayments([]);
+    }
+  }, [convex]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!authLoaded || !isSignedIn) return;
+      void refreshPayments();
+    }, [authLoaded, isSignedIn, refreshPayments]),
+  );
+
+  const displayed = (payments ?? []).filter((p) => p.status === tab);
+
   return (
-    <View style={s.container}>
-      <ScrollView
-        style={s.scroll}
-        contentContainerStyle={s.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={s.header}>
-          <Text style={s.title}>Transfer</Text>
-          <TouchableOpacity style={s.iconBtn} activeOpacity={0.7}>
-            <Ionicons name="search-outline" size={22} color={colors.black} />
-          </TouchableOpacity>
-        </View>
+    <View style={s.root}>
+      {/* Header */}
+      <View style={s.header}>
+        <Text style={s.title}>Payments</Text>
+      </View>
 
-        <View style={[s.card, s.quickActions]}>
-          <Text style={s.cardTitle}>Quick transfer</Text>
-          <View style={s.recipientsRow}>
-            {RECIPIENTS.map((r) => (
-              <TouchableOpacity
-                key={r.id}
-                style={s.recipientItem}
-                activeOpacity={0.7}
-              >
-                <View style={s.avatar}>
-                  <Ionicons name="person" size={24} color={colors.muted} />
-                </View>
-                <Text style={s.recipientName} numberOfLines={1}>
-                  {r.name.split(" ")[0]}
-                </Text>
-              </TouchableOpacity>
-            ))}
-            <TouchableOpacity style={s.addRecipient} activeOpacity={0.7}>
-              <Ionicons name="add" size={28} color={colors.primary} />
-              <Text style={s.addRecipientText}>Add</Text>
-            </TouchableOpacity>
-          </View>
+      {/* Summary row */}
+      <View style={s.summaryRow}>
+        <View style={[s.summaryCard, { backgroundColor: "#ECFDF5" }]}>
+          <Text style={s.summaryLabel}>Received</Text>
+          <Text style={[s.summaryAmount, { color: colors.positiveAmount }]}>
+            {formatInr(totalReceived)}
+          </Text>
         </View>
-
-        <View style={[s.card, s.transferForm]}>
-          <Text style={s.cardTitle}>New transfer</Text>
-          <TouchableOpacity style={s.inputRow} activeOpacity={0.7}>
-            <Ionicons name="person-outline" size={20} color={colors.muted} />
-            <Text style={s.inputPlaceholder}>Select recipient</Text>
-            <Ionicons name="chevron-forward" size={18} color={colors.muted} />
-          </TouchableOpacity>
-          <TouchableOpacity style={s.inputRow} activeOpacity={0.7}>
-            <Ionicons name="cash-outline" size={20} color={colors.muted} />
-            <Text style={s.inputPlaceholder}>Enter amount</Text>
-            <Ionicons name="chevron-forward" size={18} color={colors.muted} />
-          </TouchableOpacity>
-          <TouchableOpacity style={s.primaryBtn} activeOpacity={0.7}>
-            <Text style={s.primaryBtnText}>Send money</Text>
-          </TouchableOpacity>
+        <View style={[s.summaryCard, { backgroundColor: "#FFFBEB" }]}>
+          <Text style={s.summaryLabel}>Pending</Text>
+          <Text style={[s.summaryAmount, { color: "#B45309" }]}>
+            {formatInr(
+              (payments ?? [])
+                .filter((p) => p.status === "pending")
+                .reduce((s, p) => s + p.amount, 0),
+            )}
+          </Text>
         </View>
+      </View>
 
-        <View style={[s.card, s.recentCard]}>
-          <Text style={s.cardTitle}>Recent transfers</Text>
-          {RECENT_TRANSFERS.map((t, i) => (
-            <View
-              key={t.id}
-              style={[
-                s.transferRow,
-                i === RECENT_TRANSFERS.length - 1 && s.transferRowLast,
-              ]}
+      {/* Tabs */}
+      <View style={s.tabRow}>
+        <Pressable
+          style={[s.tab, tab === "paid" && s.tabActive]}
+          onPress={() => setTab("paid")}
+        >
+          <Text style={[s.tabText, tab === "paid" && s.tabTextActive]}>Paid</Text>
+          {tab === "paid" && <View style={s.tabUnderline} />}
+        </Pressable>
+        <Pressable
+          style={[s.tab, tab === "pending" && s.tabActive]}
+          onPress={() => setTab("pending")}
+        >
+          <Text style={[s.tabText, tab === "pending" && s.tabTextActive]}>Dues</Text>
+          {tab === "pending" && <View style={s.tabUnderline} />}
+        </Pressable>
+      </View>
+
+      {/* List */}
+      {payments === null ? (
+        <View style={s.centered}>
+          <ActivityIndicator color={colors.primary} />
+        </View>
+      ) : displayed.length === 0 ? (
+        <View style={s.centered}>
+          <Ionicons name="receipt-outline" size={44} color={colors.border} />
+          <Text style={s.emptyText}>
+            {tab === "paid" ? "No payments recorded yet." : "No pending dues."}
+          </Text>
+        </View>
+      ) : (
+        <ScrollView
+          style={s.list}
+          contentContainerStyle={s.listContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {displayed.map((item) => (
+            <Pressable
+              key={item.id}
+              style={s.paymentRow}
+              onPress={() =>
+                router.push(
+                  `/(app)/payment/${encodeURIComponent(item.id)}` as any,
+                )
+              }
+              android_ripple={{ color: colors.border }}
             >
-              <View style={s.transferIconWrap}>
-                <Ionicons name="arrow-up-outline" size={18} color={colors.primary} />
-              </View>
-              <View style={s.transferContent}>
-                <Text style={s.transferTo}>{t.to}</Text>
-                <Text style={s.transferDate}>{t.date}</Text>
-              </View>
-              <Text style={s.transferAmount}>-${t.amount}</Text>
-            </View>
-          ))}
-        </View>
+              {/* Avatar */}
+              {item.tenantImageUrl ? (
+                <Image
+                  source={{ uri: item.tenantImageUrl }}
+                  style={s.avatar}
+                />
+              ) : (
+                <View style={s.avatarPlaceholder}>
+                  <Ionicons name="person" size={22} color={colors.muted} />
+                </View>
+              )}
 
-        <View style={s.bottomSpacer} />
-      </ScrollView>
+              {/* Info */}
+              <View style={s.rowInfo}>
+                <Text style={s.rowName} numberOfLines={1}>
+                  {item.tenantName}
+                </Text>
+                <Text style={s.rowMeta} numberOfLines={1}>
+                  {[item.roomNumber, item.propertyName]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </Text>
+                <Text style={s.rowAmount}>{formatInr(item.amount)}</Text>
+                <Text style={s.rowPeriod}>
+                  {formatPeriod(item.periodStart, item.periodEnd)}
+                </Text>
+              </View>
+
+              {/* Status badge */}
+              <View
+                style={[
+                  s.badge,
+                  item.status === "paid" ? s.badgePaid : s.badgePending,
+                ]}
+              >
+                <Text
+                  style={[
+                    s.badgeText,
+                    item.status === "paid"
+                      ? s.badgeTextPaid
+                      : s.badgeTextPending,
+                  ]}
+                >
+                  {item.status === "paid" ? "Paid" : "Due"}
+                </Text>
+              </View>
+            </Pressable>
+          ))}
+          <View style={{ height: 120 }} />
+        </ScrollView>
+      )}
     </View>
   );
 }
 
 const s = StyleSheet.create({
-  container: {
+  root: {
     flex: 1,
     backgroundColor: colors.pageBg,
   },
-  scroll: { flex: 1 },
-  scrollContent: {
-    paddingHorizontal: 20,
-    paddingTop: 8,
-  },
   header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 24,
+    paddingHorizontal: 20,
+    paddingTop: 60,
+    paddingBottom: 16,
+    backgroundColor: colors.pageBg,
   },
   title: {
-    fontSize: 24,
-    fontWeight: "700",
-    color: colors.black,
+    fontSize: 26,
+    fontWeight: "800",
+    color: colors.navy,
   },
-  iconBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: colors.white,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  card: {
-    ...cardStyle,
-    marginBottom: 16,
-  },
-  quickActions: {
-    padding: 20,
-  },
-  cardTitle: {
-    fontSize: 17,
-    fontWeight: "700",
-    color: colors.black,
-    marginBottom: 16,
-  },
-  recipientsRow: {
+  summaryRow: {
     flexDirection: "row",
-    gap: 16,
-    alignItems: "center",
-  },
-  recipientItem: {
-    alignItems: "center",
-    minWidth: 64,
-  },
-  avatar: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: colors.inputBg,
-    alignItems: "center",
-    justifyContent: "center",
+    gap: 12,
+    paddingHorizontal: 20,
     marginBottom: 8,
   },
-  recipientName: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: colors.black,
-  },
-  addRecipient: {
-    alignItems: "center",
-    minWidth: 64,
-  },
-  addRecipientText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: colors.primary,
-    marginTop: 8,
-  },
-  transferForm: {
-    padding: 20,
-  },
-  inputRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: colors.inputBg,
-    borderRadius: radii.input,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  inputPlaceholder: {
+  summaryCard: {
     flex: 1,
-    fontSize: 15,
+    borderRadius: radii.card,
+    padding: 16,
+    ...cardShadow,
+  },
+  summaryLabel: {
+    fontSize: 12,
+    fontWeight: "600",
     color: colors.muted,
-    marginLeft: 10,
+    marginBottom: 4,
   },
-  primaryBtn: {
-    backgroundColor: colors.primary,
-    borderRadius: radii.pill,
-    paddingVertical: 15,
-    alignItems: "center",
-    marginTop: 8,
-  },
-  primaryBtnText: {
-    fontSize: 15,
+  summaryAmount: {
+    fontSize: 20,
     fontWeight: "700",
-    color: colors.white,
   },
-  recentCard: {
-    padding: 20,
-  },
-  transferRow: {
+  tabRow: {
     flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 12,
+    paddingHorizontal: 20,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
+    marginBottom: 4,
   },
-  transferRowLast: {
-    borderBottomWidth: 0,
+  tab: {
+    marginRight: 28,
+    paddingBottom: 10,
+    paddingTop: 6,
+    position: "relative",
   },
-  transferIconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.primaryLight,
+  tabActive: {},
+  tabText: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: colors.muted,
+  },
+  tabTextActive: {
+    color: colors.navy,
+  },
+  tabUnderline: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 2,
+    backgroundColor: colors.navy,
+    borderRadius: 2,
+  },
+  list: { flex: 1 },
+  listContent: { paddingTop: 4 },
+  paymentRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.cardBg,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+    gap: 12,
+  },
+  avatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: colors.inputBg,
+  },
+  avatarPlaceholder: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: colors.inputBg,
     alignItems: "center",
     justifyContent: "center",
-    marginRight: 12,
   },
-  transferContent: {
+  rowInfo: {
     flex: 1,
   },
-  transferTo: {
+  rowName: {
     fontSize: 15,
-    fontWeight: "600",
-    color: colors.black,
+    fontWeight: "700",
+    color: colors.navy,
+    marginBottom: 2,
   },
-  transferDate: {
-    fontSize: 13,
+  rowMeta: {
+    fontSize: 12,
     color: colors.muted,
-    marginTop: 2,
+    marginBottom: 6,
   },
-  transferAmount: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: colors.error,
+  rowAmount: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: colors.navy,
+    marginBottom: 2,
   },
-  bottomSpacer: {
-    height: 100,
+  rowPeriod: {
+    fontSize: 12,
+    color: colors.muted,
+  },
+  badge: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radii.pill,
+    alignSelf: "flex-start",
+  },
+  badgePaid: {
+    backgroundColor: "#DCFCE7",
+  },
+  badgePending: {
+    backgroundColor: "#FEF3C7",
+  },
+  badgeText: {
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  badgeTextPaid: {
+    color: "#15803D",
+  },
+  badgeTextPending: {
+    color: "#B45309",
+  },
+  centered: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+  },
+  emptyText: {
+    fontSize: 14,
+    color: colors.muted,
+    textAlign: "center",
   },
 });

@@ -99,6 +99,10 @@ export default function AppStackLayout() {
         name="add-property/charges"
         options={{ gestureEnabled: true, fullScreenGestureEnabled: true }}
       />
+      <Stack.Screen
+        name="payment/[paymentId]"
+        options={{ gestureEnabled: true, fullScreenGestureEnabled: true }}
+      />
     </Stack>
   );
 }
