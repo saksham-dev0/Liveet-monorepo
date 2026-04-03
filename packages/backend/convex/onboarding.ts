@@ -1049,8 +1049,20 @@ export const listActiveRoomAssignments = query({
 
       const hasPendingPayment = app.paymentStatus !== "paid";
 
-      // Months covered: 1 for the initial payment (if paid) + each paid rent transaction
-      const initialMonths = app.paymentStatus === "paid" ? 1 : 0;
+      // Months covered: prepaid agreement months (if paid) + each paid rent transaction
+      function parseDurationMonths(duration: string): number | null {
+        const s = duration.trim().toLowerCase();
+        const monthMatch = s.match(/^(\d+)\s*month/);
+        if (monthMatch) return parseInt(monthMatch[1], 10);
+        const yearMatch = s.match(/^(\d+)\s*year/);
+        if (yearMatch) return parseInt(yearMatch[1], 10) * 12;
+        return null;
+      }
+      const initialMonths = app.paymentStatus === "paid"
+        ? (app.onboardingAgreementDuration
+            ? (parseDurationMonths(app.onboardingAgreementDuration) ?? 1)
+            : 1)
+        : 0;
       const transactions = await ctx.db
         .query("rentTransactions")
         .withIndex("by_application", (q) => q.eq("applicationId", app._id))
@@ -1147,15 +1159,47 @@ export const assignRoomToTenant = mutation({
       throw new Error("You do not have access to this application");
     }
 
+    if (app.assignedRoomId) {
+      throw new Error("Application already has a room assigned");
+    }
+    if (app.moveOutDate) {
+      throw new Error("Cannot assign a room to a tenant who has moved out");
+    }
+
     const room = await ctx.db.get(args.roomId);
     if (!room || room.propertyId !== property._id) {
       throw new Error("Room does not belong to this property");
+    }
+
+    // Compute capacity from room category (mirrors moveIn.ts roomCapacity helper)
+    function roomCapacity(category?: string): number {
+      if (category === "double") return 2;
+      if (category === "triple") return 3;
+      if (category === "3plus") return 4;
+      return 1;
+    }
+    const cap = roomCapacity(room.category);
+
+    // Count active occupants already assigned to this room
+    const propertyApps = await ctx.db
+      .query("tenantMoveInApplications")
+      .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+      .take(500);
+    const activeOccupants = propertyApps.filter(
+      (a) => a.assignedRoomId === args.roomId && !a.moveOutDate && a._id !== args.applicationId,
+    ).length;
+
+    if (activeOccupants >= cap) {
+      throw new Error(
+        `Room ${room.roomNumber} is already at full capacity (${activeOccupants}/${cap})`,
+      );
     }
 
     await ctx.db.patch(args.applicationId, {
       assignedRoomId: args.roomId,
       assignedRoomNumber: room.roomNumber,
       assignedAt: Date.now(),
+      ...(room.roomOptionId !== undefined ? { selectedRoomOptionId: room.roomOptionId } : {}),
     });
 
     return { success: true };

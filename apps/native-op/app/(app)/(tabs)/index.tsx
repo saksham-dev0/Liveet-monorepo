@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import {
   View,
   StyleSheet,
@@ -8,6 +8,8 @@ import {
   TouchableOpacity,
   Image,
   Modal,
+  Animated,
+  Linking,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, type Href } from "expo-router";
@@ -15,16 +17,7 @@ import { useAuth } from "@clerk/clerk-expo";
 import { useConvex } from "convex/react";
 import { useFocusEffect } from "@react-navigation/native";
 
-const SPENDING_DATA = [
-  { week: "Week 1", value: 200 },
-  { week: "Week 2", value: 120 },
-  { week: "Week 3", value: 380 },
-  { week: "Week 4", value: 220 },
-];
-
-/** Placeholder until rent collection is modeled in Convex */
-const SAMPLE_PENDING_COLLECTION = "₹8,200";
-const SAMPLE_RECEIVED_COLLECTION = "₹5,800";
+const WEEK_LABELS = ["Week 1", "Week 2", "Week 3", "Week 4"];
 
 const DASHBOARD_STAT_CARDS = [
   { label: "Occupants" },
@@ -82,11 +75,21 @@ function formatInrAmount(amount: number): string {
   return `₹${Math.round(amount).toLocaleString("en-IN")}.00`;
 }
 
+function compactNumber(n: number): string {
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000) return `${(n / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1).replace(/\.0$/, "")}M`;
+  if (abs >= 1_000) return `${(n / 1_000).toFixed(abs >= 10_000 ? 0 : 1).replace(/\.0$/, "")}k`;
+  return String(Math.round(n));
+}
+
+function compactInr(amount: number): string {
+  return `₹${compactNumber(Math.round(amount))}`;
+}
+
 export default function TestScreen() {
   const router = useRouter();
   const { isLoaded: authLoaded, isSignedIn } = useAuth();
   const convex = useConvex();
-  const maxBarValue = Math.max(...SPENDING_DATA.map((d) => d.value));
 
   const [listingChecklistComplete, setListingChecklistComplete] = useState<
     boolean | null
@@ -111,6 +114,33 @@ export default function TestScreen() {
   const [recentTransactions, setRecentTransactions] = useState<
     RecentCreditedTransactionItem[] | null
   >(null);
+  const [monthlyChartData, setMonthlyChartData] = useState<number[] | null>(null);
+  const [collectionSummary, setCollectionSummary] = useState<{
+    pendingAmount: number;
+    receivedLast24h: number;
+  } | null>(null);
+  const [monthlyGrowth, setMonthlyGrowth] = useState<{
+    currentMonth: number;
+    previousMonth: number;
+  } | null>(null);
+
+  // Remind modal
+  const [remindModalVisible, setRemindModalVisible] = useState(false);
+  const [overdueTenants, setOverdueTenants] = useState<Array<{
+    applicationId: string;
+    tenantName: string;
+    tenantImageUrl?: string;
+    phone?: string;
+    roomNumber?: string;
+    propertyName?: string;
+    monthlyRent: number;
+    daysOverdue: number;
+  }> | null>(null);
+
+  // More dropdown
+  const [moreDropdownVisible, setMoreDropdownVisible] = useState(false);
+  const moreAnim = useRef(new Animated.Value(0)).current;
+  const [yearlyTotal, setYearlyTotal] = useState<number | null>(null);
 
   const refreshListingStatus = useCallback(async () => {
     try {
@@ -191,6 +221,91 @@ export default function TestScreen() {
     }
   }, [convex]);
 
+  const refreshRecentTransactions = useCallback(async () => {
+    try {
+      const data = await (convex as any).query(
+        "properties:getRecentCreditedTransactionsForDashboard",
+        { limit: 6 },
+      );
+      const items = data?.items;
+      setRecentTransactions(Array.isArray(items) ? items : []);
+    } catch {
+      setRecentTransactions([]);
+    }
+  }, [convex]);
+
+  const refreshMonthlyChartData = useCallback(async () => {
+    try {
+      const data = await (convex as any).query(
+        "properties:getMonthlyRentChartData",
+        {},
+      );
+      setMonthlyChartData(Array.isArray(data?.weeks) ? data.weeks : [0, 0, 0, 0]);
+    } catch {
+      setMonthlyChartData([0, 0, 0, 0]);
+    }
+  }, [convex]);
+
+  const openRemindModal = useCallback(async () => {
+    setRemindModalVisible(true);
+    if (overdueTenants !== null) return; // already loaded
+    try {
+      const data = await (convex as any).query(
+        "properties:getOverdueTenantsForReminder",
+        {},
+      );
+      setOverdueTenants(data?.tenants ?? []);
+    } catch {
+      setOverdueTenants([]);
+    }
+  }, [convex, overdueTenants]);
+
+  const toggleMoreDropdown = useCallback(() => {
+    const toValue = moreDropdownVisible ? 0 : 1;
+    setMoreDropdownVisible(!moreDropdownVisible);
+    Animated.spring(moreAnim, {
+      toValue,
+      useNativeDriver: false,
+      tension: 60,
+      friction: 10,
+    }).start();
+    if (!moreDropdownVisible && yearlyTotal === null) {
+      (convex as any)
+        .query("properties:getYearlyCollectionTotal", {})
+        .then((d: any) => setYearlyTotal(d?.total ?? 0))
+        .catch(() => setYearlyTotal(0));
+    }
+  }, [convex, moreDropdownVisible, moreAnim, yearlyTotal]);
+
+  const refreshMonthlyGrowth = useCallback(async () => {
+    try {
+      const data = await (convex as any).query("properties:getMonthlyGrowth", {});
+      setMonthlyGrowth(
+        data
+          ? { currentMonth: data.currentMonth ?? 0, previousMonth: data.previousMonth ?? 0 }
+          : { currentMonth: 0, previousMonth: 0 },
+      );
+    } catch {
+      setMonthlyGrowth({ currentMonth: 0, previousMonth: 0 });
+    }
+  }, [convex]);
+
+  const refreshCollectionSummary = useCallback(async () => {
+    try {
+      const data = await (convex as any).query(
+        "properties:getDashboardCollectionSummary",
+        {},
+      );
+      setCollectionSummary(
+        data
+          ? { pendingAmount: data.pendingAmount ?? 0, receivedLast24h: data.receivedLast24h ?? 0 }
+          : { pendingAmount: 0, receivedLast24h: 0 },
+      );
+    } catch {
+      setCollectionSummary({ pendingAmount: 0, receivedLast24h: 0 });
+    }
+  }, [convex]);
+
   const handleSwitchProperty = useCallback(
     async (propertyId: string) => {
       if (switchingPropertyId) return;
@@ -206,12 +321,18 @@ export default function TestScreen() {
         setRecentTransactions(null);
         setPropertyName(null);
         setListingChecklistComplete(null);
+        setMonthlyChartData(null);
+        setCollectionSummary(null);
+        setMonthlyGrowth(null);
         // Refresh all dashboard data for the new active property
         void refreshListingStatus();
         void refreshDashboardStats();
         void refreshRecentKycTenants();
         void refreshRecentTransactions();
         void refreshOperatorProperties();
+        void refreshMonthlyChartData();
+        void refreshCollectionSummary();
+        void refreshMonthlyGrowth();
       } catch {
         // ignore
       } finally {
@@ -224,23 +345,13 @@ export default function TestScreen() {
       refreshListingStatus,
       refreshDashboardStats,
       refreshRecentKycTenants,
+      refreshRecentTransactions,
       refreshOperatorProperties,
-      // refreshRecentTransactions defined below — stable ref via useCallback
+      refreshMonthlyChartData,
+      refreshCollectionSummary,
+      refreshMonthlyGrowth,
     ],
   );
-
-  const refreshRecentTransactions = useCallback(async () => {
-    try {
-      const data = await (convex as any).query(
-        "properties:getRecentCreditedTransactionsForDashboard",
-        { limit: 6 },
-      );
-      const items = data?.items;
-      setRecentTransactions(Array.isArray(items) ? items : []);
-    } catch {
-      setRecentTransactions([]);
-    }
-  }, [convex]);
 
   useFocusEffect(
     useCallback(() => {
@@ -250,6 +361,9 @@ export default function TestScreen() {
       void refreshRecentKycTenants();
       void refreshRecentTransactions();
       void refreshOperatorProperties();
+      void refreshMonthlyChartData();
+      void refreshCollectionSummary();
+      void refreshMonthlyGrowth();
     }, [
       authLoaded,
       isSignedIn,
@@ -258,6 +372,9 @@ export default function TestScreen() {
       refreshRecentKycTenants,
       refreshRecentTransactions,
       refreshOperatorProperties,
+      refreshMonthlyChartData,
+      refreshCollectionSummary,
+      refreshMonthlyGrowth,
     ]),
   );
 
@@ -312,10 +429,18 @@ export default function TestScreen() {
         <View style={styles.heroCard}>
           <View style={styles.heroHeader}>
             <Text style={styles.heroLabel}>Total Balance</Text>
-            <View style={styles.changeBadge}>
-              <Ionicons name="arrow-up" size={11} color="#1a1a1a" />
-              <Text style={styles.changeText}>+2.4%</Text>
-            </View>
+            {monthlyGrowth !== null && monthlyGrowth.previousMonth > 0 && (() => {
+              const pct = ((monthlyGrowth.currentMonth - monthlyGrowth.previousMonth) / monthlyGrowth.previousMonth) * 100;
+              const up = pct >= 0;
+              return (
+                <View style={[styles.changeBadge, !up && styles.changeBadgeDown]}>
+                  <Ionicons name={up ? "arrow-up" : "arrow-down"} size={11} color={up ? "#1a1a1a" : "#fff"} />
+                  <Text style={[styles.changeText, !up && styles.changeTextDown]}>
+                    {up ? "+" : ""}{pct.toFixed(1)}%
+                  </Text>
+                </View>
+              );
+            })()}
           </View>
 
           <Text style={styles.heroAmount}>
@@ -324,31 +449,77 @@ export default function TestScreen() {
 
           {/* Action Buttons */}
           <View style={styles.actionRow}>
-            <Pressable style={styles.actionButton}>
-              <Ionicons name="send" size={14} color="#fff" />
-              <Text style={styles.actionButtonText}>Send</Text>
+            <Pressable style={styles.actionButton} onPress={openRemindModal}>
+              <Ionicons name="notifications-outline" size={14} color="#fff" />
+              <Text style={styles.actionButtonText}>Remind</Text>
             </Pressable>
             <Pressable style={styles.actionButton}>
-              <Ionicons name="arrow-up" size={14} color="#fff" />
-              <Text style={styles.actionButtonText}>Top Up</Text>
+              <Ionicons name="trending-up" size={14} color="#fff" />
+              <Text style={styles.actionButtonText} numberOfLines={1}>
+                {monthlyGrowth && monthlyGrowth.previousMonth > 0
+                  ? `${monthlyGrowth.currentMonth >= monthlyGrowth.previousMonth ? "+" : ""}${compactInr(monthlyGrowth.currentMonth - monthlyGrowth.previousMonth)}`
+                  : "Increased by"}
+              </Text>
             </Pressable>
-            <Pressable style={styles.actionButton}>
-              <Ionicons name="ellipsis-horizontal" size={14} color="#fff" />
+            <Pressable style={styles.actionButton} onPress={toggleMoreDropdown}>
+              <Ionicons
+                name={moreDropdownVisible ? "chevron-up" : "ellipsis-horizontal"}
+                size={14}
+                color="#fff"
+              />
               <Text style={styles.actionButtonText}>More</Text>
             </Pressable>
           </View>
 
-          {/* Stats row — occupied/vacant from Convex; collection amounts sample */}
+          {/* More dropdown */}
+          <Animated.View
+            style={[
+              styles.moreDropdown,
+              {
+                maxHeight: moreAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0, 120],
+                }),
+                opacity: moreAnim,
+              },
+            ]}
+          >
+            <View style={styles.moreDropdownInner}>
+              <View style={styles.moreDropdownItem}>
+                <View>
+                  <Text style={styles.moreDropdownLabel}>Pending dues</Text>
+                  <Text style={styles.moreDropdownValue}>
+                    {collectionSummary === null
+                      ? "—"
+                      : compactInr(collectionSummary.pendingAmount)}
+                  </Text>
+                </View>
+                <View style={styles.moreDropdownDivider} />
+                <View>
+                  <Text style={styles.moreDropdownLabel}>Collected this year</Text>
+                  <Text style={styles.moreDropdownValue}>
+                    {yearlyTotal === null ? "—" : compactInr(yearlyTotal)}
+                  </Text>
+                </View>
+              </View>
+            </View>
+          </Animated.View>
+
+          {/* Stats row */}
           <View style={styles.heroStatsRow}>
             {DASHBOARD_STAT_CARDS.map((card, index) => {
               const amount =
                 index === 0
-                  ? String(dashboardStats?.occupantsWithKyc ?? 0)
+                  ? compactNumber(dashboardStats?.occupantsWithKyc ?? 0)
                   : index === 1
-                    ? String(dashboardStats?.vacantUnits ?? 0)
+                    ? compactNumber(dashboardStats?.vacantUnits ?? 0)
                     : index === 2
-                      ? SAMPLE_PENDING_COLLECTION
-                      : SAMPLE_RECEIVED_COLLECTION;
+                      ? collectionSummary === null
+                        ? "—"
+                        : compactInr(collectionSummary.pendingAmount)
+                      : collectionSummary === null
+                        ? "—"
+                        : compactInr(collectionSummary.receivedLast24h);
               return (
                 <React.Fragment key={card.label}>
                   {index > 0 && <View style={styles.heroStatDivider} />}
@@ -387,33 +558,51 @@ export default function TestScreen() {
 
         {/* Spending Chart */}
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Spending this month</Text>
-          <View style={styles.chartContainer}>
-            <View style={styles.chartBars}>
-              {SPENDING_DATA.map((item) => (
-                <View key={item.week} style={styles.barGroup}>
-                  <View style={styles.barWrapper}>
-                    <View
-                      style={[
-                        styles.bar,
-                        {
-                          height: (item.value / maxBarValue) * 120,
-                        },
-                      ]}
-                    />
-                  </View>
-                  <Text style={styles.barLabel}>{item.week}</Text>
+          <Text style={styles.cardTitle}>Collection this month</Text>
+          {monthlyChartData === null ? (
+            <Text style={styles.kycEmptyText}>Loading…</Text>
+          ) : monthlyChartData.every((v) => v === 0) ? (
+            <Text style={styles.kycEmptyText}>
+              No rent collected this month yet.
+            </Text>
+          ) : (() => {
+            const chartMax = Math.max(...monthlyChartData, 1);
+            const ySteps = [
+              Math.round(chartMax),
+              Math.round(chartMax * 0.75),
+              Math.round(chartMax * 0.5),
+              Math.round(chartMax * 0.25),
+            ];
+            return (
+              <View style={styles.chartContainer}>
+                <View style={styles.chartBars}>
+                  {WEEK_LABELS.map((label, i) => {
+                    const value = monthlyChartData[i] ?? 0;
+                    return (
+                      <View key={label} style={styles.barGroup}>
+                        <View style={styles.barWrapper}>
+                          <View
+                            style={[
+                              styles.bar,
+                              { height: Math.max((value / chartMax) * 120, value > 0 ? 4 : 0) },
+                            ]}
+                          />
+                        </View>
+                        <Text style={styles.barLabel}>{label}</Text>
+                      </View>
+                    );
+                  })}
                 </View>
-              ))}
-            </View>
-            <View style={styles.chartYAxis}>
-              {["₹400", "₹300", "₹200", "₹100"].map((label) => (
-                <Text key={label} style={styles.yAxisLabel}>
-                  {label}
-                </Text>
-              ))}
-            </View>
-          </View>
+                <View style={styles.chartYAxis}>
+                  {ySteps.map((step) => (
+                    <Text key={step} style={styles.yAxisLabel}>
+                      {step >= 1000 ? `₹${Math.round(step / 1000)}k` : `₹${step}`}
+                    </Text>
+                  ))}
+                </View>
+              </View>
+            );
+          })()}
         </View>
 
         {/* Recent E-KYC tenants */}
@@ -565,6 +754,85 @@ export default function TestScreen() {
           </Pressable>
         </Modal>
 
+        {/* Remind modal */}
+        <Modal
+          visible={remindModalVisible}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setRemindModalVisible(false)}
+        >
+          <View style={styles.remindBackdrop}>
+            <View style={styles.remindSheet}>
+              <View style={styles.remindHandle} />
+              <View style={styles.remindHeader}>
+                <Text style={styles.remindTitle}>Send Reminder</Text>
+                <Pressable onPress={() => setRemindModalVisible(false)} hitSlop={12}>
+                  <Ionicons name="close" size={22} color="#1E293B" />
+                </Pressable>
+              </View>
+              <Text style={styles.remindSubtitle}>
+                Tenants with overdue rent
+              </Text>
+              {overdueTenants === null ? (
+                <Text style={styles.remindEmpty}>Loading…</Text>
+              ) : overdueTenants.length === 0 ? (
+                <View style={styles.remindEmptyWrap}>
+                  <Ionicons name="checkmark-circle-outline" size={40} color="#34D399" />
+                  <Text style={styles.remindEmpty}>All tenants are up to date!</Text>
+                </View>
+              ) : (
+                <ScrollView showsVerticalScrollIndicator={false} style={styles.remindList}>
+                  {overdueTenants.map((t) => (
+                    <View key={t.applicationId} style={styles.remindRow}>
+                      {t.tenantImageUrl ? (
+                        <Image source={{ uri: t.tenantImageUrl }} style={styles.remindAvatar} />
+                      ) : (
+                        <View style={styles.remindAvatarPlaceholder}>
+                          <Ionicons name="person" size={20} color="#6B7280" />
+                        </View>
+                      )}
+                      <View style={styles.remindInfo}>
+                        <Text style={styles.remindTenantName} numberOfLines={1}>
+                          {t.tenantName}
+                        </Text>
+                        <Text style={styles.remindTenantMeta} numberOfLines={1}>
+                          {[t.roomNumber, t.propertyName].filter(Boolean).join(" · ")}
+                        </Text>
+                        <Text style={styles.remindOverdue}>
+                          {t.daysOverdue}d overdue · ₹{Math.round(t.monthlyRent).toLocaleString("en-IN")}/mo
+                        </Text>
+                      </View>
+                      <View style={styles.remindActions}>
+                        {t.phone ? (
+                          <Pressable
+                            style={styles.remindCallBtn}
+                            onPress={() => Linking.openURL(`tel:${t.phone}`)}
+                          >
+                            <Ionicons name="call-outline" size={16} color="#1E293B" />
+                          </Pressable>
+                        ) : null}
+                        {t.phone ? (
+                          <Pressable
+                            style={[styles.remindCallBtn, styles.remindWaBtn]}
+                            onPress={() =>
+                              Linking.openURL(
+                                `whatsapp://send?phone=${t.phone}&text=${encodeURIComponent(`Hi ${t.tenantName}, this is a reminder that your rent of ₹${Math.round(t.monthlyRent).toLocaleString("en-IN")} is overdue by ${t.daysOverdue} days. Please make the payment at the earliest. Thank you.`)}`,
+                              )
+                            }
+                          >
+                            <Ionicons name="logo-whatsapp" size={16} color="#fff" />
+                          </Pressable>
+                        ) : null}
+                      </View>
+                    </View>
+                  ))}
+                  <View style={{ height: 24 }} />
+                </ScrollView>
+              )}
+            </View>
+          </View>
+        </Modal>
+
         {/* Footer */}
         <View style={styles.footer}>
           <View style={styles.footerDividerRow}>
@@ -685,6 +953,12 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "600",
     color: "#1a1a1a",
+  },
+  changeBadgeDown: {
+    backgroundColor: "#EF4444",
+  },
+  changeTextDown: {
+    color: "#fff",
   },
   heroAmount: {
     fontSize: 34,
@@ -983,6 +1257,147 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
     color: "#1a1a1a",
+  },
+  // More dropdown inside hero card
+  moreDropdown: {
+    overflow: "hidden",
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  moreDropdownInner: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "rgba(255,255,255,0.15)",
+    paddingTop: 14,
+  },
+  moreDropdownItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 0,
+  },
+  moreDropdownLabel: {
+    fontSize: 11,
+    fontWeight: "500",
+    color: "rgba(255,255,255,0.45)",
+    marginBottom: 3,
+  },
+  moreDropdownValue: {
+    fontSize: 17,
+    fontWeight: "700",
+    color: "#fff",
+  },
+  moreDropdownDivider: {
+    width: 1,
+    height: 36,
+    backgroundColor: "rgba(255,255,255,0.15)",
+    marginHorizontal: 20,
+  },
+  // Remind modal
+  remindBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    justifyContent: "flex-end",
+  },
+  remindSheet: {
+    backgroundColor: "#fff",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 12,
+    paddingHorizontal: 20,
+    maxHeight: "80%",
+  },
+  remindHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "#D1D5DB",
+    alignSelf: "center",
+    marginBottom: 16,
+  },
+  remindHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 4,
+  },
+  remindTitle: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: "#1E293B",
+  },
+  remindSubtitle: {
+    fontSize: 13,
+    color: "#6B7280",
+    marginBottom: 16,
+  },
+  remindList: {
+    flexGrow: 0,
+  },
+  remindEmptyWrap: {
+    alignItems: "center",
+    paddingVertical: 32,
+    gap: 10,
+  },
+  remindEmpty: {
+    fontSize: 14,
+    color: "#9CA3AF",
+    textAlign: "center",
+    paddingVertical: 24,
+  },
+  remindRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#E5E7EB",
+    gap: 12,
+  },
+  remindAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#F3F4F6",
+  },
+  remindAvatarPlaceholder: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#F3F4F6",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  remindInfo: {
+    flex: 1,
+  },
+  remindTenantName: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#1E293B",
+    marginBottom: 2,
+  },
+  remindTenantMeta: {
+    fontSize: 12,
+    color: "#6B7280",
+    marginBottom: 3,
+  },
+  remindOverdue: {
+    fontSize: 12,
+    color: "#DC2626",
+    fontWeight: "600",
+  },
+  remindActions: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  remindCallBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "#F3F4F6",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  remindWaBtn: {
+    backgroundColor: "#25D366",
   },
   // Footer
   footer: {

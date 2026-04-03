@@ -206,6 +206,7 @@ export default defineSchema({
     description: v.string(),
   })
     .index("by_tenant", ["tenantUserId"])
+    .index("by_property", ["propertyId"])
     .index("by_application", ["applicationId"]),
 
   /** Move-out requests filed by tenants. */

@@ -892,6 +892,899 @@ export const getRecentCreditedTransactionsForDashboard = query({
 });
 
 /**
+ * Returns 4-week rent collection totals for the current calendar month.
+ * Aggregates both initial move-in payments (tenantMoveInApplications) and
+ * extend-stay payments (rentTransactions) for the operator's active property.
+ */
+export const getMonthlyRentChartData = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) return null;
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) return null;
+
+    let properties: Doc<"properties">[];
+    if (user.primaryPropertyId) {
+      const primary = await ctx.db.get(user.primaryPropertyId);
+      properties = primary && primary.userId === user._id ? [primary] : [];
+    } else {
+      properties = await ctx.db
+        .query("properties")
+        .withIndex("by_user", (q) => q.eq("userId", user._id))
+        .take(500);
+    }
+    if (properties.length === 0) {
+      return { weeks: [0, 0, 0, 0] };
+    }
+
+    const propertyIdSet = new Set(properties.map((p) => p._id));
+
+    // Compute week start timestamps for the current month (UTC)
+    const now = new Date();
+    const monthStart = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
+    );
+    const monthEnd = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1),
+    );
+
+    // Week boundaries: 1–7, 8–14, 15–21, 22–end
+    const weekBoundaries = [
+      { start: monthStart.getTime(), end: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 8)).getTime() },
+      { start: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 8)).getTime(), end: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 15)).getTime() },
+      { start: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 15)).getTime(), end: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 22)).getTime() },
+      { start: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 22)).getTime(), end: monthEnd.getTime() },
+    ];
+
+    const weekTotals = [0, 0, 0, 0];
+
+    function getWeekIndex(ts: number): number {
+      for (let i = 0; i < weekBoundaries.length; i++) {
+        const wb = weekBoundaries[i]!;
+        if (ts >= wb.start && ts < wb.end) return i;
+      }
+      return -1;
+    }
+
+    function parseDurationMonthsLocal(duration: string): number | null {
+      const s = duration.trim().toLowerCase();
+      const monthMatch = s.match(/^(\d+)\s*month/);
+      if (monthMatch) return parseInt(monthMatch[1], 10);
+      const yearMatch = s.match(/^(\d+)\s*year/);
+      if (yearMatch) return parseInt(yearMatch[1], 10) * 12;
+      return null;
+    }
+
+    // Aggregate initial move-in payments from tenantMoveInApplications
+    const roomOptionCache = new Map<Id<"roomOptions">, Doc<"roomOptions"> | null>();
+    for (const property of properties) {
+      const apps = await ctx.db
+        .query("tenantMoveInApplications")
+        .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+        .take(500);
+
+      for (const app of apps) {
+        if (app.paymentStatus !== "paid" || !app.selectedRoomOptionId) continue;
+        const ts = app._creationTime;
+        if (ts < monthStart.getTime() || ts >= monthEnd.getTime()) continue;
+        const weekIdx = getWeekIndex(ts);
+        if (weekIdx === -1) continue;
+
+        let roomOption = roomOptionCache.get(app.selectedRoomOptionId);
+        if (roomOption === undefined) {
+          roomOption = await ctx.db.get(app.selectedRoomOptionId);
+          roomOptionCache.set(app.selectedRoomOptionId, roomOption);
+        }
+        if (!roomOption) continue;
+        if (!propertyIdSet.has(roomOption.propertyId)) continue;
+
+        const rentAmount = roomOption.rentAmount;
+        if (typeof rentAmount !== "number" || rentAmount <= 0) continue;
+
+        const securityDeposit =
+          typeof app.onboardingSecurityDeposit === "number" && app.onboardingSecurityDeposit > 0
+            ? app.onboardingSecurityDeposit
+            : 0;
+        const agreementMonths = app.onboardingAgreementDuration
+          ? parseDurationMonthsLocal(app.onboardingAgreementDuration)
+          : null;
+        const rentMonths = agreementMonths && agreementMonths > 0 ? agreementMonths : 1;
+
+        weekTotals[weekIdx] = (weekTotals[weekIdx] ?? 0) + rentAmount * rentMonths + securityDeposit;
+      }
+    }
+
+    // Aggregate extend-stay payments from rentTransactions
+    for (const property of properties) {
+      const txs = await ctx.db
+        .query("rentTransactions")
+        .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+        .take(500);
+
+      for (const tx of txs) {
+        if (tx.status !== "paid") continue;
+        const ts = tx._creationTime;
+        if (ts < monthStart.getTime() || ts >= monthEnd.getTime()) continue;
+        const weekIdx = getWeekIndex(ts);
+        if (weekIdx === -1) continue;
+        weekTotals[weekIdx] = (weekTotals[weekIdx] ?? 0) + tx.amount;
+      }
+    }
+
+    return { weeks: weekTotals };
+  },
+});
+
+/**
+ * Returns total rent collected in the current calendar month and the previous
+ * calendar month, used to compute the month-over-month growth badge in the
+ * Balance Card.
+ */
+export const getMonthlyGrowth = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) return null;
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) return null;
+
+    let properties: Doc<"properties">[];
+    if (user.primaryPropertyId) {
+      const primary = await ctx.db.get(user.primaryPropertyId);
+      properties = primary && primary.userId === user._id ? [primary] : [];
+    } else {
+      properties = await ctx.db
+        .query("properties")
+        .withIndex("by_user", (q) => q.eq("userId", user._id))
+        .take(500);
+    }
+    if (properties.length === 0) return { currentMonth: 0, previousMonth: 0 };
+
+    const now = new Date();
+    const curStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
+    const curEnd = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
+    const prevStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1);
+    const prevEnd = curStart;
+
+    function parseDurationMonthsMG(duration: string): number | null {
+      const s = duration.trim().toLowerCase();
+      const mm = s.match(/^(\d+)\s*month/);
+      if (mm) return parseInt(mm[1]!, 10);
+      const ym = s.match(/^(\d+)\s*year/);
+      if (ym) return parseInt(ym[1]!, 10) * 12;
+      return null;
+    }
+
+    let currentMonth = 0;
+    let previousMonth = 0;
+    const roomOptionCache = new Map<Id<"roomOptions">, Doc<"roomOptions"> | null>();
+
+    for (const property of properties) {
+      // Initial move-in payments
+      const apps = await ctx.db
+        .query("tenantMoveInApplications")
+        .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+        .take(500);
+
+      for (const app of apps) {
+        if (app.paymentStatus !== "paid" || !app.selectedRoomOptionId) continue;
+        const ts = app._creationTime;
+        const inCur = ts >= curStart && ts < curEnd;
+        const inPrev = ts >= prevStart && ts < prevEnd;
+        if (!inCur && !inPrev) continue;
+
+        let roomOption = roomOptionCache.get(app.selectedRoomOptionId);
+        if (roomOption === undefined) {
+          roomOption = await ctx.db.get(app.selectedRoomOptionId);
+          roomOptionCache.set(app.selectedRoomOptionId, roomOption);
+        }
+        if (!roomOption || roomOption.propertyId !== property._id) continue;
+        const rent = roomOption.rentAmount;
+        if (typeof rent !== "number" || rent <= 0) continue;
+
+        const months = app.onboardingAgreementDuration
+          ? (parseDurationMonthsMG(app.onboardingAgreementDuration) ?? 1)
+          : 1;
+        const security =
+          typeof app.onboardingSecurityDeposit === "number" && app.onboardingSecurityDeposit > 0
+            ? app.onboardingSecurityDeposit
+            : 0;
+        const total = rent * months + security;
+
+        if (inCur) currentMonth += total;
+        else previousMonth += total;
+      }
+
+      // Extend-stay / renewal payments
+      const txs = await ctx.db
+        .query("rentTransactions")
+        .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+        .take(500);
+
+      for (const tx of txs) {
+        if (tx.status !== "paid") continue;
+        const ts = tx._creationTime;
+        if (ts >= curStart && ts < curEnd) currentMonth += tx.amount;
+        else if (ts >= prevStart && ts < prevEnd) previousMonth += tx.amount;
+      }
+    }
+
+    return { currentMonth, previousMonth };
+  },
+});
+
+/**
+ * Returns all payments (initial move-ins + extend-stay rent transactions) for
+ * the operator's active property, sorted newest first. Used by the Payments tab.
+ */
+export const getAllPaymentsForOperator = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) return null;
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) return null;
+
+    let properties: Doc<"properties">[];
+    if (user.primaryPropertyId) {
+      const primary = await ctx.db.get(user.primaryPropertyId);
+      properties = primary && primary.userId === user._id ? [primary] : [];
+    } else {
+      properties = await ctx.db
+        .query("properties")
+        .withIndex("by_user", (q) => q.eq("userId", user._id))
+        .take(500);
+    }
+    if (properties.length === 0) return { items: [] };
+
+    const propertyMap = new Map(properties.map((p) => [p._id, p]));
+
+    function parseDurationMonthsP(duration: string): number | null {
+      const s = duration.trim().toLowerCase();
+      const mm = s.match(/^(\d+)\s*month/);
+      if (mm) return parseInt(mm[1]!, 10);
+      const ym = s.match(/^(\d+)\s*year/);
+      if (ym) return parseInt(ym[1]!, 10) * 12;
+      return null;
+    }
+
+    const MS_PER_MONTH = 30 * 24 * 60 * 60 * 1000;
+    const roomOptionCache = new Map<Id<"roomOptions">, Doc<"roomOptions"> | null>();
+    const userCache = new Map<Id<"users">, Doc<"users"> | null>();
+
+    type PaymentItem = {
+      id: string;
+      applicationId: string;
+      type: "move_in" | "extend";
+      tenantName: string;
+      tenantImageUrl?: string;
+      roomNumber?: string;
+      propertyName?: string;
+      amount: number;
+      rentAmount: number;
+      months: number;
+      securityDeposit: number;
+      paymentMethod?: string;
+      paidAt: number;
+      status: "paid" | "pending";
+      description: string;
+      periodStart: number;
+      periodEnd: number;
+    };
+
+    const items: PaymentItem[] = [];
+
+    for (const property of properties) {
+      const apps = await ctx.db
+        .query("tenantMoveInApplications")
+        .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+        .take(500);
+
+      for (const app of apps) {
+        if (app.paymentStatus !== "paid" || !app.selectedRoomOptionId) continue;
+
+        let roomOption = roomOptionCache.get(app.selectedRoomOptionId);
+        if (roomOption === undefined) {
+          roomOption = await ctx.db.get(app.selectedRoomOptionId);
+          roomOptionCache.set(app.selectedRoomOptionId, roomOption);
+        }
+        if (!roomOption || roomOption.propertyId !== property._id) continue;
+        const rentAmount = roomOption.rentAmount ?? 0;
+
+        const initialMonths = app.onboardingAgreementDuration
+          ? (parseDurationMonthsP(app.onboardingAgreementDuration) ?? 1)
+          : 1;
+        const securityDeposit =
+          typeof app.onboardingSecurityDeposit === "number" && app.onboardingSecurityDeposit > 0
+            ? app.onboardingSecurityDeposit
+            : 0;
+        const totalAmount = rentAmount * initialMonths + securityDeposit;
+
+        // Resolve tenant avatar
+        let tenantUser = userCache.get(app.tenantUserId);
+        if (tenantUser === undefined) {
+          tenantUser = await ctx.db.get(app.tenantUserId);
+          userCache.set(app.tenantUserId, tenantUser);
+        }
+
+        const periodStart = app.assignedAt ?? app._creationTime;
+        const periodEnd = periodStart + initialMonths * MS_PER_MONTH;
+
+        items.push({
+          id: `movein_${app._id}`,
+          applicationId: app._id,
+          type: "move_in",
+          tenantName: app.legalNameAsOnId ?? "Unknown",
+          tenantImageUrl: tenantUser?.imageUrl,
+          roomNumber: app.assignedRoomNumber,
+          propertyName: property.name ?? undefined,
+          amount: totalAmount,
+          rentAmount,
+          months: initialMonths,
+          securityDeposit,
+          paymentMethod: app.paymentMethod,
+          paidAt: app._creationTime,
+          status: "paid",
+          description: initialMonths > 1 ? `Rent ×${initialMonths}mo + Security deposit` : "Rent + Security deposit",
+          periodStart,
+          periodEnd,
+        });
+
+        // Fetch extend-stay transactions for this application
+        const txs = await ctx.db
+          .query("rentTransactions")
+          .withIndex("by_application", (q) => q.eq("applicationId", app._id))
+          .take(200);
+
+        // Sort to compute cumulative coverage periods
+        txs.sort((a, b) => a._creationTime - b._creationTime);
+        let coverageEnd = periodEnd;
+
+        for (const tx of txs) {
+          if (tx.status !== "paid") continue;
+          const txPeriodStart = coverageEnd;
+          const txPeriodEnd = txPeriodStart + tx.months * MS_PER_MONTH;
+          coverageEnd = txPeriodEnd;
+
+          items.push({
+            id: `tx_${tx._id}`,
+            applicationId: app._id,
+            type: "extend",
+            tenantName: app.legalNameAsOnId ?? "Unknown",
+            tenantImageUrl: tenantUser?.imageUrl,
+            roomNumber: app.assignedRoomNumber,
+            propertyName: property.name ?? undefined,
+            amount: tx.amount,
+            rentAmount,
+            months: tx.months,
+            securityDeposit: 0,
+            paymentMethod: app.paymentMethod,
+            paidAt: tx._creationTime,
+            status: tx.status,
+            description: tx.description,
+            periodStart: txPeriodStart,
+            periodEnd: txPeriodEnd,
+          });
+        }
+      }
+    }
+
+    items.sort((a, b) => b.paidAt - a.paidAt);
+    return { items };
+  },
+});
+
+/**
+ * Returns detailed payment info for a specific payment (move-in or extend-stay)
+ * identified by the encoded id string: "movein_{appId}" or "tx_{txId}".
+ * Also returns the tenant's all-time payment summary.
+ */
+export const getPaymentDetailForOperator = query({
+  args: { encodedId: v.string() },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) return null;
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) return null;
+
+    function parseDurationMonthsPD(duration: string): number | null {
+      const s = duration.trim().toLowerCase();
+      const mm = s.match(/^(\d+)\s*month/);
+      if (mm) return parseInt(mm[1]!, 10);
+      const ym = s.match(/^(\d+)\s*year/);
+      if (ym) return parseInt(ym[1]!, 10) * 12;
+      return null;
+    }
+
+    const MS_PER_MONTH = 30 * 24 * 60 * 60 * 1000;
+
+    let app: Doc<"tenantMoveInApplications"> | null = null;
+    let txDoc: Doc<"rentTransactions"> | null = null;
+    let isMoveIn = false;
+
+    if (args.encodedId.startsWith("movein_")) {
+      const appId = args.encodedId.slice("movein_".length) as Id<"tenantMoveInApplications">;
+      app = await ctx.db.get(appId);
+      isMoveIn = true;
+    } else if (args.encodedId.startsWith("tx_")) {
+      const txId = args.encodedId.slice("tx_".length) as Id<"rentTransactions">;
+      txDoc = await ctx.db.get(txId);
+      if (txDoc) app = await ctx.db.get(txDoc.applicationId);
+    }
+
+    if (!app) return null;
+
+    // Verify operator owns this property
+    const property = await ctx.db.get(app.propertyId);
+    if (!property || property.userId !== user._id) return null;
+
+    // Resolve room option
+    const roomOption = app.selectedRoomOptionId
+      ? await ctx.db.get(app.selectedRoomOptionId)
+      : null;
+    const rentAmount = roomOption?.rentAmount ?? 0;
+
+    const initialMonths = app.onboardingAgreementDuration
+      ? (parseDurationMonthsPD(app.onboardingAgreementDuration) ?? 1)
+      : 1;
+    const securityDeposit =
+      typeof app.onboardingSecurityDeposit === "number" && app.onboardingSecurityDeposit > 0
+        ? app.onboardingSecurityDeposit
+        : 0;
+
+    // Resolve tenant user for image
+    const tenantUser = await ctx.db.get(app.tenantUserId);
+
+    // Compute initial coverage period
+    const initPeriodStart = app.assignedAt ?? app._creationTime;
+    const initPeriodEnd = initPeriodStart + initialMonths * MS_PER_MONTH;
+
+    // All transactions for this application
+    const allTxs = await ctx.db
+      .query("rentTransactions")
+      .withIndex("by_application", (q) => q.eq("applicationId", app!._id))
+      .take(200);
+    allTxs.sort((a, b) => a._creationTime - b._creationTime);
+
+    // Build period map for extend-stay txs
+    let coverageEnd = initPeriodEnd;
+    const txPeriods = new Map<string, { periodStart: number; periodEnd: number }>();
+    for (const tx of allTxs) {
+      if (tx.status !== "paid") continue;
+      const ps = coverageEnd;
+      const pe = ps + tx.months * MS_PER_MONTH;
+      coverageEnd = pe;
+      txPeriods.set(tx._id, { periodStart: ps, periodEnd: pe });
+    }
+
+    // This payment's data
+    let amount: number;
+    let months: number;
+    let periodStart: number;
+    let periodEnd: number;
+    let description: string;
+    let paidAt: number;
+    let paymentMode: string | undefined;
+
+    if (isMoveIn) {
+      amount = rentAmount * initialMonths + securityDeposit;
+      months = initialMonths;
+      periodStart = initPeriodStart;
+      periodEnd = initPeriodEnd;
+      description = initialMonths > 1 ? `Rent ×${initialMonths}mo + Security deposit` : "Rent + Security deposit";
+      paidAt = app._creationTime;
+      paymentMode = app.paymentMethod;
+    } else if (txDoc) {
+      amount = txDoc.amount;
+      months = txDoc.months;
+      const period = txPeriods.get(txDoc._id);
+      periodStart = period?.periodStart ?? app._creationTime;
+      periodEnd = period?.periodEnd ?? periodStart + months * MS_PER_MONTH;
+      description = txDoc.description;
+      paidAt = txDoc._creationTime;
+      paymentMode = app.paymentMethod;
+    } else {
+      return null;
+    }
+
+    // Tenant all-time payment summary
+    const totalPaidFromTxs = allTxs
+      .filter((t) => t.status === "paid")
+      .reduce((sum, t) => sum + t.amount, 0);
+    const moveInAmount = rentAmount * initialMonths + securityDeposit;
+    const allTimePaid =
+      app.paymentStatus === "paid" ? moveInAmount + totalPaidFromTxs : totalPaidFromTxs;
+
+    // Pending = coverage elapsed with no renewal
+    const pendingMonthlyRent = coverageEnd < Date.now() ? rentAmount : 0;
+
+    return {
+      encodedId: args.encodedId,
+      applicationId: app._id,
+      tenantName: app.legalNameAsOnId ?? "Unknown",
+      tenantImageUrl: tenantUser?.imageUrl,
+      tenantPhone: app.phone,
+      roomNumber: app.assignedRoomNumber,
+      roomCategory: roomOption?.category,
+      propertyName: property.name,
+      amount,
+      rentAmount,
+      months,
+      securityDeposit: isMoveIn ? securityDeposit : 0,
+      periodStart,
+      periodEnd,
+      paidAt,
+      paymentMode,
+      description,
+      status: "paid" as const,
+      agreementDuration: app.onboardingAgreementDuration,
+      rentCycle: app.onboardingRentCycle ?? "Monthly",
+      summary: {
+        totalPaid: allTimePaid,
+        pendingAmount: pendingMonthlyRent,
+      },
+    };
+  },
+});
+
+/**
+ * Returns tenants whose coverage window has elapsed and no renewal payment has
+ * been made — used to populate the "Remind" modal on the dashboard.
+ */
+export const getOverdueTenantsForReminder = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) return null;
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) return null;
+
+    let properties: Doc<"properties">[];
+    if (user.primaryPropertyId) {
+      const primary = await ctx.db.get(user.primaryPropertyId);
+      properties = primary && primary.userId === user._id ? [primary] : [];
+    } else {
+      properties = await ctx.db
+        .query("properties")
+        .withIndex("by_user", (q) => q.eq("userId", user._id))
+        .take(500);
+    }
+    if (properties.length === 0) return { tenants: [] };
+
+    const now = Date.now();
+    const MS_PER_MONTH = 30 * 24 * 60 * 60 * 1000;
+
+    function parseDur(duration: string): number | null {
+      const s = duration.trim().toLowerCase();
+      const mm = s.match(/^(\d+)\s*month/);
+      if (mm) return parseInt(mm[1]!, 10);
+      const ym = s.match(/^(\d+)\s*year/);
+      if (ym) return parseInt(ym[1]!, 10) * 12;
+      return null;
+    }
+
+    const roomOptionCache = new Map<Id<"roomOptions">, Doc<"roomOptions"> | null>();
+    const tenantUserCache = new Map<Id<"users">, Doc<"users"> | null>();
+
+    type OverdueTenant = {
+      applicationId: string;
+      tenantName: string;
+      tenantImageUrl?: string;
+      phone?: string;
+      roomNumber?: string;
+      propertyName?: string;
+      monthlyRent: number;
+      daysOverdue: number;
+    };
+
+    const overdue: OverdueTenant[] = [];
+
+    for (const property of properties) {
+      const apps = await ctx.db
+        .query("tenantMoveInApplications")
+        .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+        .take(500);
+
+      for (const app of apps) {
+        if (app.paymentStatus !== "paid" || !app.selectedRoomOptionId) continue;
+        if (!isMoveInKycComplete(app)) continue;
+
+        let roomOption = roomOptionCache.get(app.selectedRoomOptionId);
+        if (roomOption === undefined) {
+          roomOption = await ctx.db.get(app.selectedRoomOptionId);
+          roomOptionCache.set(app.selectedRoomOptionId, roomOption);
+        }
+        if (!roomOption || roomOption.propertyId !== property._id) continue;
+        const monthlyRent = roomOption.rentAmount;
+        if (typeof monthlyRent !== "number" || monthlyRent <= 0) continue;
+
+        const initialMonths = app.onboardingAgreementDuration
+          ? (parseDur(app.onboardingAgreementDuration) ?? 1)
+          : 1;
+
+        const coverageStart = app.assignedAt ?? app._creationTime;
+        let totalMonths = initialMonths;
+
+        const txs = await ctx.db
+          .query("rentTransactions")
+          .withIndex("by_application", (q) => q.eq("applicationId", app._id))
+          .take(200);
+        for (const tx of txs) {
+          if (tx.status === "paid") totalMonths += tx.months;
+        }
+
+        const coverageEnd = coverageStart + totalMonths * MS_PER_MONTH;
+        if (coverageEnd >= now) continue; // still covered
+
+        const daysOverdue = Math.floor((now - coverageEnd) / (24 * 60 * 60 * 1000));
+
+        let tenantUser = tenantUserCache.get(app.tenantUserId);
+        if (tenantUser === undefined) {
+          tenantUser = await ctx.db.get(app.tenantUserId);
+          tenantUserCache.set(app.tenantUserId, tenantUser);
+        }
+
+        overdue.push({
+          applicationId: app._id,
+          tenantName: app.legalNameAsOnId ?? "Unknown",
+          tenantImageUrl: tenantUser?.imageUrl,
+          phone: app.phone,
+          roomNumber: app.assignedRoomNumber,
+          propertyName: property.name ?? undefined,
+          monthlyRent,
+          daysOverdue,
+        });
+      }
+    }
+
+    overdue.sort((a, b) => b.daysOverdue - a.daysOverdue);
+    return { tenants: overdue };
+  },
+});
+
+/**
+ * Returns total rent collected in the current calendar year — used in the
+ * "More → Yearly" dropdown on the dashboard Balance Card.
+ */
+export const getYearlyCollectionTotal = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) return null;
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) return null;
+
+    let properties: Doc<"properties">[];
+    if (user.primaryPropertyId) {
+      const primary = await ctx.db.get(user.primaryPropertyId);
+      properties = primary && primary.userId === user._id ? [primary] : [];
+    } else {
+      properties = await ctx.db
+        .query("properties")
+        .withIndex("by_user", (q) => q.eq("userId", user._id))
+        .take(500);
+    }
+    if (properties.length === 0) return { total: 0 };
+
+    const now = new Date();
+    const yearStart = Date.UTC(now.getUTCFullYear(), 0, 1);
+    const yearEnd = Date.UTC(now.getUTCFullYear() + 1, 0, 1);
+
+    function parseDurY(duration: string): number | null {
+      const s = duration.trim().toLowerCase();
+      const mm = s.match(/^(\d+)\s*month/);
+      if (mm) return parseInt(mm[1]!, 10);
+      const ym = s.match(/^(\d+)\s*year/);
+      if (ym) return parseInt(ym[1]!, 10) * 12;
+      return null;
+    }
+
+    let total = 0;
+    const roomOptionCache = new Map<Id<"roomOptions">, Doc<"roomOptions"> | null>();
+
+    for (const property of properties) {
+      const apps = await ctx.db
+        .query("tenantMoveInApplications")
+        .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+        .take(500);
+
+      for (const app of apps) {
+        if (app.paymentStatus !== "paid" || !app.selectedRoomOptionId) continue;
+        const ts = app._creationTime;
+        if (ts >= yearStart && ts < yearEnd) {
+          let roomOption = roomOptionCache.get(app.selectedRoomOptionId);
+          if (roomOption === undefined) {
+            roomOption = await ctx.db.get(app.selectedRoomOptionId);
+            roomOptionCache.set(app.selectedRoomOptionId, roomOption);
+          }
+          if (!roomOption || roomOption.propertyId !== property._id) continue;
+          const rent = roomOption.rentAmount ?? 0;
+          const months = app.onboardingAgreementDuration
+            ? (parseDurY(app.onboardingAgreementDuration) ?? 1)
+            : 1;
+          const security =
+            typeof app.onboardingSecurityDeposit === "number"
+              ? app.onboardingSecurityDeposit
+              : 0;
+          total += rent * months + security;
+        }
+      }
+
+      const txs = await ctx.db
+        .query("rentTransactions")
+        .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+        .take(500);
+      for (const tx of txs) {
+        if (tx.status === "paid" && tx._creationTime >= yearStart && tx._creationTime < yearEnd) {
+          total += tx.amount;
+        }
+      }
+    }
+
+    return { total };
+  },
+});
+
+/**
+ * Returns pending (overdue after agreement expiry) and received-last-24h totals
+ * for the operator's active property, shown in the Balance Card stat row.
+ *
+ * Pending: tenants whose coverage window (initial agreement + any renewal/extend
+ * payments) has already elapsed but have not yet paid again.
+ *
+ * Received last 24h: sum of all paid move-in initial payments and extend-stay
+ * rent transactions whose _creationTime falls within the last 24 hours.
+ */
+export const getDashboardCollectionSummary = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) return null;
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) return null;
+
+    let properties: Doc<"properties">[];
+    if (user.primaryPropertyId) {
+      const primary = await ctx.db.get(user.primaryPropertyId);
+      properties = primary && primary.userId === user._id ? [primary] : [];
+    } else {
+      properties = await ctx.db
+        .query("properties")
+        .withIndex("by_user", (q) => q.eq("userId", user._id))
+        .take(500);
+    }
+    if (properties.length === 0) {
+      return { pendingAmount: 0, receivedLast24h: 0 };
+    }
+
+    const now = Date.now();
+    const windowStart = now - 24 * 60 * 60 * 1000;
+    const MS_PER_MONTH = 30 * 24 * 60 * 60 * 1000;
+
+    function parseDurationMonthsCS(duration: string): number | null {
+      const s = duration.trim().toLowerCase();
+      const monthMatch = s.match(/^(\d+)\s*month/);
+      if (monthMatch) return parseInt(monthMatch[1], 10);
+      const yearMatch = s.match(/^(\d+)\s*year/);
+      if (yearMatch) return parseInt(yearMatch[1], 10) * 12;
+      return null;
+    }
+
+    let pendingAmount = 0;
+    let receivedLast24h = 0;
+    const roomOptionCache = new Map<Id<"roomOptions">, Doc<"roomOptions"> | null>();
+
+    for (const property of properties) {
+      const apps = await ctx.db
+        .query("tenantMoveInApplications")
+        .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+        .take(500);
+
+      for (const app of apps) {
+        // Only consider active, fully-paid tenants with a room option
+        if (app.paymentStatus !== "paid" || !app.selectedRoomOptionId) continue;
+        if (!isMoveInKycComplete(app)) continue;
+
+        let roomOption = roomOptionCache.get(app.selectedRoomOptionId);
+        if (roomOption === undefined) {
+          roomOption = await ctx.db.get(app.selectedRoomOptionId);
+          roomOptionCache.set(app.selectedRoomOptionId, roomOption);
+        }
+        if (!roomOption || roomOption.propertyId !== property._id) continue;
+        const monthlyRent = roomOption.rentAmount;
+        if (typeof monthlyRent !== "number" || monthlyRent <= 0) continue;
+
+        const securityDeposit =
+          typeof app.onboardingSecurityDeposit === "number" && app.onboardingSecurityDeposit > 0
+            ? app.onboardingSecurityDeposit
+            : 0;
+        const initialMonths =
+          app.onboardingAgreementDuration
+            ? (parseDurationMonthsCS(app.onboardingAgreementDuration) ?? 1)
+            : 1;
+
+        // --- Received last 24h: initial move-in payment ---
+        if (app._creationTime >= windowStart) {
+          receivedLast24h += monthlyRent * initialMonths + securityDeposit;
+        }
+
+        // --- Coverage window to determine pending ---
+        // Coverage starts at move-in (assignedAt) or application creation time
+        const coverageStart = app.assignedAt ?? app._creationTime;
+        let totalMonthsCovered = initialMonths;
+
+        // Fetch all rent transactions for this application to extend coverage
+        const txs = await ctx.db
+          .query("rentTransactions")
+          .withIndex("by_application", (q) => q.eq("applicationId", app._id))
+          .take(200);
+
+        for (const tx of txs) {
+          if (tx.status !== "paid") continue;
+          totalMonthsCovered += tx.months;
+
+          // --- Received last 24h: extend-stay payments ---
+          if (tx._creationTime >= windowStart) {
+            receivedLast24h += tx.amount;
+          }
+        }
+
+        // If coverage window has elapsed, this tenant's rent is overdue
+        const coverageEndTs = coverageStart + totalMonthsCovered * MS_PER_MONTH;
+        if (coverageEndTs < now) {
+          pendingAmount += monthlyRent;
+        }
+      }
+    }
+
+    return { pendingAmount, receivedLast24h };
+  },
+});
+
+/**
  * Recomputes each operator property's vacantUnits based on occupied tenants
  * (completed move-in applications), and persists the latest value.
  */

@@ -341,24 +341,8 @@ export default function OnboardTenantScreen() {
 
             {/* ─── Payment Summary ─── */}
             {(() => {
-              const months = parseMonths(agreementDuration);
+              const months = parseMonths(agreementDuration) ?? 1;
               const rent = appData.selectedRentAmount;
-              if (!months) return null;
-              if (months === 1) {
-                return (
-                  <View style={s.paymentSummaryCard}>
-                    <Text style={s.paymentSummaryTitle}>Payment summary</Text>
-                    <Text style={s.paymentSummaryLine}>
-                      1-month agreement — tenant pays the monthly rent cycle only.
-                    </Text>
-                    {rent != null && (
-                      <Text style={s.paymentSummaryTotal}>
-                        {formatINR(rent)}/month
-                      </Text>
-                    )}
-                  </View>
-                );
-              }
               const deposit = parseFloat(securityDeposit) || 0;
               const rentPerMonth = rent ?? 0;
               const total = deposit + months * rentPerMonth;
@@ -372,7 +356,7 @@ export default function OnboardTenantScreen() {
                   )}
                   {rentPerMonth > 0 && (
                     <Text style={s.paymentSummaryLine}>
-                      Rent: {formatINR(rentPerMonth)} × {months} months = {formatINR(rentPerMonth * months)}
+                      Rent: {formatINR(rentPerMonth)} × {months} month{months !== 1 ? "s" : ""} = {formatINR(rentPerMonth * months)}
                     </Text>
                   )}
                   {(deposit > 0 || rentPerMonth > 0) && (

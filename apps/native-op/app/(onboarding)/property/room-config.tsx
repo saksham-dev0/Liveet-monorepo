@@ -63,6 +63,7 @@ type UnassignedTenant = {
 function roomCapacity(category?: string): number {
   if (category === "double") return 2;
   if (category === "triple") return 3;
+  if (category === "3plus") return 4;
   return 1;
 }
 
