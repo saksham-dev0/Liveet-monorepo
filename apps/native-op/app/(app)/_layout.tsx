@@ -103,6 +103,10 @@ export default function AppStackLayout() {
         name="payment/[paymentId]"
         options={{ gestureEnabled: true, fullScreenGestureEnabled: true }}
       />
+      <Stack.Screen
+        name="notifications"
+        options={{ gestureEnabled: true, fullScreenGestureEnabled: true }}
+      />
     </Stack>
   );
 }

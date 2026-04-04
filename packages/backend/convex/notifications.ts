@@ -1,5 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import type { Id } from "./_generated/dataModel";
 
 /** Operator: get their notifications (newest first). */
 export const getOperatorNotifications = query({
@@ -33,6 +34,48 @@ export const getOperatorNotifications = query({
         createdAt: n._creationTime,
       })),
     };
+  },
+});
+
+/**
+ * Operator sends a rent reminder notification to a tenant for a pending payment.
+ * Verifies that the operator owns the property associated with the application.
+ */
+export const sendRentReminder = mutation({
+  args: { applicationId: v.id("tenantMoveInApplications") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) throw new Error("Unauthenticated");
+
+    const operator = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!operator) throw new Error("User not found");
+
+    const app = await ctx.db.get(args.applicationId);
+    if (!app) throw new Error("Application not found");
+
+    // Verify operator owns the property
+    const property = await ctx.db.get(app.propertyId);
+    if (!property || property.userId !== operator._id) {
+      throw new Error("Unauthorized");
+    }
+
+    const tenantName = app.legalNameAsOnId ?? "Tenant";
+    const propertyName = property.name ?? "your property";
+    const roomInfo = app.assignedRoomNumber ? ` (Room ${app.assignedRoomNumber})` : "";
+
+    await ctx.db.insert("notifications", {
+      tenantUserId: app.tenantUserId,
+      type: "rent_reminder",
+      title: "Rent Payment Reminder",
+      body: `Your rent for ${propertyName}${roomInfo} is due. Please make the payment at your earliest convenience.`,
+      read: false,
+      refId: args.applicationId,
+    });
   },
 });
 

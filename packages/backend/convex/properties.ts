@@ -2,6 +2,37 @@ import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 
+/**
+ * Parse an agreement duration string (e.g. "6 months", "1 year") into a month
+ * count. Logs an error and returns 1 when the format is unrecognised so callers
+ * always get a usable value and the bad data is visible in server logs.
+ */
+function parseDurationMonths(duration: string | undefined | null, context: string): number {
+  if (!duration) return 1;
+  const s = duration.trim().toLowerCase();
+  const mm = s.match(/^(\d+)\s*month/);
+  if (mm) return parseInt(mm[1]!, 10);
+  const ym = s.match(/^(\d+)\s*year/);
+  if (ym) return parseInt(ym[1]!, 10) * 12;
+  console.error(
+    `[${context}] Unparseable onboardingAgreementDuration: "${duration}" — defaulting to 1 month. Fix the stored value to avoid incorrect rent/coverage calculations.`,
+  );
+  return 1;
+}
+
+/** Add n calendar months to a timestamp, preserving day-of-month semantics. */
+function addMonths(ts: number, n: number): number {
+  const d = new Date(ts);
+  const targetMonth = d.getMonth() + n;
+  d.setMonth(targetMonth);
+  // If setMonth overflowed (e.g. Jan 31 + 1mo → Mar 3), clamp back to last day of intended month
+  const intendedMonth = ((targetMonth % 12) + 12) % 12;
+  if (d.getMonth() !== intendedMonth) {
+    d.setDate(0); // last day of the previous (intended) month
+  }
+  return d.getTime();
+}
+
 function ownerDisplayName(owner: Doc<"users"> | null): string | undefined {
   if (!owner) return undefined;
   const name = owner.name?.trim();
@@ -349,10 +380,7 @@ export const getDashboardPropertyStats = query({
           !Number.isNaN(rentAmount) &&
           rentAmount > 0
         ) {
-          const agreementMonths = app.onboardingAgreementDuration
-            ? parseDurationMonthsForStats(app.onboardingAgreementDuration)
-            : null;
-          const rentMonths = agreementMonths && agreementMonths > 0 ? agreementMonths : 1;
+          const rentMonths = parseDurationMonths(app.onboardingAgreementDuration, "getDashboardPropertyStats");
           const securityDeposit =
             typeof app.onboardingSecurityDeposit === "number" && app.onboardingSecurityDeposit > 0
               ? app.onboardingSecurityDeposit
@@ -810,7 +838,7 @@ export const getRecentCreditedTransactionsForDashboard = query({
 
     const roomOptionCache = new Map<Id<"roomOptions">, Doc<"roomOptions"> | null>();
 
-    function parseDurationMonths(duration: string): number | null {
+    function parseDurationMonthsCredited(duration: string): number | null {
       const s = duration.trim().toLowerCase();
       const monthMatch = s.match(/^(\d+)\s*month/);
       if (monthMatch) return parseInt(monthMatch[1], 10);
@@ -849,9 +877,7 @@ export const getRecentCreditedTransactionsForDashboard = query({
           ? app.onboardingSecurityDeposit
           : 0;
 
-      const agreementDuration = app.onboardingAgreementDuration ?? null;
-      const agreementMonths = agreementDuration ? parseDurationMonths(agreementDuration) : null;
-      const rentMonths = agreementMonths && agreementMonths > 0 ? agreementMonths : 1;
+      const rentMonths = parseDurationMonthsCredited(app.onboardingAgreementDuration ?? "") ?? 1;
 
       const totalRent = rentAmount * rentMonths;
       const totalAmount = totalRent + securityDeposit;
@@ -992,10 +1018,7 @@ export const getMonthlyRentChartData = query({
           typeof app.onboardingSecurityDeposit === "number" && app.onboardingSecurityDeposit > 0
             ? app.onboardingSecurityDeposit
             : 0;
-        const agreementMonths = app.onboardingAgreementDuration
-          ? parseDurationMonthsLocal(app.onboardingAgreementDuration)
-          : null;
-        const rentMonths = agreementMonths && agreementMonths > 0 ? agreementMonths : 1;
+        const rentMonths = parseDurationMonths(app.onboardingAgreementDuration, "getMonthlyRentChartData");
 
         weekTotals[weekIdx] = (weekTotals[weekIdx] ?? 0) + rentAmount * rentMonths + securityDeposit;
       }
@@ -1095,9 +1118,7 @@ export const getMonthlyGrowth = query({
         const rent = roomOption.rentAmount;
         if (typeof rent !== "number" || rent <= 0) continue;
 
-        const months = app.onboardingAgreementDuration
-          ? (parseDurationMonthsMG(app.onboardingAgreementDuration) ?? 1)
-          : 1;
+        const months = parseDurationMonths(app.onboardingAgreementDuration, "getMonthlyGrowth");
         const security =
           typeof app.onboardingSecurityDeposit === "number" && app.onboardingSecurityDeposit > 0
             ? app.onboardingSecurityDeposit
@@ -1167,7 +1188,6 @@ export const getAllPaymentsForOperator = query({
       return null;
     }
 
-    const MS_PER_MONTH = 30 * 24 * 60 * 60 * 1000;
     const roomOptionCache = new Map<Id<"roomOptions">, Doc<"roomOptions"> | null>();
     const userCache = new Map<Id<"users">, Doc<"users"> | null>();
 
@@ -1200,7 +1220,7 @@ export const getAllPaymentsForOperator = query({
         .take(500);
 
       for (const app of apps) {
-        if (app.paymentStatus !== "paid" || !app.selectedRoomOptionId) continue;
+        if (!app.selectedRoomOptionId) continue;
 
         let roomOption = roomOptionCache.get(app.selectedRoomOptionId);
         if (roomOption === undefined) {
@@ -1210,9 +1230,7 @@ export const getAllPaymentsForOperator = query({
         if (!roomOption || roomOption.propertyId !== property._id) continue;
         const rentAmount = roomOption.rentAmount ?? 0;
 
-        const initialMonths = app.onboardingAgreementDuration
-          ? (parseDurationMonthsP(app.onboardingAgreementDuration) ?? 1)
-          : 1;
+        const initialMonths = parseDurationMonths(app.onboardingAgreementDuration, "getAllPaymentsForOperator");
         const securityDeposit =
           typeof app.onboardingSecurityDeposit === "number" && app.onboardingSecurityDeposit > 0
             ? app.onboardingSecurityDeposit
@@ -1227,7 +1245,7 @@ export const getAllPaymentsForOperator = query({
         }
 
         const periodStart = app.assignedAt ?? app._creationTime;
-        const periodEnd = periodStart + initialMonths * MS_PER_MONTH;
+        const periodEnd = addMonths(periodStart, initialMonths);
 
         items.push({
           id: `movein_${app._id}`,
@@ -1242,8 +1260,8 @@ export const getAllPaymentsForOperator = query({
           months: initialMonths,
           securityDeposit,
           paymentMethod: app.paymentMethod,
-          paidAt: app._creationTime,
-          status: "paid",
+          paidAt: app.paidAt ?? app._creationTime,
+          status: app.paymentStatus === "paid" ? "paid" : "pending",
           description: initialMonths > 1 ? `Rent ×${initialMonths}mo + Security deposit` : "Rent + Security deposit",
           periodStart,
           periodEnd,
@@ -1262,7 +1280,7 @@ export const getAllPaymentsForOperator = query({
         for (const tx of txs) {
           if (tx.status !== "paid") continue;
           const txPeriodStart = coverageEnd;
-          const txPeriodEnd = txPeriodStart + tx.months * MS_PER_MONTH;
+          const txPeriodEnd = addMonths(txPeriodStart, tx.months);
           coverageEnd = txPeriodEnd;
 
           items.push({
@@ -1321,8 +1339,6 @@ export const getPaymentDetailForOperator = query({
       return null;
     }
 
-    const MS_PER_MONTH = 30 * 24 * 60 * 60 * 1000;
-
     let app: Doc<"tenantMoveInApplications"> | null = null;
     let txDoc: Doc<"rentTransactions"> | null = null;
     let isMoveIn = false;
@@ -1349,9 +1365,7 @@ export const getPaymentDetailForOperator = query({
       : null;
     const rentAmount = roomOption?.rentAmount ?? 0;
 
-    const initialMonths = app.onboardingAgreementDuration
-      ? (parseDurationMonthsPD(app.onboardingAgreementDuration) ?? 1)
-      : 1;
+    const initialMonths = parseDurationMonths(app.onboardingAgreementDuration, "getPaymentDetailForOperator");
     const securityDeposit =
       typeof app.onboardingSecurityDeposit === "number" && app.onboardingSecurityDeposit > 0
         ? app.onboardingSecurityDeposit
@@ -1360,9 +1374,15 @@ export const getPaymentDetailForOperator = query({
     // Resolve tenant user for image
     const tenantUser = await ctx.db.get(app.tenantUserId);
 
+    // Fetch propertyRent for grace period and other rent config
+    const propertyRent = await ctx.db
+      .query("propertyRent")
+      .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+      .unique();
+
     // Compute initial coverage period
     const initPeriodStart = app.assignedAt ?? app._creationTime;
-    const initPeriodEnd = initPeriodStart + initialMonths * MS_PER_MONTH;
+    const initPeriodEnd = addMonths(initPeriodStart, initialMonths);
 
     // All transactions for this application
     const allTxs = await ctx.db
@@ -1377,7 +1397,7 @@ export const getPaymentDetailForOperator = query({
     for (const tx of allTxs) {
       if (tx.status !== "paid") continue;
       const ps = coverageEnd;
-      const pe = ps + tx.months * MS_PER_MONTH;
+      const pe = addMonths(ps, tx.months);
       coverageEnd = pe;
       txPeriods.set(tx._id, { periodStart: ps, periodEnd: pe });
     }
@@ -1404,7 +1424,7 @@ export const getPaymentDetailForOperator = query({
       months = txDoc.months;
       const period = txPeriods.get(txDoc._id);
       periodStart = period?.periodStart ?? app._creationTime;
-      periodEnd = period?.periodEnd ?? periodStart + months * MS_PER_MONTH;
+      periodEnd = period?.periodEnd ?? addMonths(periodStart, months);
       description = txDoc.description;
       paidAt = txDoc._creationTime;
       paymentMode = app.paymentMethod;
@@ -1444,6 +1464,7 @@ export const getPaymentDetailForOperator = query({
       status: "paid" as const,
       agreementDuration: app.onboardingAgreementDuration,
       rentCycle: app.onboardingRentCycle ?? "Monthly",
+      gracePeriodDays: propertyRent?.gracePeriodDays,
       summary: {
         totalPaid: allTimePaid,
         pendingAmount: pendingMonthlyRent,
@@ -1483,7 +1504,6 @@ export const getOverdueTenantsForReminder = query({
     if (properties.length === 0) return { tenants: [] };
 
     const now = Date.now();
-    const MS_PER_MONTH = 30 * 24 * 60 * 60 * 1000;
 
     function parseDur(duration: string): number | null {
       const s = duration.trim().toLowerCase();
@@ -1529,9 +1549,7 @@ export const getOverdueTenantsForReminder = query({
         const monthlyRent = roomOption.rentAmount;
         if (typeof monthlyRent !== "number" || monthlyRent <= 0) continue;
 
-        const initialMonths = app.onboardingAgreementDuration
-          ? (parseDur(app.onboardingAgreementDuration) ?? 1)
-          : 1;
+        const initialMonths = parseDurationMonths(app.onboardingAgreementDuration, "getOverdueTenantsForReminder");
 
         const coverageStart = app.assignedAt ?? app._creationTime;
         let totalMonths = initialMonths;
@@ -1544,7 +1562,7 @@ export const getOverdueTenantsForReminder = query({
           if (tx.status === "paid") totalMonths += tx.months;
         }
 
-        const coverageEnd = coverageStart + totalMonths * MS_PER_MONTH;
+        const coverageEnd = addMonths(coverageStart, totalMonths);
         if (coverageEnd >= now) continue; // still covered
 
         const daysOverdue = Math.floor((now - coverageEnd) / (24 * 60 * 60 * 1000));
@@ -1636,9 +1654,7 @@ export const getYearlyCollectionTotal = query({
           }
           if (!roomOption || roomOption.propertyId !== property._id) continue;
           const rent = roomOption.rentAmount ?? 0;
-          const months = app.onboardingAgreementDuration
-            ? (parseDurY(app.onboardingAgreementDuration) ?? 1)
-            : 1;
+          const months = parseDurationMonths(app.onboardingAgreementDuration, "getYearlyCollectionTotal");
           const security =
             typeof app.onboardingSecurityDeposit === "number"
               ? app.onboardingSecurityDeposit
@@ -1702,7 +1718,6 @@ export const getDashboardCollectionSummary = query({
 
     const now = Date.now();
     const windowStart = now - 24 * 60 * 60 * 1000;
-    const MS_PER_MONTH = 30 * 24 * 60 * 60 * 1000;
 
     function parseDurationMonthsCS(duration: string): number | null {
       const s = duration.trim().toLowerCase();
@@ -1741,10 +1756,7 @@ export const getDashboardCollectionSummary = query({
           typeof app.onboardingSecurityDeposit === "number" && app.onboardingSecurityDeposit > 0
             ? app.onboardingSecurityDeposit
             : 0;
-        const initialMonths =
-          app.onboardingAgreementDuration
-            ? (parseDurationMonthsCS(app.onboardingAgreementDuration) ?? 1)
-            : 1;
+        const initialMonths = parseDurationMonths(app.onboardingAgreementDuration, "getDashboardCollectionSummary");
 
         // --- Received last 24h: initial move-in payment ---
         if (app._creationTime >= windowStart) {
@@ -1773,7 +1785,7 @@ export const getDashboardCollectionSummary = query({
         }
 
         // If coverage window has elapsed, this tenant's rent is overdue
-        const coverageEndTs = coverageStart + totalMonthsCovered * MS_PER_MONTH;
+        const coverageEndTs = addMonths(coverageStart, totalMonthsCovered);
         if (coverageEndTs < now) {
           pendingAmount += monthlyRent;
         }
@@ -2286,7 +2298,7 @@ export const markCashPaymentReceived = mutation({
       return { updated: false };
     }
 
-    await ctx.db.patch(app._id, { paymentStatus: "paid" });
+    await ctx.db.patch(app._id, { paymentStatus: "paid", paidAt: Date.now() });
     return { updated: true };
   },
 });
@@ -2315,7 +2327,7 @@ export const markPaymentReceived = mutation({
 
     if (app.paymentStatus === "paid") return { updated: false };
 
-    await ctx.db.patch(app._id, { paymentStatus: "paid" });
+    await ctx.db.patch(app._id, { paymentStatus: "paid", paidAt: Date.now() });
     return { updated: true };
   },
 });

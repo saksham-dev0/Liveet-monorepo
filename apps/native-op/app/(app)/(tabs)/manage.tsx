@@ -4,16 +4,19 @@ import {
   Text,
   StyleSheet,
   ScrollView,
-  Image,
   ActivityIndicator,
-  Pressable,
+  TouchableOpacity,
 } from "react-native";
+import { Image } from "expo-image";
 import { useRouter, type Href } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { useConvex } from "convex/react";
 import { colors, cardShadow, radii } from "../../../constants/theme";
+
+const H_PAD = 20;
+const TAB_BAR_CLEARANCE = 100;
 
 type OnboardedTenantRow = {
   applicationId: string;
@@ -51,279 +54,385 @@ export default function ManageTabScreen() {
     }, [refresh]),
   );
 
+  const paidCount = (items ?? []).filter((i) => i.paymentStatus === "paid").length;
+  const pendingCount = (items ?? []).filter((i) => i.paymentStatus === "pending").length;
+
   return (
-    <View style={[styles.screen, { paddingTop: insets.top + 12 }]}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Manage</Text>
-        <Text style={styles.subtitle}>
-          Tenants who completed move-in onboarding
-        </Text>
+    <View style={[s.root, { paddingTop: insets.top + 8 }]}>
+
+      {/* ── Header ── */}
+      <View style={s.header}>
+        <View>
+          <Text style={s.headerTitle}>Manage</Text>
+          <Text style={s.headerSub}>Onboarded tenants</Text>
+        </View>
+        <TouchableOpacity
+          style={s.headerBtn}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Refresh"
+          onPress={() => { setItems(null); void refresh(); }}
+        >
+          <Ionicons name="refresh-outline" size={20} color={colors.navy} />
+        </TouchableOpacity>
       </View>
 
       {items === null ? (
-        <View style={styles.centered}>
+        <View style={s.center}>
           <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={styles.loadingText}>Loading tenants…</Text>
+          <Text style={s.loadingText}>Loading tenants…</Text>
         </View>
       ) : items.length === 0 ? (
-        <View style={styles.emptyCard}>
-          <Ionicons
-            name="people-outline"
-            size={40}
-            color={colors.muted}
-            style={styles.emptyIcon}
-          />
-          <Text style={styles.emptyTitle}>No onboarded tenants yet</Text>
-          <Text style={styles.emptyBody}>
-            When tenants submit their move-in application on your properties, they
-            will appear here.
+        <View style={s.center}>
+          <View style={s.emptyIcon}>
+            <Ionicons name="people-outline" size={40} color={colors.muted} />
+          </View>
+          <Text style={s.emptyTitle}>No onboarded tenants yet</Text>
+          <Text style={s.emptySub}>
+            When tenants submit their move-in application your properties, they will appear here.
           </Text>
         </View>
       ) : (
         <ScrollView
-          style={styles.scroll}
-          contentContainerStyle={styles.scrollContent}
+          style={s.scroll}
+          contentContainerStyle={{ paddingBottom: insets.bottom + TAB_BAR_CLEARANCE }}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          {items.map((row) => (
-            <Pressable
-              key={row.applicationId}
-              onPress={() =>
-                router.push({
-                  pathname: "/(app)/tenant/[applicationId]",
-                  params: { applicationId: row.applicationId },
-                } as Href)
-              }
-              style={({ pressed }) => [
-                styles.cardPressable,
-                pressed && styles.cardPressablePressed,
-              ]}
-            >
-              <View style={styles.cardInner}>
-                {row.imageUrl ? (
-                  <Image source={{ uri: row.imageUrl }} style={styles.avatar} />
-                ) : (
-                  <View style={styles.avatarPlaceholder}>
-                    <Ionicons name="person" size={22} color="#374151" />
-                  </View>
-                )}
-                <View style={styles.rowBody}>
-                  <Text style={styles.name} numberOfLines={1}>
+          {/* ── Stats row ── */}
+          <View style={s.statsRow}>
+            <View style={[s.statCard, { backgroundColor: colors.navy }]}>
+              <Text style={s.statValueLight}>{items.length}</Text>
+              <Text style={s.statLabelLight}>Total</Text>
+            </View>
+            <View style={[s.statCard, { backgroundColor: "#DCFCE7", borderColor: "#BBF7D0" }]}>
+              <Text style={[s.statValue, { color: "#166534" }]}>{paidCount}</Text>
+              <Text style={[s.statLabel, { color: "#16A34A" }]}>Paid</Text>
+            </View>
+            <View style={[s.statCard, { backgroundColor: "#FEF3C7", borderColor: "#FDE68A" }]}>
+              <Text style={[s.statValue, { color: "#92400E" }]}>{pendingCount}</Text>
+              <Text style={[s.statLabel, { color: "#D97706" }]}>Pending</Text>
+            </View>
+          </View>
+
+          {/* ── Section label ── */}
+          <Text style={s.sectionLabel}>All tenants · {items.length}</Text>
+
+          {/* ── Tenant cards ── */}
+          <View style={s.list}>
+            {items.map((row) => (
+              <TouchableOpacity
+                key={row.applicationId}
+                style={s.card}
+                activeOpacity={0.75}
+                onPress={() =>
+                  router.push({
+                    pathname: "/(app)/tenant/[applicationId]",
+                    params: { applicationId: row.applicationId },
+                  } as Href)
+                }
+                accessibilityRole="button"
+                accessibilityLabel={`View ${row.legalNameAsOnId}`}
+              >
+                {/* Avatar */}
+                <View style={s.avatarWrap}>
+                  {row.imageUrl ? (
+                    <Image
+                      source={{ uri: row.imageUrl }}
+                      style={s.avatar}
+                      contentFit="cover"
+                      transition={150}
+                    />
+                  ) : (
+                    <View style={s.avatarFallback}>
+                      <Text style={s.avatarInitial}>
+                        {row.legalNameAsOnId.charAt(0).toUpperCase()}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+
+                {/* Info */}
+                <View style={s.cardBody}>
+                  <Text style={s.tenantName} numberOfLines={1}>
                     {row.legalNameAsOnId}
                   </Text>
-                  <Text style={styles.meta} numberOfLines={1}>
-                    {row.propertyName}
-                  </Text>
-                  <Text style={styles.metaMuted} numberOfLines={1}>
-                    {row.phone}
-                  </Text>
+                  <View style={s.metaRow}>
+                    <Ionicons name="business-outline" size={12} color={colors.muted} />
+                    <Text style={s.metaText} numberOfLines={1}>{row.propertyName}</Text>
+                  </View>
+                  <View style={s.metaRow}>
+                    <Ionicons name="call-outline" size={12} color={colors.muted} />
+                    <Text style={s.metaText} numberOfLines={1}>{row.phone}</Text>
+                  </View>
                   {row.moveInDate?.trim() ? (
-                    <Text style={styles.moveIn} numberOfLines={1}>
-                      Move-in: {row.moveInDate}
-                    </Text>
+                    <View style={s.metaRow}>
+                      <Ionicons name="calendar-outline" size={12} color={colors.muted} />
+                      <Text style={s.metaText} numberOfLines={1}>Move-in: {row.moveInDate}</Text>
+                    </View>
                   ) : null}
                 </View>
-                <View style={styles.pillWrap}>
+
+                {/* Right side */}
+                <View style={s.cardRight}>
                   <PaymentPill status={row.paymentStatus} />
+                  <Ionicons name="chevron-forward" size={16} color={colors.muted} style={{ marginTop: 8 }} />
                 </View>
-              </View>
-            </Pressable>
-          ))}
-          <View style={styles.listBottomSpacer} />
+              </TouchableOpacity>
+            ))}
+          </View>
         </ScrollView>
       )}
     </View>
   );
 }
 
-function PaymentPill({
-  status,
-}: {
-  status?: "paid" | "pending";
-}) {
+function PaymentPill({ status }: { status?: "paid" | "pending" }) {
   if (status === "paid") {
     return (
-      <View style={[styles.pill, styles.pillPaid]}>
-        <Text style={styles.pillTextPaid}>Paid</Text>
+      <View style={[s.pill, { backgroundColor: "#DCFCE7" }]}>
+        <View style={[s.pillDot, { backgroundColor: "#16A34A" }]} />
+        <Text style={[s.pillText, { color: "#166534" }]}>Paid</Text>
       </View>
     );
   }
   if (status === "pending") {
     return (
-      <View style={[styles.pill, styles.pillPending]}>
-        <Text style={styles.pillTextPending}>Pending</Text>
+      <View style={[s.pill, { backgroundColor: "#FEF3C7" }]}>
+        <View style={[s.pillDot, { backgroundColor: "#D97706" }]} />
+        <Text style={[s.pillText, { color: "#92400E" }]}>Pending</Text>
       </View>
     );
   }
   return (
-    <View style={[styles.pill, styles.pillNeutral]}>
-      <Text style={styles.pillTextNeutral}>—</Text>
+    <View style={[s.pill, { backgroundColor: colors.surfaceGray }]}>
+      <Text style={[s.pillText, { color: colors.muted }]}>—</Text>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  screen: {
+const s = StyleSheet.create({
+  root: {
     flex: 1,
     backgroundColor: colors.pageBg,
-    paddingHorizontal: 20,
   },
+
+  // Header
   header: {
-    marginBottom: 16,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    paddingHorizontal: H_PAD,
+    paddingBottom: 20,
   },
-  title: {
-    fontSize: 26,
-    fontWeight: "700",
-    color: colors.black,
-    marginBottom: 4,
+  headerTitle: {
+    fontSize: 28,
+    fontWeight: "800",
+    color: colors.navy,
+    letterSpacing: -0.5,
   },
-  subtitle: {
-    fontSize: 14,
+  headerSub: {
+    fontSize: 13,
+    fontWeight: "500",
     color: colors.muted,
-    lineHeight: 20,
+    marginTop: 2,
   },
-  scroll: {
-    flex: 1,
+  headerBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.cardBg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 4,
   },
-  scrollContent: {
-    flexGrow: 1,
-    paddingBottom: 24,
-  },
-  centered: {
+
+  // States
+  center: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 48,
+    paddingHorizontal: 32,
+    paddingBottom: 60,
   },
   loadingText: {
     marginTop: 12,
     fontSize: 14,
     color: colors.muted,
   },
-  emptyCard: {
-    backgroundColor: colors.white,
-    borderRadius: radii.card,
-    padding: 24,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: colors.border,
-    ...cardShadow,
-  },
   emptyIcon: {
-    marginBottom: 12,
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: colors.surfaceGray,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 16,
   },
   emptyTitle: {
-    fontSize: 17,
-    fontWeight: "600",
-    color: colors.black,
+    fontSize: 18,
+    fontWeight: "700",
+    color: colors.navy,
     marginBottom: 8,
     textAlign: "center",
   },
-  emptyBody: {
+  emptySub: {
     fontSize: 14,
     color: colors.muted,
     textAlign: "center",
-    lineHeight: 21,
+    lineHeight: 20,
   },
-  cardPressable: {
-    marginBottom: 12,
-    borderRadius: 16,
-  },
-  cardPressablePressed: {
-    opacity: 0.88,
-  },
-  cardInner: {
+
+  // Scroll
+  scroll: { flex: 1 },
+
+  // Stats
+  statsRow: {
     flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: colors.white,
-    borderRadius: 16,
+    gap: 10,
+    paddingHorizontal: H_PAD,
+    marginBottom: 22,
+  },
+  statCard: {
+    flex: 1,
     paddingVertical: 14,
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: colors.border,
+    alignItems: "center",
     ...cardShadow,
   },
-  avatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    marginRight: 12,
-    backgroundColor: colors.inputBg,
-    flexShrink: 0,
+  statValue: {
+    fontSize: 22,
+    fontWeight: "800",
+    color: colors.navy,
   },
-  avatarPlaceholder: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    marginRight: 12,
-    backgroundColor: colors.inputBg,
+  statValueLight: {
+    fontSize: 22,
+    fontWeight: "800",
+    color: colors.white,
+  },
+  statLabel: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: colors.muted,
+    marginTop: 2,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  statLabelLight: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "rgba(255,255,255,0.7)",
+    marginTop: 2,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+
+  // Section
+  sectionLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: colors.muted,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    marginHorizontal: H_PAD,
+    marginBottom: 10,
+  },
+
+  // List
+  list: {
+    paddingHorizontal: H_PAD,
+    gap: 10,
+  },
+
+  // Card
+  card: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.cardBg,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 14,
+    gap: 12,
+    ...cardShadow,
+  },
+
+  // Avatar
+  avatarWrap: {
+    flexShrink: 0,
+    width: 52,
+    height: 52,
+  },
+  avatar: {
+    width: 52,
+    height: 52,
+    borderRadius: radii.card,
+  },
+  avatarFallback: {
+    width: 52,
+    height: 52,
+    borderRadius: radii.card,
+    backgroundColor: colors.primary,
     alignItems: "center",
     justifyContent: "center",
-    flexShrink: 0,
   },
-  rowBody: {
+  avatarInitial: {
+    fontSize: 19,
+    fontWeight: "700",
+    color: colors.white,
+  },
+
+  // Card body
+  cardBody: {
     flex: 1,
     minWidth: 0,
-    justifyContent: "center",
+    gap: 3,
   },
-  name: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: colors.black,
+  tenantName: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: colors.navy,
+    marginBottom: 2,
   },
-  meta: {
-    fontSize: 13,
-    color: colors.muted,
-    marginTop: 2,
+  metaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
   },
-  metaMuted: {
-    fontSize: 13,
-    color: "#9CA3AF",
-    marginTop: 2,
-  },
-  moveIn: {
+  metaText: {
+    flex: 1,
     fontSize: 12,
-    color: colors.black,
-    marginTop: 4,
     fontWeight: "500",
-  },
-  pillWrap: {
-    flexShrink: 0,
-    marginLeft: 8,
-    justifyContent: "center",
-  },
-  pill: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    alignSelf: "flex-start",
-  },
-  pillPaid: {
-    backgroundColor: "#DCFCE7",
-  },
-  pillTextPaid: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#166534",
-  },
-  pillPending: {
-    backgroundColor: "#FEF3C7",
-  },
-  pillTextPending: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#92400E",
-  },
-  pillNeutral: {
-    backgroundColor: colors.inputBg,
-  },
-  pillTextNeutral: {
-    fontSize: 12,
-    fontWeight: "600",
     color: colors.muted,
   },
-  listBottomSpacer: {
-    height: 100,
+
+  // Card right
+  cardRight: {
+    flexShrink: 0,
+    alignItems: "flex-end",
+  },
+
+  // Pill
+  pill: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    gap: 5,
+  },
+  pillDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  pillText: {
+    fontSize: 12,
+    fontWeight: "700",
   },
 });

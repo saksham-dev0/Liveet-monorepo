@@ -35,6 +35,7 @@ type PaymentDetail = {
   status: "paid" | "pending";
   agreementDuration?: string;
   rentCycle?: string;
+  gracePeriodDays?: number;
   summary: {
     totalPaid: number;
     pendingAmount: number;
@@ -257,7 +258,7 @@ export default function PaymentDetailScreen() {
               { label: "Due date", value: formatDate(detail.periodStart) },
               {
                 label: "Overdue date",
-                value: formatDate(detail.periodStart + 5 * 24 * 60 * 60 * 1000),
+                value: formatDate(detail.periodStart + (detail.gracePeriodDays ?? 5) * 24 * 60 * 60 * 1000),
               },
             ]}
           />

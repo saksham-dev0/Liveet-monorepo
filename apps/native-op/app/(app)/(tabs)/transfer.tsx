@@ -7,6 +7,7 @@ import {
   Pressable,
   Image,
   ActivityIndicator,
+  Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -65,6 +66,7 @@ export default function PaymentsScreen() {
   const [payments, setPayments] = useState<PaymentItem[] | null>(null);
   const [totalReceived, setTotalReceived] = useState(0);
   const [tab, setTab] = useState<"paid" | "pending">("paid");
+  const [sendingReminder, setSendingReminder] = useState<string | null>(null);
 
   const refreshPayments = useCallback(async () => {
     try {
@@ -83,6 +85,25 @@ export default function PaymentsScreen() {
       setPayments([]);
     }
   }, [convex]);
+
+  const sendReminder = useCallback(
+    async (item: PaymentItem) => {
+      if (sendingReminder) return;
+      setSendingReminder(item.id);
+      try {
+        await (convex as any).mutation(
+          "notifications:sendRentReminder",
+          { applicationId: item.applicationId },
+        );
+        Alert.alert("Reminder sent", `A rent reminder has been sent to ${item.tenantName}.`);
+      } catch {
+        Alert.alert("Failed", "Could not send reminder. Please try again.");
+      } finally {
+        setSendingReminder(null);
+      }
+    },
+    [convex, sendingReminder],
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -194,6 +215,25 @@ export default function PaymentsScreen() {
                   {formatPeriod(item.periodStart, item.periodEnd)}
                 </Text>
               </View>
+
+              {/* Remind button (pending only) */}
+              {item.status === "pending" && (
+                <Pressable
+                  style={s.remindBtn}
+                  onPress={(e) => {
+                    e.stopPropagation?.();
+                    void sendReminder(item);
+                  }}
+                  hitSlop={8}
+                  disabled={sendingReminder === item.id}
+                >
+                  {sendingReminder === item.id ? (
+                    <ActivityIndicator size="small" color={colors.primary} />
+                  ) : (
+                    <Ionicons name="notifications-outline" size={18} color={colors.primary} />
+                  )}
+                </Pressable>
+              )}
 
               {/* Status badge */}
               <View
@@ -340,6 +380,14 @@ const s = StyleSheet.create({
   rowPeriod: {
     fontSize: 12,
     color: colors.muted,
+  },
+  remindBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "#EEF2FF",
+    alignItems: "center",
+    justifyContent: "center",
   },
   badge: {
     paddingHorizontal: 10,

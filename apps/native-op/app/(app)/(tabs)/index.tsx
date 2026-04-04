@@ -248,7 +248,6 @@ export default function TestScreen() {
 
   const openRemindModal = useCallback(async () => {
     setRemindModalVisible(true);
-    if (overdueTenants !== null) return; // already loaded
     try {
       const data = await (convex as any).query(
         "properties:getOverdueTenantsForReminder",
@@ -258,7 +257,7 @@ export default function TestScreen() {
     } catch {
       setOverdueTenants([]);
     }
-  }, [convex, overdueTenants]);
+  }, [convex]);
 
   const toggleMoreDropdown = useCallback(() => {
     const toValue = moreDropdownVisible ? 0 : 1;
@@ -269,13 +268,13 @@ export default function TestScreen() {
       tension: 60,
       friction: 10,
     }).start();
-    if (!moreDropdownVisible && yearlyTotal === null) {
+    if (!moreDropdownVisible) {
       (convex as any)
         .query("properties:getYearlyCollectionTotal", {})
         .then((d: any) => setYearlyTotal(d?.total ?? 0))
         .catch(() => setYearlyTotal(0));
     }
-  }, [convex, moreDropdownVisible, moreAnim, yearlyTotal]);
+  }, [convex, moreDropdownVisible, moreAnim]);
 
   const refreshMonthlyGrowth = useCallback(async () => {
     try {
@@ -324,6 +323,8 @@ export default function TestScreen() {
         setMonthlyChartData(null);
         setCollectionSummary(null);
         setMonthlyGrowth(null);
+        setOverdueTenants(null);
+        setYearlyTotal(null);
         // Refresh all dashboard data for the new active property
         void refreshListingStatus();
         void refreshDashboardStats();
