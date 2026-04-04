@@ -72,6 +72,10 @@ export default function ChatsTabScreen() {
 
   const showEmpty = !loading && (conversations ?? []).length === 0;
 
+  const handleNewMessagePress = useCallback(() => {
+    router.push("/(app)/new-message");
+  }, [router]);
+
   return (
     <View style={[s.root, { paddingTop: insets.top + 8 }]}>
 
@@ -83,6 +87,7 @@ export default function ChatsTabScreen() {
           activeOpacity={0.7}
           accessibilityRole="button"
           accessibilityLabel="New message"
+          onPress={handleNewMessagePress}
         >
           <Ionicons name="create-outline" size={20} color={colors.navy} />
         </TouchableOpacity>

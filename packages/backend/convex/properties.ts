@@ -998,7 +998,7 @@ export const getMonthlyRentChartData = query({
 
       for (const app of apps) {
         if (app.paymentStatus !== "paid" || !app.selectedRoomOptionId) continue;
-        const ts = app._creationTime;
+        const ts = app.paidAt ?? app._creationTime;
         if (ts < monthStart.getTime() || ts >= monthEnd.getTime()) continue;
         const weekIdx = getWeekIndex(ts);
         if (weekIdx === -1) continue;
@@ -1104,7 +1104,7 @@ export const getMonthlyGrowth = query({
 
       for (const app of apps) {
         if (app.paymentStatus !== "paid" || !app.selectedRoomOptionId) continue;
-        const ts = app._creationTime;
+        const ts = app.paidAt ?? app._creationTime;
         const inCur = ts >= curStart && ts < curEnd;
         const inPrev = ts >= prevStart && ts < prevEnd;
         if (!inCur && !inPrev) continue;
@@ -1645,7 +1645,7 @@ export const getYearlyCollectionTotal = query({
 
       for (const app of apps) {
         if (app.paymentStatus !== "paid" || !app.selectedRoomOptionId) continue;
-        const ts = app._creationTime;
+        const ts = app.paidAt ?? app._creationTime;
         if (ts >= yearStart && ts < yearEnd) {
           let roomOption = roomOptionCache.get(app.selectedRoomOptionId);
           if (roomOption === undefined) {
@@ -1759,7 +1759,7 @@ export const getDashboardCollectionSummary = query({
         const initialMonths = parseDurationMonths(app.onboardingAgreementDuration, "getDashboardCollectionSummary");
 
         // --- Received last 24h: initial move-in payment ---
-        if (app._creationTime >= windowStart) {
+        if ((app.paidAt ?? app._creationTime) >= windowStart) {
           receivedLast24h += monthlyRent * initialMonths + securityDeposit;
         }
 
