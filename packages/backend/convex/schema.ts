@@ -339,6 +339,7 @@ export default defineSchema({
       v.union(v.literal("Bank transfer"), v.literal("UPI"), v.literal("Cash")),
     ),
     paymentStatus: v.optional(v.union(v.literal("paid"), v.literal("pending"))),
+    paidAt: v.optional(v.number()),
     assignedAt: v.optional(v.number()),
     assignedRoomId: v.optional(v.id("rooms")),
     assignedRoomNumber: v.optional(v.string()),
