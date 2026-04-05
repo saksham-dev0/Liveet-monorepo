@@ -535,9 +535,14 @@ export const listOnboardedTenantsForManage = query({
       moveInDate: string | undefined;
       tenantUserId: Id<"users">;
       paymentStatus: "paid" | "pending" | undefined;
+      /** Dynamically computed: true if rent coverage has expired */
+      isRentDue: boolean;
+      rentDueAmount: number;
     };
 
     const collected: Collected[] = [];
+    const now = Date.now();
+    const roomOptionCache = new Map<Id<"roomOptions">, Doc<"roomOptions"> | null>();
 
     for (const p of properties) {
       const propertyName = p.name?.trim() || "Unnamed property";
@@ -550,6 +555,43 @@ export const listOnboardedTenantsForManage = query({
         if (!isMoveInKycComplete(app)) {
           continue;
         }
+
+        // Compute dynamic rent-due status for paid tenants
+        let isRentDue = false;
+        let rentDueAmount = 0;
+
+        if (app.paymentStatus === "paid" && app.selectedRoomOptionId) {
+          let roomOption = roomOptionCache.get(app.selectedRoomOptionId);
+          if (roomOption === undefined) {
+            roomOption = await ctx.db.get(app.selectedRoomOptionId);
+            roomOptionCache.set(app.selectedRoomOptionId, roomOption);
+          }
+
+          if (roomOption && roomOption.propertyId === p._id) {
+            const monthlyRent = roomOption.rentAmount ?? 0;
+            const coverageStart = app.assignedAt ?? app._creationTime;
+            const initialMonths = parseDurationMonths(app.onboardingAgreementDuration, "listOnboardedTenantsForManage");
+
+            // Add extend-stay months
+            const txs = await ctx.db
+              .query("rentTransactions")
+              .withIndex("by_application", (q) => q.eq("applicationId", app._id))
+              .take(200);
+            let totalMonths = initialMonths;
+            for (const tx of txs) {
+              if (tx.status === "paid") totalMonths += tx.months;
+            }
+
+            const coverageEnd = addMonths(coverageStart, totalMonths);
+            if (coverageEnd < now && monthlyRent > 0) {
+              isRentDue = true;
+              const overdueMs = now - coverageEnd;
+              const overdueMonths = Math.max(1, Math.ceil(overdueMs / (30.44 * 24 * 60 * 60 * 1000)));
+              rentDueAmount = monthlyRent * overdueMonths;
+            }
+          }
+        }
+
         collected.push({
           _creationTime: app._creationTime,
           applicationId: app._id,
@@ -560,6 +602,8 @@ export const listOnboardedTenantsForManage = query({
           moveInDate: app.moveInDate,
           tenantUserId: app.tenantUserId,
           paymentStatus: app.paymentStatus,
+          isRentDue,
+          rentDueAmount,
         });
       }
     }
@@ -575,6 +619,8 @@ export const listOnboardedTenantsForManage = query({
       phone: string;
       moveInDate: string | undefined;
       paymentStatus: "paid" | "pending" | undefined;
+      isRentDue: boolean;
+      rentDueAmount: number;
     }> = [];
 
     for (const row of collected.slice(0, limit)) {
@@ -588,6 +634,8 @@ export const listOnboardedTenantsForManage = query({
         phone: row.phone,
         moveInDate: row.moveInDate,
         paymentStatus: row.paymentStatus,
+        isRentDue: row.isRentDue,
+        rentDueAmount: row.rentDueAmount,
       });
     }
 
@@ -1303,6 +1351,41 @@ export const getAllPaymentsForOperator = query({
             periodEnd: txPeriodEnd,
           });
         }
+
+        // Generate a virtual "pending" item if tenant's coverage has expired
+        if (app.paymentStatus === "paid" && isMoveInKycComplete(app)) {
+          const now = Date.now();
+          if (coverageEnd < now) {
+            // How many full months overdue
+            const overdueMs = now - coverageEnd;
+            const overdueMonths = Math.max(
+              1,
+              Math.ceil(overdueMs / (30.44 * 24 * 60 * 60 * 1000)),
+            );
+            items.push({
+              id: `due_${app._id}`,
+              applicationId: app._id,
+              type: "extend",
+              tenantName: app.legalNameAsOnId ?? "Unknown",
+              tenantImageUrl: tenantUser?.imageUrl,
+              roomNumber: app.assignedRoomNumber,
+              propertyName: property.name ?? undefined,
+              amount: rentAmount * overdueMonths,
+              rentAmount,
+              months: overdueMonths,
+              securityDeposit: 0,
+              paymentMethod: undefined,
+              paidAt: coverageEnd, // sort key: when it became due
+              status: "pending",
+              description:
+                overdueMonths === 1
+                  ? "Rent due (1 month)"
+                  : `Rent due (${overdueMonths} months)`,
+              periodStart: coverageEnd,
+              periodEnd: addMonths(coverageEnd, overdueMonths),
+            });
+          }
+        }
       }
     }
 
@@ -1730,6 +1813,14 @@ export const getDashboardCollectionSummary = query({
 
     let pendingAmount = 0;
     let receivedLast24h = 0;
+    const tenantsWithDues: Array<{
+      applicationId: Id<"tenantMoveInApplications">;
+      tenantName: string;
+      imageUrl?: string;
+      roomNumber?: string;
+      dueAmount: number;
+      overdueMonths: number;
+    }> = [];
     const roomOptionCache = new Map<Id<"roomOptions">, Doc<"roomOptions"> | null>();
 
     for (const property of properties) {
@@ -1788,11 +1879,22 @@ export const getDashboardCollectionSummary = query({
         const coverageEndTs = addMonths(coverageStart, totalMonthsCovered);
         if (coverageEndTs < now) {
           pendingAmount += monthlyRent;
+          const overdueMs = now - coverageEndTs;
+          const overdueMonths = Math.max(1, Math.ceil(overdueMs / (30.44 * 24 * 60 * 60 * 1000)));
+          const tenant = await ctx.db.get(app.tenantUserId);
+          tenantsWithDues.push({
+            applicationId: app._id,
+            tenantName: app.legalNameAsOnId ?? tenant?.name ?? "Unknown",
+            imageUrl: tenant?.imageUrl,
+            roomNumber: app.assignedRoomNumber,
+            dueAmount: monthlyRent * overdueMonths,
+            overdueMonths,
+          });
         }
       }
     }
 
-    return { pendingAmount, receivedLast24h };
+    return { pendingAmount, receivedLast24h, tenantsWithDues };
   },
 });
 
@@ -2095,6 +2197,72 @@ export const getRoomAssignmentTasksForOperator = query({
         });
         if (collected.length >= limit * 2) break;
       }
+    }
+
+    // Pull rent-due reminder tasks for tenants whose coverage has expired.
+    const now = Date.now();
+    const roomOptionCacheTask = new Map<Id<"roomOptions">, Doc<"roomOptions"> | null>();
+
+    for (const property of properties) {
+      const apps = await ctx.db
+        .query("tenantMoveInApplications")
+        .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+        .take(300);
+
+      for (const app of apps) {
+        // Only check fully-onboarded paid tenants with assigned rooms
+        if (!app.assignedRoomId || app.paymentStatus !== "paid") continue;
+        if (!isMoveInKycComplete(app)) continue;
+        if (!app.selectedRoomOptionId) continue;
+
+        let roomOption = roomOptionCacheTask.get(app.selectedRoomOptionId);
+        if (roomOption === undefined) {
+          roomOption = await ctx.db.get(app.selectedRoomOptionId);
+          roomOptionCacheTask.set(app.selectedRoomOptionId, roomOption);
+        }
+        if (!roomOption || roomOption.propertyId !== property._id) continue;
+        const monthlyRent = roomOption.rentAmount;
+        if (typeof monthlyRent !== "number" || monthlyRent <= 0) continue;
+
+        const coverageStart = app.assignedAt ?? app._creationTime;
+        const initialMonths = parseDurationMonths(app.onboardingAgreementDuration, "getRoomAssignmentTasksForOperator");
+
+        const txs = await ctx.db
+          .query("rentTransactions")
+          .withIndex("by_application", (q) => q.eq("applicationId", app._id))
+          .take(200);
+        let totalMonths = initialMonths;
+        for (const tx of txs) {
+          if (tx.status === "paid") totalMonths += tx.months;
+        }
+
+        const coverageEnd = addMonths(coverageStart, totalMonths);
+        if (coverageEnd >= now) continue; // Still covered
+
+        const overdueMs = now - coverageEnd;
+        const overdueDays = Math.ceil(overdueMs / (24 * 60 * 60 * 1000));
+        const overdueMonths = Math.max(1, Math.ceil(overdueMs / (30.44 * 24 * 60 * 60 * 1000)));
+        const dueAmount = monthlyRent * overdueMonths;
+        const formattedAmount = dueAmount >= 1000
+          ? `₹${(dueAmount / 1000).toFixed(1)}k`
+          : `₹${dueAmount}`;
+
+        const tenantName = app.legalNameAsOnId?.trim() || "Tenant";
+        collected.push({
+          applicationId: app._id,
+          priority: overdueDays > 30 ? "High" as RoomTaskPriority : "Medium" as RoomTaskPriority,
+          description: `Send rent reminder — ${formattedAmount} due (${overdueMonths} month${overdueMonths > 1 ? "s" : ""})`,
+          tenantName,
+          dueLabel: overdueDays > 30
+            ? `Overdue ${overdueDays} days`
+            : `Due ${overdueDays} day${overdueDays !== 1 ? "s" : ""} ago`,
+          _dueTs: coverageEnd,
+          _creationTime: app._creationTime,
+        });
+
+        if (collected.length >= limit * 3) break;
+      }
+      if (collected.length >= limit * 3) break;
     }
 
     collected.sort((a, b) => {

@@ -53,8 +53,16 @@ export default function AuthScreen() {
       );
       if (status?.hasCompletedOnboarding) {
         router.replace("/(app)/(tabs)");
-      } else {
+      } else if (
+        status?.onboardingProfile ||
+        status?.businessProfile ||
+        status?.property
+      ) {
+        // User already started manual onboarding — go to hub
         router.replace("/(onboarding)" as any);
+      } else {
+        // Fresh user — show manual vs import choice
+        router.replace("/(onboarding)/import-method" as any);
       }
     } catch {
         router.replace("/(app)/(tabs)");

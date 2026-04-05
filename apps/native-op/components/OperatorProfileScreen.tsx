@@ -80,6 +80,7 @@ export function OperatorProfileScreen({ showBackButton = false }: Props) {
   const [editName, setEditName] = useState("");
   const [editBrand, setEditBrand] = useState("");
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -104,6 +105,51 @@ export function OperatorProfileScreen({ showBackButton = false }: Props) {
     setEditName(user?.name ?? "");
     setEditBrand(user?.brandName ?? "");
     setActiveSheet("edit");
+  };
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      "Delete Account",
+      "This will permanently delete your account and all associated data including properties, rooms, payment methods, notifications, and messages. This action cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete Account",
+          style: "destructive",
+          onPress: () => {
+            Alert.alert(
+              "Are you absolutely sure?",
+              `Type your account action will be permanent. All data for "${displayName}" will be erased.`,
+              [
+                { text: "Cancel", style: "cancel" },
+                {
+                  text: "Yes, Delete Everything",
+                  style: "destructive",
+                  onPress: async () => {
+                    setDeleting(true);
+                    try {
+                      await (convex as any).mutation(
+                        "users:deleteOperatorAccount",
+                        {},
+                      );
+                      await signOut();
+                      router.replace("/(auth)" as Href);
+                    } catch {
+                      Alert.alert(
+                        "Error",
+                        "Could not delete account. Please try again.",
+                      );
+                    } finally {
+                      setDeleting(false);
+                    }
+                  },
+                },
+              ],
+            );
+          },
+        },
+      ],
+    );
   };
 
   const saveProfile = async () => {
@@ -254,6 +300,22 @@ export function OperatorProfileScreen({ showBackButton = false }: Props) {
         >
           <Ionicons name="log-out-outline" size={20} color={colors.error} />
           <Text style={s.logoutText}>Log out</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={s.deleteAccountBtn}
+          activeOpacity={0.7}
+          onPress={handleDeleteAccount}
+          disabled={deleting}
+        >
+          {deleting ? (
+            <ActivityIndicator size="small" color={colors.muted} />
+          ) : (
+            <>
+              <Ionicons name="trash-outline" size={16} color={colors.muted} />
+              <Text style={s.deleteAccountText}>Delete account</Text>
+            </>
+          )}
         </TouchableOpacity>
 
         <View style={s.bottomSpacer} />
@@ -606,6 +668,20 @@ const s = StyleSheet.create({
     fontSize: 15,
     fontWeight: "600",
     color: colors.error,
+  },
+  deleteAccountBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 10,
+    marginTop: 2,
+    marginBottom: 4,
+  },
+  deleteAccountText: {
+    fontSize: 13,
+    fontWeight: "500",
+    color: colors.muted,
   },
   bottomSpacer: {
     height: 100,

@@ -27,6 +27,8 @@ type OnboardedTenantRow = {
   phone: string;
   moveInDate?: string;
   paymentStatus?: "paid" | "pending";
+  isRentDue?: boolean;
+  rentDueAmount?: number;
 };
 
 export default function ManageTabScreen() {
@@ -54,8 +56,9 @@ export default function ManageTabScreen() {
     }, [refresh]),
   );
 
-  const paidCount = (items ?? []).filter((i) => i.paymentStatus === "paid").length;
-  const pendingCount = (items ?? []).filter((i) => i.paymentStatus === "pending").length;
+  const rentDueCount = (items ?? []).filter((i) => i.isRentDue).length;
+  const paidCount = (items ?? []).filter((i) => !i.isRentDue && i.paymentStatus === "paid").length;
+  const pendingCount = (items ?? []).filter((i) => i.paymentStatus === "pending").length + rentDueCount;
 
   return (
     <View style={[s.root, { paddingTop: insets.top + 8 }]}>
@@ -109,10 +112,17 @@ export default function ManageTabScreen() {
               <Text style={[s.statValue, { color: "#166534" }]}>{paidCount}</Text>
               <Text style={[s.statLabel, { color: "#16A34A" }]}>Paid</Text>
             </View>
-            <View style={[s.statCard, { backgroundColor: "#FEF3C7", borderColor: "#FDE68A" }]}>
-              <Text style={[s.statValue, { color: "#92400E" }]}>{pendingCount}</Text>
-              <Text style={[s.statLabel, { color: "#D97706" }]}>Pending</Text>
-            </View>
+            {rentDueCount > 0 ? (
+              <View style={[s.statCard, { backgroundColor: "#FEE2E2", borderColor: "#FECACA" }]}>
+                <Text style={[s.statValue, { color: "#991B1B" }]}>{rentDueCount}</Text>
+                <Text style={[s.statLabel, { color: "#DC2626" }]}>Rent Due</Text>
+              </View>
+            ) : (
+              <View style={[s.statCard, { backgroundColor: "#FEF3C7", borderColor: "#FDE68A" }]}>
+                <Text style={[s.statValue, { color: "#92400E" }]}>{pendingCount}</Text>
+                <Text style={[s.statLabel, { color: "#D97706" }]}>Pending</Text>
+              </View>
+            )}
           </View>
 
           {/* ── Section label ── */}
@@ -175,7 +185,7 @@ export default function ManageTabScreen() {
 
                 {/* Right side */}
                 <View style={s.cardRight}>
-                  <PaymentPill status={row.paymentStatus} />
+                  <PaymentPill status={row.paymentStatus} isRentDue={row.isRentDue} rentDueAmount={row.rentDueAmount} />
                   <Ionicons name="chevron-forward" size={16} color={colors.muted} style={{ marginTop: 8 }} />
                 </View>
               </TouchableOpacity>
@@ -187,7 +197,23 @@ export default function ManageTabScreen() {
   );
 }
 
-function PaymentPill({ status }: { status?: "paid" | "pending" }) {
+function formatDueAmount(amount: number): string {
+  if (amount >= 100000) return `₹${(amount / 100000).toFixed(1)}L`;
+  if (amount >= 1000) return `₹${(amount / 1000).toFixed(1)}k`;
+  return `₹${amount}`;
+}
+
+function PaymentPill({ status, isRentDue, rentDueAmount }: { status?: "paid" | "pending"; isRentDue?: boolean; rentDueAmount?: number }) {
+  if (isRentDue) {
+    return (
+      <View style={[s.pill, { backgroundColor: "#FEE2E2" }]}>
+        <View style={[s.pillDot, { backgroundColor: "#DC2626" }]} />
+        <Text style={[s.pillText, { color: "#991B1B" }]}>
+          Due{rentDueAmount ? ` ${formatDueAmount(rentDueAmount)}` : ""}
+        </Text>
+      </View>
+    );
+  }
   if (status === "paid") {
     return (
       <View style={[s.pill, { backgroundColor: "#DCFCE7" }]}>
