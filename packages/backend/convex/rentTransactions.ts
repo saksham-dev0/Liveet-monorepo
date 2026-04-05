@@ -148,3 +148,101 @@ export const submitExtendStayPayment = mutation({
     return { transactionId: txId, amount, months, description };
   },
 });
+
+/**
+ * Operator sends an extend-stay payment link to a tenant.
+ * Creates a pending rentTransaction and notifies the tenant.
+ */
+export const sendExtendStayPaymentLink = mutation({
+  args: {
+    applicationId: v.id("tenantMoveInApplications"),
+    months: v.number(),
+  },
+  handler: async (ctx, args) => {
+    if (args.months < 1 || args.months > 60) {
+      throw new Error("Duration must be between 1 and 60 months.");
+    }
+
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) throw new Error("Unauthenticated");
+
+    const operator = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!operator) throw new Error("User not found");
+
+    const app = await ctx.db.get(args.applicationId);
+    if (!app) throw new Error("Application not found");
+
+    const property = await ctx.db.get(app.propertyId);
+    if (!property || property.userId !== operator._id) {
+      throw new Error("Not authorised");
+    }
+
+    // Resolve rent amount
+    let rentAmount: number | null = null;
+    if (app.selectedRoomOptionId) {
+      const roomOption = await ctx.db.get(app.selectedRoomOptionId);
+      rentAmount = roomOption?.rentAmount ?? null;
+    }
+    if (rentAmount == null && app.assignedRoomId) {
+      const room = await ctx.db.get(app.assignedRoomId);
+      if (room?.roomOptionId) {
+        const roomOption = await ctx.db.get(room.roomOptionId);
+        rentAmount = roomOption?.rentAmount ?? null;
+      }
+    }
+    if (!rentAmount) {
+      throw new Error("Could not determine rent amount for this tenant.");
+    }
+
+    const amount = rentAmount * args.months;
+    const type: "monthly" | "quarterly" | "renewal" =
+      args.months === 1
+        ? "monthly"
+        : args.months === 3
+          ? "quarterly"
+          : "renewal";
+    const description =
+      args.months === 1
+        ? "Monthly rent payment"
+        : `Extend stay payment (${args.months} months)`;
+
+    // Create a pending transaction
+    const txId = await ctx.db.insert("rentTransactions", {
+      tenantUserId: app.tenantUserId,
+      propertyId: app.propertyId,
+      applicationId: args.applicationId,
+      type,
+      months: args.months,
+      amount,
+      status: "pending",
+      description,
+    });
+
+    // Update agreement duration on the application
+    await ctx.db.patch(args.applicationId, {
+      onboardingAgreementDuration: `${args.months} month${args.months > 1 ? "s" : ""}`,
+    });
+
+    // Notify the tenant
+    const propertyName = property.name ?? "your property";
+    const roomInfo = app.assignedRoomNumber
+      ? ` (Room ${app.assignedRoomNumber})`
+      : "";
+
+    await ctx.db.insert("notifications", {
+      tenantUserId: app.tenantUserId,
+      type: "extend_stay_payment",
+      title: "Extend Stay — Payment Required",
+      body: `Your stay at ${propertyName}${roomInfo} has been extended by ${args.months} month${args.months > 1 ? "s" : ""}. Amount due: ₹${amount.toLocaleString("en-IN")}. Please complete the payment to confirm.`,
+      read: false,
+      refId: txId,
+    });
+
+    return { transactionId: txId, amount, months: args.months };
+  },
+});
