@@ -480,7 +480,7 @@ export function OperatorProfileScreen({ showBackButton = false }: Props) {
           <InfoRow icon="call-outline" label="Phone support" value="+91 98765 43210" />
           <InfoRow icon="time-outline" label="Support hours" value="Mon – Fri, 10 AM – 6 PM IST" />
           <View style={s.helpDivider} />
-          <InfoRow icon="document-text-outline" label="Privacy Policy" value="liveet.in/privacy" />
+          <InfoRow icon="document-text-outline" label="Privacy Policy" value="View" onPress={() => router.push("/(app)/privacy-policy" as Href)} />
           <InfoRow icon="clipboard-outline" label="Terms of Service" value="liveet.in/terms" />
           <InfoRow icon="information-circle-outline" label="App version" value="1.0.0" />
         </ScrollView>
@@ -495,13 +495,30 @@ function InfoRow({
   icon,
   label,
   value,
+  onPress,
 }: {
   icon: React.ComponentProps<typeof Ionicons>["name"];
   label: string;
   value: string;
+  onPress?: () => void;
 }) {
+  const Wrapper = onPress ? TouchableOpacity : View;
   return (
-    <View style={s.infoRow}>
+    <Wrapper
+      style={s.infoRow}
+      {...(onPress
+        ? {
+            onPress,
+            activeOpacity: 0.6,
+            accessibilityRole: "button" as const,
+            accessibilityLabel: `${label}: ${value}`,
+            accessibilityHint: `Opens ${label}`,
+          }
+        : {
+            accessible: true,
+            accessibilityLabel: `${label}: ${value}`,
+          })}
+    >
       <View style={s.infoIconWrap}>
         <Ionicons name={icon} size={18} color={colors.muted} />
       </View>
@@ -509,7 +526,10 @@ function InfoRow({
         <Text style={s.infoLabel}>{label}</Text>
         <Text style={s.infoValue}>{value}</Text>
       </View>
-    </View>
+      {onPress && (
+        <Ionicons name="chevron-forward" size={16} color={colors.muted} />
+      )}
+    </Wrapper>
   );
 }
 

@@ -357,6 +357,7 @@ export const getDashboardPropertyStats = query({
         .withIndex("by_property", (q) => q.eq("propertyId", p._id))
         .take(500);
       for (const app of moveInApps) {
+        if (app.moveOutDate) continue;
         if (isMoveInKycComplete(app)) {
           occupantsWithKyc.add(app.tenantUserId);
         }
@@ -553,6 +554,9 @@ export const listOnboardedTenantsForManage = query({
 
       for (const app of apps) {
         if (!isMoveInKycComplete(app)) {
+          continue;
+        }
+        if (app.moveOutDate) {
           continue;
         }
 
@@ -752,10 +756,24 @@ export const getTenantManageDetails = query({
       return { notFound: true as const };
     }
 
+    if (app.moveOutDate) {
+      return { notFound: true as const };
+    }
+
     const tenantUser = await ctx.db.get(app.tenantUserId);
     const roomOption = app.selectedRoomOptionId
       ? await ctx.db.get(app.selectedRoomOptionId)
       : null;
+
+    // Resolve rent amount: prefer selected room option, fall back to assigned room's option
+    let rentAmount: number | null = roomOption?.rentAmount ?? null;
+    if (rentAmount == null && app.assignedRoomId) {
+      const assignedRoom = await ctx.db.get(app.assignedRoomId);
+      if (assignedRoom?.roomOptionId) {
+        const assignedRoomOption = await ctx.db.get(assignedRoom.roomOptionId);
+        rentAmount = assignedRoomOption?.rentAmount ?? null;
+      }
+    }
 
     const agreement = await ctx.db
       .query("propertyAgreement")
@@ -819,6 +837,11 @@ export const getTenantManageDetails = query({
       moveInDate: app.moveInDate,
       paymentStatus: app.paymentStatus,
       paymentMethod: app.paymentMethod,
+      assignedRoomId: app.assignedRoomId,
+      assignedRoomNumber: app.assignedRoomNumber,
+      selectedRoomOptionId: app.selectedRoomOptionId,
+      rentAmount: rentAmount ?? undefined,
+      onboardingAgreementDuration: app.onboardingAgreementDuration,
       metaLine,
       agreementDuration: agreement?.agreementDuration,
       agreementLockIn: agreement?.lockInPeriod,
@@ -831,6 +854,273 @@ export const getTenantManageDetails = query({
         steps: steps.map((s) => ({ key: s.key, label: s.label, done: s.done })),
       },
     };
+  },
+});
+
+/** Available rooms for shifting a tenant — same category, excluding occupied rooms. */
+export const getAvailableRoomsForShift = query({
+  args: { applicationId: v.id("tenantMoveInApplications") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) return [];
+
+    const operator = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!operator) return [];
+
+    const app = await ctx.db.get(args.applicationId);
+    if (!app) return [];
+
+    const property = await ctx.db.get(app.propertyId);
+    if (!property || property.userId !== operator._id) return [];
+
+    // ── Step 1: resolve the tenant's category ──────────────────────────────
+    let tenantCategory: string | null = null;
+
+    if (app.selectedRoomOptionId) {
+      const ro = await ctx.db.get(app.selectedRoomOptionId);
+      tenantCategory = ro?.category ?? null;
+    }
+    // fallback: category stored directly on the assigned room
+    if (!tenantCategory && app.assignedRoomId) {
+      const assignedRoom = await ctx.db.get(app.assignedRoomId);
+      if (assignedRoom?.category) {
+        tenantCategory = assignedRoom.category;
+      } else if (assignedRoom?.roomOptionId) {
+        const ro = await ctx.db.get(assignedRoom.roomOptionId);
+        tenantCategory = ro?.category ?? null;
+      }
+    }
+
+    // ── Step 2: collect all roomOptionIds for that category in this property ─
+    // Using the by_property_and_category index so we hit every matching option.
+    const matchingRoomOptionIds = new Set<string>();
+    const roomOptionRentMap = new Map<string, number | null>(); // roomOptionId → rent
+
+    if (tenantCategory) {
+      const matchingOptions = await ctx.db
+        .query("roomOptions")
+        .withIndex("by_property_and_category", (q) =>
+          q.eq("propertyId", app.propertyId).eq("category", tenantCategory as string),
+        )
+        .take(50);
+      for (const ro of matchingOptions) {
+        matchingRoomOptionIds.add(ro._id as string);
+        roomOptionRentMap.set(ro._id as string, ro.rentAmount ?? null);
+      }
+    }
+
+    // ── Step 3: get all rooms, filter to same category ─────────────────────
+    const allRooms = await ctx.db
+      .query("rooms")
+      .withIndex("by_property", (q) => q.eq("propertyId", app.propertyId))
+      .take(500);
+
+    let candidateRooms = tenantCategory
+      ? allRooms.filter((r) => {
+          // match via roomOptionId → category (most reliable)
+          if (r.roomOptionId && matchingRoomOptionIds.has(r.roomOptionId as string)) return true;
+          // match via category field directly on the room
+          if (r.category && r.category === tenantCategory) return true;
+          return false;
+        })
+      : allRooms; // no category info → show everything
+
+    // ── Step 4: remove occupied / current room ─────────────────────────────
+    const tenantApps = await ctx.db
+      .query("tenantMoveInApplications")
+      .withIndex("by_property", (q) => q.eq("propertyId", app.propertyId))
+      .take(500);
+
+    const occupiedRoomIds = new Set<string>();
+    for (const a of tenantApps) {
+      if (a._id === args.applicationId) continue;
+      if (a.assignedRoomId && !a.moveOutDate) {
+        occupiedRoomIds.add(a.assignedRoomId as string);
+      }
+    }
+
+    candidateRooms = candidateRooms
+      .filter((r) => !occupiedRoomIds.has(r._id as string))
+      .filter((r) => r._id !== app.assignedRoomId);
+
+    // ── Step 5: enrich with rent and return ────────────────────────────────
+    const result = [];
+    for (const r of candidateRooms) {
+      let rentAmount: number | null = null;
+      let resolvedOptionId: string | null = null;
+
+      if (r.roomOptionId && roomOptionRentMap.has(r.roomOptionId as string)) {
+        rentAmount = roomOptionRentMap.get(r.roomOptionId as string) ?? null;
+        resolvedOptionId = r.roomOptionId as string;
+      } else if (r.roomOptionId) {
+        // room belongs to a different option (shouldn't happen often) — fetch it
+        const ro = await ctx.db.get(r.roomOptionId);
+        rentAmount = ro?.rentAmount ?? null;
+        resolvedOptionId = r.roomOptionId as string;
+      } else if (matchingRoomOptionIds.size > 0) {
+        // room has no roomOptionId — use the first matching category option's rent
+        const firstOptionId = [...matchingRoomOptionIds][0]!;
+        rentAmount = roomOptionRentMap.get(firstOptionId) ?? null;
+        resolvedOptionId = firstOptionId;
+      }
+
+      result.push({
+        roomId: r._id,
+        roomNumber: r.roomNumber,
+        displayName: r.displayName ?? null,
+        category: r.category ?? tenantCategory,
+        roomOptionId: resolvedOptionId,
+        rentAmount,
+      });
+    }
+    return result;
+  },
+});
+
+/** Operator-initiated room shift for a tenant. */
+export const operatorShiftTenant = mutation({
+  args: {
+    applicationId: v.id("tenantMoveInApplications"),
+    newRoomId: v.id("rooms"),
+    reason: v.string(),
+    newRentAmount: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) throw new Error("Unauthenticated");
+
+    const operator = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!operator) throw new Error("User not found");
+
+    const app = await ctx.db.get(args.applicationId);
+    if (!app) throw new Error("Application not found");
+
+    const property = await ctx.db.get(app.propertyId);
+    if (!property || property.userId !== operator._id) {
+      throw new Error("Not authorised");
+    }
+
+    const newRoom = await ctx.db.get(args.newRoomId);
+    if (!newRoom || newRoom.propertyId !== app.propertyId) {
+      throw new Error("Room not found in this property");
+    }
+
+    // Verify room is not occupied by another tenant
+    const otherApps = await ctx.db
+      .query("tenantMoveInApplications")
+      .withIndex("by_property", (q) => q.eq("propertyId", app.propertyId))
+      .take(500);
+    for (const a of otherApps) {
+      if (a._id === args.applicationId) continue;
+      if (a.assignedRoomId === args.newRoomId && !a.moveOutDate) {
+        throw new Error(`Room ${newRoom.roomNumber} is already occupied.`);
+      }
+    }
+
+    const oldRoomNumber = app.assignedRoomNumber ?? "unknown";
+
+    // Update tenant's room assignment
+    const resolvedRoomOptionId = newRoom.roomOptionId ?? app.selectedRoomOptionId;
+    await ctx.db.patch(args.applicationId, {
+      assignedRoomId: args.newRoomId,
+      assignedRoomNumber: newRoom.roomNumber,
+      selectedRoomOptionId: resolvedRoomOptionId,
+      assignedAt: Date.now(),
+    });
+
+    // If operator set a new rent, update the room option
+    if (
+      typeof args.newRentAmount === "number" &&
+      args.newRentAmount > 0 &&
+      resolvedRoomOptionId
+    ) {
+      await ctx.db.patch(resolvedRoomOptionId, { rentAmount: args.newRentAmount });
+    }
+
+    // Create a shift request record for audit trail
+    await ctx.db.insert("shiftRequests", {
+      tenantUserId: app.tenantUserId,
+      propertyId: app.propertyId,
+      applicationId: app._id,
+      currentRoomNumber: oldRoomNumber,
+      reason: args.reason.trim() || "Operator-initiated room change",
+      status: "approved",
+    });
+
+    // Notify the tenant
+    await ctx.db.insert("notifications", {
+      tenantUserId: app.tenantUserId,
+      type: "shift_request_approved",
+      title: "Room changed",
+      body: `Your room has been changed from ${oldRoomNumber} to ${newRoom.roomNumber}. Reason: ${args.reason.trim() || "Room change by property manager."}`,
+      read: false,
+      refId: app._id,
+    });
+
+    return { newRoomNumber: newRoom.roomNumber };
+  },
+});
+
+/** Operator removes a tenant by setting moveOutDate to today. Records are preserved for audit. */
+export const operatorRemoveTenant = mutation({
+  args: { applicationId: v.id("tenantMoveInApplications") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) throw new Error("Unauthenticated");
+
+    const operator = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!operator) throw new Error("User not found");
+
+    const app = await ctx.db.get(args.applicationId);
+    if (!app) throw new Error("Application not found");
+
+    const property = await ctx.db.get(app.propertyId);
+    if (!property || property.userId !== operator._id) {
+      throw new Error("Not authorised");
+    }
+
+    const today = new Date().toLocaleDateString("en-IN", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    });
+
+    await ctx.db.patch(args.applicationId, {
+      moveOutDate: today,
+      assignedRoomId: undefined,
+      assignedRoomNumber: undefined,
+    });
+
+    // Increment vacantUnits so the dashboard reflects the freed room immediately
+    const currentVacant = property.vacantUnits ?? 0;
+    const totalUnits = property.totalUnits ?? 0;
+    await ctx.db.patch(property._id, {
+      vacantUnits: Math.min(totalUnits, currentVacant + 1),
+    });
+
+    await ctx.db.insert("notifications", {
+      tenantUserId: app.tenantUserId,
+      type: "move_out_approved",
+      title: "Tenancy ended",
+      body: `Your tenancy at ${property.name ?? "the property"} has been ended by the property manager. Move-out date: ${today}.`,
+      read: false,
+      refId: args.applicationId,
+    });
   },
 });
 
@@ -1620,6 +1910,7 @@ export const getOverdueTenantsForReminder = query({
         .take(500);
 
       for (const app of apps) {
+        if (app.moveOutDate) continue;
         if (app.paymentStatus !== "paid" || !app.selectedRoomOptionId) continue;
         if (!isMoveInKycComplete(app)) continue;
 
@@ -1830,6 +2121,7 @@ export const getDashboardCollectionSummary = query({
         .take(500);
 
       for (const app of apps) {
+        if (app.moveOutDate) continue;
         // Only consider active, fully-paid tenants with a room option
         if (app.paymentStatus !== "paid" || !app.selectedRoomOptionId) continue;
         if (!isMoveInKycComplete(app)) continue;
@@ -1945,6 +2237,7 @@ export const syncVacantUnitsForDashboard = mutation({
 
       const occupiedTenantIds = new Set<Id<"users">>();
       for (const app of apps) {
+        if (app.moveOutDate) continue;
         if (isMoveInKycComplete(app)) {
           occupiedTenantIds.add(app.tenantUserId);
         }

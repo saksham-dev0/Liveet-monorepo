@@ -115,6 +115,10 @@ export default function AppStackLayout() {
         name="all-transactions"
         options={{ gestureEnabled: true, fullScreenGestureEnabled: true }}
       />
+      <Stack.Screen
+        name="privacy-policy"
+        options={{ gestureEnabled: true, fullScreenGestureEnabled: true }}
+      />
     </Stack>
   );
 }

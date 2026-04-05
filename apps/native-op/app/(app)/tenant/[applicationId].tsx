@@ -10,6 +10,9 @@ import {
   Linking,
   Platform,
   Alert,
+  Modal,
+  TextInput,
+  KeyboardAvoidingView,
 } from "react-native";
 import { useLocalSearchParams, useRouter, type Href } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -22,8 +25,19 @@ import {
   cardShadow,
 } from "../../../constants/theme";
 
+type AvailableRoom = {
+  roomId: string;
+  roomNumber: string;
+  displayName?: string;
+  category?: string;
+  roomOptionId?: string | null;
+  rentAmount?: number | null;
+};
+
 type ManagePayload = {
   notFound: false;
+  applicationId: string;
+  propertyId: string;
   propertyName: string;
   legalNameAsOnId: string;
   tenantImageUrl?: string;
@@ -34,6 +48,9 @@ type ManagePayload = {
   paymentMethod?: string;
   assignedRoomId?: string;
   assignedRoomNumber?: string;
+  selectedRoomOptionId?: string;
+  rentAmount?: number;
+  onboardingAgreementDuration?: string;
   metaLine: string;
   agreementDuration?: string;
   agreementLockIn?: string;
@@ -53,6 +70,8 @@ function digitsForWhatsApp(phone: string): string {
   return d;
 }
 
+const DURATION_OPTIONS = [1, 3, 6, 9, 12] as const;
+
 export default function TenantManageScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -65,6 +84,20 @@ export default function TenantManageScreen() {
   const [notFound, setNotFound] = useState(false);
   const [loading, setLoading] = useState(true);
   const [checklistExpanded, setChecklistExpanded] = useState(false);
+
+  // Shift tenant modal state
+  const [shiftModalVisible, setShiftModalVisible] = useState(false);
+  const [availableRooms, setAvailableRooms] = useState<AvailableRoom[]>([]);
+  const [loadingRooms, setLoadingRooms] = useState(false);
+  const [selectedRoom, setSelectedRoom] = useState<AvailableRoom | null>(null);
+  const [shiftReason, setShiftReason] = useState("");
+  const [shiftRentInput, setShiftRentInput] = useState("");
+  const [shifting, setShifting] = useState(false);
+
+  // Extend stay modal state
+  const [extendModalVisible, setExtendModalVisible] = useState(false);
+  const [extendMonths, setExtendMonths] = useState(3);
+  const [sendingLink, setSendingLink] = useState(false);
 
   const load = useCallback(async () => {
     if (!applicationId || typeof applicationId !== "string") {
@@ -109,6 +142,117 @@ export default function TenantManageScreen() {
     if (!data?.phone) return;
     const cleaned = data.phone.replace(/[^\d+]/g, "");
     void Linking.openURL(`tel:${cleaned || data.phone}`);
+  };
+
+  const openShiftModal = async () => {
+    if (!data?.applicationId) return;
+    setShiftModalVisible(true);
+    setSelectedRoom(null);
+    setShiftReason("");
+    setShiftRentInput("");
+    setLoadingRooms(true);
+    try {
+      const rooms = await (convex as any).query(
+        "properties:getAvailableRoomsForShift",
+        { applicationId: data.applicationId },
+      );
+      setAvailableRooms(rooms ?? []);
+    } catch {
+      setAvailableRooms([]);
+    } finally {
+      setLoadingRooms(false);
+    }
+  };
+
+  const confirmShift = async () => {
+    if (!selectedRoom || !data?.applicationId) return;
+    if (!shiftReason.trim()) {
+      Alert.alert("Reason required", "Please provide a reason for the room change.");
+      return;
+    }
+    const parsedRent = shiftRentInput.trim() ? parseFloat(shiftRentInput.trim()) : null;
+    if (shiftRentInput.trim() && (isNaN(parsedRent!) || parsedRent! <= 0)) {
+      Alert.alert("Invalid rent", "Please enter a valid rent amount.");
+      return;
+    }
+    setShifting(true);
+    try {
+      await (convex as any).mutation("properties:operatorShiftTenant", {
+        applicationId: data.applicationId,
+        newRoomId: selectedRoom.roomId,
+        reason: shiftReason.trim(),
+        ...(parsedRent ? { newRentAmount: parsedRent } : {}),
+      });
+      setShiftModalVisible(false);
+      Alert.alert(
+        "Room changed",
+        `${data.legalNameAsOnId} has been moved to room ${selectedRoom.roomNumber}.`,
+      );
+      void load(); // refresh data
+    } catch (err: any) {
+      Alert.alert("Error", err?.message ?? "Failed to shift tenant.");
+    } finally {
+      setShifting(false);
+    }
+  };
+
+  const openExtendModal = () => {
+    if (!data?.rentAmount) {
+      Alert.alert(
+        "Rent not set",
+        "No rent amount is linked to this tenant's room option. Please assign a room type with rent first.",
+      );
+      return;
+    }
+    setExtendMonths(3);
+    setExtendModalVisible(true);
+  };
+
+  const confirmExtendStay = async () => {
+    if (!data?.applicationId || !data.rentAmount) return;
+    setSendingLink(true);
+    try {
+      const res = await (convex as any).mutation(
+        "rentTransactions:sendExtendStayPaymentLink",
+        { applicationId: data.applicationId, months: extendMonths },
+      );
+      setExtendModalVisible(false);
+      Alert.alert(
+        "Payment link sent",
+        `A payment of ₹${(res.amount as number).toLocaleString("en-IN")} for ${res.months} month${res.months > 1 ? "s" : ""} has been sent to ${data.legalNameAsOnId}.`,
+      );
+      void load();
+    } catch (err: any) {
+      Alert.alert("Error", err?.message ?? "Failed to send payment link.");
+    } finally {
+      setSendingLink(false);
+    }
+  };
+
+  const handleRemoveTenant = () => {
+    if (!data?.applicationId) return;
+    Alert.alert(
+      "Remove tenant?",
+      `This will end ${data.legalNameAsOnId}'s tenancy and notify them. The records will be preserved for your reference.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await (convex as any).mutation(
+                "properties:operatorRemoveTenant",
+                { applicationId: data.applicationId },
+              );
+              router.back();
+            } catch (err: any) {
+              Alert.alert("Error", err?.message ?? "Failed to remove tenant.");
+            }
+          },
+        },
+      ],
+    );
   };
 
   if (loading) {
@@ -276,9 +420,13 @@ export default function TenantManageScreen() {
           icon="business-outline"
           iconBg={colors.inputBg}
           title="Shift tenant"
-          subtitle="Change room or property."
+          subtitle={
+            data.assignedRoomNumber
+              ? `Current room: ${data.assignedRoomNumber}`
+              : "Change room or property."
+          }
           right={
-            <Pressable style={styles.outlineBtnSm}>
+            <Pressable style={styles.outlineBtnSm} onPress={openShiftModal}>
               <Text style={styles.outlineBtnSmText}>Change</Text>
             </Pressable>
           }
@@ -289,14 +437,16 @@ export default function TenantManageScreen() {
           iconBg={colors.inputBg}
           title="Agreement"
           subtitle={
-            data.agreementDuration
-              ? `Duration: ${data.agreementDuration}`
-              : data.agreementLockIn
-                ? `Lock-in: ${data.agreementLockIn}`
-                : "Agreement on file"
+            data.onboardingAgreementDuration
+              ? `Duration: ${data.onboardingAgreementDuration}`
+              : data.agreementDuration
+                ? `Duration: ${data.agreementDuration}`
+                : data.agreementLockIn
+                  ? `Lock-in: ${data.agreementLockIn}`
+                  : "Agreement on file"
           }
           right={
-            <Pressable style={styles.outlineBtnSm}>
+            <Pressable style={styles.outlineBtnSm} onPress={openExtendModal}>
               <Text style={styles.outlineBtnSmText}>Extend stay</Text>
             </Pressable>
           }
@@ -315,7 +465,7 @@ export default function TenantManageScreen() {
               </Text>
             </View>
           </View>
-          <Pressable style={styles.removeBtn}>
+          <Pressable style={styles.removeBtn} onPress={handleRemoveTenant}>
             <Text style={styles.removeBtnText}>Remove tenant</Text>
           </Pressable>
         </View>
@@ -430,6 +580,255 @@ export default function TenantManageScreen() {
           </View>
         </View>
       </ScrollView>
+
+      <Modal
+        visible={shiftModalVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => !shifting && setShiftModalVisible(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.modalOverlay}
+        >
+          <Pressable
+            style={styles.modalBackdrop}
+            onPress={() => !shifting && setShiftModalVisible(false)}
+          />
+          <View
+            style={[
+              styles.modalSheet,
+              { paddingBottom: Math.max(insets.bottom, 20) },
+            ]}
+          >
+            <View style={styles.modalHandle} />
+            <Text style={styles.modalTitle}>Shift tenant</Text>
+            <Text style={styles.modalSubtitle}>
+              {data.assignedRoomNumber
+                ? `Current room: ${data.assignedRoomNumber}`
+                : "Select a new room"}
+            </Text>
+
+            {loadingRooms ? (
+              <ActivityIndicator
+                size="small"
+                color={colors.primary}
+                style={{ marginVertical: 24 }}
+              />
+            ) : availableRooms.length === 0 ? (
+              <View style={styles.emptyRooms}>
+                <Ionicons name="bed-outline" size={28} color={colors.muted} />
+                <Text style={styles.emptyRoomsText}>
+                  No available rooms of the same type.
+                </Text>
+              </View>
+            ) : (
+              <>
+                <Text style={styles.modalSectionLabel}>
+                  Available rooms ({availableRooms.length})
+                </Text>
+                <ScrollView
+                  style={styles.roomList}
+                  showsVerticalScrollIndicator={false}
+                  nestedScrollEnabled
+                >
+                  {availableRooms.map((room) => {
+                    const isSelected = selectedRoom?.roomId === room.roomId;
+                    return (
+                      <Pressable
+                        key={room.roomId}
+                        style={[
+                          styles.roomItem,
+                          isSelected && styles.roomItemSelected,
+                        ]}
+                        onPress={() => {
+                          setSelectedRoom(room);
+                          setShiftRentInput(
+                            room.rentAmount != null
+                              ? String(room.rentAmount)
+                              : "",
+                          );
+                        }}
+                      >
+                        <Ionicons
+                          name={isSelected ? "radio-button-on" : "radio-button-off"}
+                          size={22}
+                          color={isSelected ? colors.primary : colors.muted}
+                        />
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.roomItemTitle}>
+                            Room {room.roomNumber}
+                          </Text>
+                          <Text style={styles.roomItemSub}>
+                            {[room.category, room.rentAmount != null ? `₹${room.rentAmount.toLocaleString("en-IN")}/mo` : "Rent not set"]
+                              .filter(Boolean)
+                              .join("  ·  ")}
+                          </Text>
+                        </View>
+                        <View style={styles.roomBadgeEmpty}>
+                          <Text style={styles.roomBadgeEmptyText}>Empty</Text>
+                        </View>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+
+                {selectedRoom ? (
+                  <>
+                    <Text style={styles.modalSectionLabel}>
+                      Set rent for this room
+                    </Text>
+                    <View style={styles.rentInputRow}>
+                      <Text style={styles.rentInputPrefix}>₹</Text>
+                      <TextInput
+                        style={styles.rentInput}
+                        placeholder={
+                          selectedRoom.rentAmount != null
+                            ? String(selectedRoom.rentAmount)
+                            : "Enter amount"
+                        }
+                        placeholderTextColor={colors.muted}
+                        value={shiftRentInput}
+                        onChangeText={setShiftRentInput}
+                        keyboardType="numeric"
+                      />
+                      <Text style={styles.rentInputSuffix}>/month</Text>
+                    </View>
+                  </>
+                ) : null}
+
+                <Text style={styles.modalSectionLabel}>
+                  Reason for change
+                </Text>
+                <TextInput
+                  style={styles.reasonInput}
+                  placeholder="e.g. Maintenance, tenant request…"
+                  placeholderTextColor={colors.muted}
+                  value={shiftReason}
+                  onChangeText={setShiftReason}
+                  multiline
+                  numberOfLines={3}
+                  textAlignVertical="top"
+                />
+
+                <Pressable
+                  style={[
+                    styles.confirmBtn,
+                    (!selectedRoom || shifting) && styles.confirmBtnDisabled,
+                  ]}
+                  onPress={confirmShift}
+                  disabled={!selectedRoom || shifting}
+                >
+                  {shifting ? (
+                    <ActivityIndicator size="small" color={colors.white} />
+                  ) : (
+                    <Text style={styles.confirmBtnText}>
+                      Confirm room change
+                    </Text>
+                  )}
+                </Pressable>
+              </>
+            )}
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal
+        visible={extendModalVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => !sendingLink && setExtendModalVisible(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.modalOverlay}
+        >
+          <Pressable
+            style={styles.modalBackdrop}
+            onPress={() => !sendingLink && setExtendModalVisible(false)}
+          />
+          <View
+            style={[
+              styles.modalSheet,
+              { paddingBottom: Math.max(insets.bottom, 20) },
+            ]}
+          >
+            <View style={styles.modalHandle} />
+            <Text style={styles.modalTitle}>Extend stay</Text>
+            <Text style={styles.modalSubtitle}>
+              Send a payment link to {data.legalNameAsOnId} for the extended
+              duration.
+            </Text>
+
+            <Text style={styles.modalSectionLabel}>
+              Extension duration (months)
+            </Text>
+            <View style={styles.durationRow}>
+              {DURATION_OPTIONS.map((m) => {
+                const active = extendMonths === m;
+                return (
+                  <Pressable
+                    key={m}
+                    style={[
+                      styles.durationChip,
+                      active && styles.durationChipActive,
+                    ]}
+                    onPress={() => setExtendMonths(m)}
+                  >
+                    <Text
+                      style={[
+                        styles.durationChipText,
+                        active && styles.durationChipTextActive,
+                      ]}
+                    >
+                      {m} {m === 1 ? "mo" : "mo"}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <View style={styles.extendSummaryCard}>
+              <View style={styles.extendSummaryRow}>
+                <Text style={styles.extendSummaryLabel}>Monthly rent</Text>
+                <Text style={styles.extendSummaryValue}>
+                  ₹{(data.rentAmount ?? 0).toLocaleString("en-IN")}
+                </Text>
+              </View>
+              <View style={styles.extendSummaryRow}>
+                <Text style={styles.extendSummaryLabel}>Duration</Text>
+                <Text style={styles.extendSummaryValue}>
+                  {extendMonths} month{extendMonths > 1 ? "s" : ""}
+                </Text>
+              </View>
+              <View style={styles.extendDivider} />
+              <View style={styles.extendSummaryRow}>
+                <Text style={styles.extendTotalLabel}>Total amount</Text>
+                <Text style={styles.extendTotalValue}>
+                  ₹{((data.rentAmount ?? 0) * extendMonths).toLocaleString("en-IN")}
+                </Text>
+              </View>
+            </View>
+
+            <Pressable
+              style={[
+                styles.confirmBtn,
+                sendingLink && styles.confirmBtnDisabled,
+              ]}
+              onPress={confirmExtendStay}
+              disabled={sendingLink}
+            >
+              {sendingLink ? (
+                <ActivityIndicator size="small" color={colors.white} />
+              ) : (
+                <Text style={styles.confirmBtnText}>
+                  Send payment link
+                </Text>
+              )}
+            </Pressable>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
 
       <View
         style={[
@@ -932,5 +1331,215 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "700",
     color: colors.white,
+  },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+  },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.4)",
+  },
+  modalSheet: {
+    backgroundColor: colors.white,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    maxHeight: "85%",
+  },
+  modalHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.border,
+    alignSelf: "center",
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: colors.black,
+    marginBottom: 4,
+  },
+  modalSubtitle: {
+    fontSize: 14,
+    color: colors.muted,
+    marginBottom: 16,
+  },
+  modalSectionLabel: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: colors.navy,
+    marginBottom: 8,
+    marginTop: 4,
+  },
+  roomList: {
+    maxHeight: 200,
+    marginBottom: 12,
+  },
+  roomItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: radii.input,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.white,
+    marginBottom: 8,
+  },
+  roomItemSelected: {
+    borderColor: colors.primary,
+    backgroundColor: "#F0F4FF",
+  },
+  roomItemTitle: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: colors.black,
+  },
+  roomItemSub: {
+    fontSize: 12,
+    color: colors.muted,
+    marginTop: 2,
+  },
+  emptyRooms: {
+    alignItems: "center",
+    paddingVertical: 32,
+    gap: 10,
+  },
+  emptyRoomsText: {
+    fontSize: 14,
+    color: colors.muted,
+    textAlign: "center",
+  },
+  roomBadgeEmpty: {
+    backgroundColor: "#DCFCE7",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  roomBadgeEmptyText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#166534",
+  },
+  rentInputRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.input,
+    backgroundColor: colors.inputBg,
+    paddingHorizontal: 14,
+    marginBottom: 16,
+    height: 52,
+  },
+  rentInputPrefix: {
+    fontSize: 18,
+    fontWeight: "600",
+    color: colors.navy,
+    marginRight: 4,
+  },
+  rentInput: {
+    flex: 1,
+    fontSize: 18,
+    fontWeight: "600",
+    color: colors.black,
+  },
+  rentInputSuffix: {
+    fontSize: 13,
+    color: colors.muted,
+    marginLeft: 4,
+  },
+  reasonInput: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.input,
+    backgroundColor: colors.inputBg,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: colors.black,
+    minHeight: 80,
+    marginBottom: 16,
+  },
+  confirmBtn: {
+    backgroundColor: colors.primary,
+    paddingVertical: 16,
+    borderRadius: radii.pill,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  confirmBtnDisabled: {
+    opacity: 0.5,
+  },
+  confirmBtnText: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: colors.white,
+  },
+  durationRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 16,
+  },
+  durationChip: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: radii.pill,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    backgroundColor: colors.white,
+  },
+  durationChipActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primary,
+  },
+  durationChipText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: colors.navy,
+  },
+  durationChipTextActive: {
+    color: colors.white,
+  },
+  extendSummaryCard: {
+    backgroundColor: colors.inputBg,
+    borderRadius: radii.input,
+    padding: 16,
+    marginBottom: 20,
+  },
+  extendSummaryRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  extendSummaryLabel: {
+    fontSize: 14,
+    color: colors.muted,
+  },
+  extendSummaryValue: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: colors.navy,
+  },
+  extendDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.border,
+    marginVertical: 8,
+  },
+  extendTotalLabel: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: colors.black,
+  },
+  extendTotalValue: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: colors.primary,
   },
 });
