@@ -366,5 +366,28 @@ export default defineSchema({
     .index("by_tenant", ["tenantUserId"])
     .index("by_property", ["propertyId"])
     .index("by_tenant_and_property", ["tenantUserId", "propertyId"]),
+
+  /** Bulk-import jobs triggered during onboarding (XLSX / CSV → Gemini AI). */
+  bulkImports: defineTable({
+    userId: v.id("users"),
+    fileId: v.id("_storage"),
+    fileName: v.string(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("processing"),
+      v.literal("completed"),
+      v.literal("failed"),
+    ),
+    /** Number of tenant rows detected in the file */
+    totalRows: v.optional(v.number()),
+    /** Number of rows successfully imported */
+    importedRows: v.optional(v.number()),
+    /** Error message if status is "failed" */
+    error: v.optional(v.string()),
+    /** Property created from the import */
+    propertyId: v.optional(v.id("properties")),
+    /** Raw AI-parsed JSON stored for debugging */
+    parsedData: v.optional(v.string()),
+  }).index("by_user", ["userId"]),
 });
 

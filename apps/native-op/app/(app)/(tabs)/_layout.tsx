@@ -45,7 +45,7 @@ const NAV_TABS: Record<string, TabConfig> = {
     icon: "swap-horizontal",
     iconOutline: "swap-horizontal-outline",
   },
-  analytics: {
+  chats: {
     label: "Chats",
     icon: "chatbubble-ellipses",
     iconOutline: "chatbubble-ellipses-outline",
@@ -137,7 +137,7 @@ export default function TabsLayout() {
         <Tabs.Screen name="index" options={{ title: "Home" }} />
         <Tabs.Screen name="tasks" options={{ title: "Tasks" }} />
         <Tabs.Screen name="transfer" options={{ title: "Payments" }} />
-        <Tabs.Screen name="analytics" options={{ title: "Chats" }} />
+        <Tabs.Screen name="chats" options={{ title: "Chats" }} />
         <Tabs.Screen name="manage" options={{ title: "Manage" }} />
       </Tabs>
     </View>

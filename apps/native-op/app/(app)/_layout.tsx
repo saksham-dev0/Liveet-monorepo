@@ -107,6 +107,14 @@ export default function AppStackLayout() {
         name="notifications"
         options={{ gestureEnabled: true, fullScreenGestureEnabled: true }}
       />
+      <Stack.Screen
+        name="all-rent-dues"
+        options={{ gestureEnabled: true, fullScreenGestureEnabled: true }}
+      />
+      <Stack.Screen
+        name="all-transactions"
+        options={{ gestureEnabled: true, fullScreenGestureEnabled: true }}
+      />
     </Stack>
   );
 }

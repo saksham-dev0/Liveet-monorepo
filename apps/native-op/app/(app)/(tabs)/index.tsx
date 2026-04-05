@@ -118,6 +118,14 @@ export default function TestScreen() {
   const [collectionSummary, setCollectionSummary] = useState<{
     pendingAmount: number;
     receivedLast24h: number;
+    tenantsWithDues?: Array<{
+      applicationId: string;
+      tenantName: string;
+      imageUrl?: string;
+      roomNumber?: string;
+      dueAmount: number;
+      overdueMonths: number;
+    }>;
   } | null>(null);
   const [monthlyGrowth, setMonthlyGrowth] = useState<{
     currentMonth: number;
@@ -297,11 +305,15 @@ export default function TestScreen() {
       );
       setCollectionSummary(
         data
-          ? { pendingAmount: data.pendingAmount ?? 0, receivedLast24h: data.receivedLast24h ?? 0 }
-          : { pendingAmount: 0, receivedLast24h: 0 },
+          ? {
+              pendingAmount: data.pendingAmount ?? 0,
+              receivedLast24h: data.receivedLast24h ?? 0,
+              tenantsWithDues: data.tenantsWithDues ?? [],
+            }
+          : { pendingAmount: 0, receivedLast24h: 0, tenantsWithDues: [] },
       );
     } catch {
-      setCollectionSummary({ pendingAmount: 0, receivedLast24h: 0 });
+      setCollectionSummary({ pendingAmount: 0, receivedLast24h: 0, tenantsWithDues: [] });
     }
   }, [convex]);
 
@@ -454,12 +466,12 @@ export default function TestScreen() {
               <Ionicons name="notifications-outline" size={14} color="#fff" />
               <Text style={styles.actionButtonText}>Remind</Text>
             </Pressable>
-            <Pressable style={styles.actionButton}>
+            <Pressable style={styles.actionButton} onPress={() => router.push("/(app)/all-transactions" as any)}>
               <Ionicons name="trending-up" size={14} color="#fff" />
               <Text style={styles.actionButtonText} numberOfLines={1}>
                 {monthlyGrowth && monthlyGrowth.previousMonth > 0
                   ? `${monthlyGrowth.currentMonth >= monthlyGrowth.previousMonth ? "+" : ""}${compactInr(monthlyGrowth.currentMonth - monthlyGrowth.previousMonth)}`
-                  : "Increased by"}
+                  : "Income"}
               </Text>
             </Pressable>
             <Pressable style={styles.actionButton} onPress={toggleMoreDropdown}>
@@ -521,13 +533,26 @@ export default function TestScreen() {
                       : collectionSummary === null
                         ? "—"
                         : compactInr(collectionSummary.receivedLast24h);
+              const isPending = index === 2;
+              const inner = (
+                <>
+                  <Text style={styles.heroStatLabel}>{card.label}</Text>
+                  <Text style={styles.heroStatValue}>{amount}</Text>
+                </>
+              );
               return (
                 <React.Fragment key={card.label}>
                   {index > 0 && <View style={styles.heroStatDivider} />}
-                  <View style={styles.heroStat}>
-                    <Text style={styles.heroStatLabel}>{card.label}</Text>
-                    <Text style={styles.heroStatValue}>{amount}</Text>
-                  </View>
+                  {isPending ? (
+                    <Pressable
+                      style={styles.heroStat}
+                      onPress={() => router.push("/(app)/(tabs)/transfer" as any)}
+                    >
+                      {inner}
+                    </Pressable>
+                  ) : (
+                    <View style={styles.heroStat}>{inner}</View>
+                  )}
                 </React.Fragment>
               );
             })}
@@ -606,6 +631,47 @@ export default function TestScreen() {
           })()}
         </View>
 
+        {/* Rent Dues */}
+        {collectionSummary?.tenantsWithDues && collectionSummary.tenantsWithDues.length > 0 && (
+          <View style={styles.card}>
+            <View style={styles.transactionsHeader}>
+              <Text style={[styles.cardTitle, { color: "#DC2626" }]}>Rent Dues</Text>
+              <Pressable
+                style={styles.seeAllButton}
+                onPress={() => router.push("/(app)/all-rent-dues" as any)}
+              >
+                <Text style={styles.seeAllText}>View all</Text>
+                <Ionicons name="arrow-forward" size={14} color="#6B7280" />
+              </Pressable>
+            </View>
+            <Text style={styles.cardSubtitle}>
+              {collectionSummary.tenantsWithDues.length} tenant{collectionSummary.tenantsWithDues.length !== 1 ? "s" : ""} with overdue rent
+            </Text>
+            {collectionSummary.tenantsWithDues.slice(0, 3).map((t) => (
+              <View key={t.applicationId} style={styles.transactionRow}>
+                {t.imageUrl ? (
+                  <Image source={{ uri: t.imageUrl }} style={styles.kycTenantAvatar} />
+                ) : (
+                  <View style={styles.transactionIcon}>
+                    <Ionicons name="person" size={20} color="#DC2626" />
+                  </View>
+                )}
+                <View style={styles.transactionInfo}>
+                  <Text style={styles.transactionName} numberOfLines={1}>
+                    {t.tenantName}
+                  </Text>
+                  <Text style={styles.transactionDate} numberOfLines={1}>
+                    {t.roomNumber ? `Room ${t.roomNumber} · ` : ""}{t.overdueMonths} month{t.overdueMonths !== 1 ? "s" : ""} overdue
+                  </Text>
+                </View>
+                <Text style={[styles.transactionAmount, { color: "#DC2626" }]}>
+                  {`₹${Math.round(t.dueAmount).toLocaleString("en-IN")}`}
+                </Text>
+              </View>
+            ))}
+          </View>
+        )}
+
         {/* Recent E-KYC tenants */}
         <View style={styles.card}>
           <Text style={[styles.cardTitle, styles.kycCardTitle]}>Upcoming Move-Ins</Text>
@@ -653,7 +719,10 @@ export default function TestScreen() {
             <Text style={styles.cardTitle}>
               Recent Transactions
             </Text>
-            <Pressable style={styles.seeAllButton}>
+            <Pressable
+              style={styles.seeAllButton}
+              onPress={() => router.push("/(app)/all-transactions" as any)}
+            >
               <Text style={styles.seeAllText}>See all</Text>
               <Ionicons name="arrow-forward" size={14} color="#6B7280" />
             </Pressable>
@@ -665,7 +734,7 @@ export default function TestScreen() {
               No credited transactions yet. Paid move-ins will appear here.
             </Text>
           ) : (
-            recentTransactions.map((tx) => (
+            recentTransactions.slice(0, 3).map((tx) => (
               <View key={tx.applicationId} style={styles.transactionRow}>
                 <View style={styles.transactionIcon}>
                   <Ionicons name="cash-outline" size={20} color="#16A34A" />
