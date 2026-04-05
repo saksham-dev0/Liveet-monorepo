@@ -268,6 +268,13 @@ function TenantDashboard({ insets }: { insets: EdgeInsets }) {
   const [extendPaying, setExtendPaying] = useState(false);
   const [extendResult, setExtendResult] = useState<{ amount: number; description: string } | null>(null);
 
+  const [showExtendPayment, setShowExtendPayment] = useState(false);
+  const [extendPaymentTxId, setExtendPaymentTxId] = useState<string | null>(null);
+  const [extendPaymentTitle, setExtendPaymentTitle] = useState("");
+  const [extendPaymentBody, setExtendPaymentBody] = useState("");
+  const [extendPaymentLoading, setExtendPaymentLoading] = useState(false);
+  const [extendPaymentDone, setExtendPaymentDone] = useState<{ amount: number; description: string } | null>(null);
+
   const [showLateEntry, setShowLateEntry] = useState(false);
   const [lateEntryTime, setLateEntryTime] = useState("");
   const [lateEntryReason, setLateEntryReason] = useState("");
@@ -467,6 +474,29 @@ function TenantDashboard({ insets }: { insets: EdgeInsets }) {
     }
   }
 
+  function openExtendStayPaymentFlow(txId: string, title: string, body: string) {
+    setExtendPaymentTxId(txId);
+    setExtendPaymentTitle(title);
+    setExtendPaymentBody(body);
+    setExtendPaymentDone(null);
+    setShowExtendPayment(true);
+  }
+
+  async function handleCompleteExtendPayment() {
+    if (!extendPaymentTxId) return;
+    setExtendPaymentLoading(true);
+    try {
+      const res = await (convex as any).mutation("rentTransactions:payPendingExtendStay", {
+        transactionId: extendPaymentTxId,
+      });
+      setExtendPaymentDone({ amount: res.amount, description: res.description });
+    } catch (e) {
+      Alert.alert("Error", e instanceof Error ? e.message : "Could not process payment.");
+    } finally {
+      setExtendPaymentLoading(false);
+    }
+  }
+
   async function handleSubmitMoveOutRequest() {
     const validation = getMoveOutValidation();
     if (!validation?.ok) return;
@@ -520,6 +550,7 @@ function TenantDashboard({ insets }: { insets: EdgeInsets }) {
                       item.type === "shift_request_rejected" ? "close-circle" :
                       item.type === "move_out_approved" ? "exit" :
                       item.type === "move_out_rejected" ? "close-circle" :
+                      item.type === "extend_stay_payment" ? "card" :
                       "notifications"
                     }
                     size={20}
@@ -529,6 +560,7 @@ function TenantDashboard({ insets }: { insets: EdgeInsets }) {
                       item.type === "shift_request_rejected" ? "#DC2626" :
                       item.type === "move_out_approved" ? "#F59E0B" :
                       item.type === "move_out_rejected" ? "#DC2626" :
+                      item.type === "extend_stay_payment" ? "#7C3AED" :
                       colors.primary
                     }
                   />
@@ -553,6 +585,14 @@ function TenantDashboard({ insets }: { insets: EdgeInsets }) {
                     <View style={[s.confirmBtn, { backgroundColor: "#6B7280" }]}>
                       <Text style={s.confirmBtnText}>Confirmed ✓</Text>
                     </View>
+                  ) : item.type === "extend_stay_payment" && item.refId ? (
+                    <TouchableOpacity
+                      style={[s.confirmBtn, { backgroundColor: "#7C3AED" }]}
+                      activeOpacity={0.7}
+                      onPress={() => openExtendStayPaymentFlow(item.refId!, item.title, item.body)}
+                    >
+                      <Text style={s.confirmBtnText}>Complete Payment</Text>
+                    </TouchableOpacity>
                   ) : null}
                 </View>
                 {!item.read && <View style={s.notifDot} />}
@@ -909,6 +949,51 @@ function TenantDashboard({ insets }: { insets: EdgeInsets }) {
               )}
             </TouchableOpacity>
           </ScrollView>
+        )}
+      </BottomSheet>
+
+      {/* Extend Stay Payment BottomSheet (operator-initiated pending payment) */}
+      <BottomSheet
+        visible={showExtendPayment}
+        onClose={() => setShowExtendPayment(false)}
+        title="Complete Payment"
+        showCloseButton
+        maxHeight="55%"
+      >
+        {extendPaymentDone ? (
+          <View style={s.shiftSuccessWrap}>
+            <Ionicons name="checkmark-circle" size={48} color="#16A34A" />
+            <Text style={s.shiftSuccessTitle}>Payment Successful</Text>
+            <Text style={s.shiftSuccessBody}>
+              ₹{extendPaymentDone.amount.toLocaleString("en-IN")} paid · {extendPaymentDone.description}
+            </Text>
+            <TouchableOpacity
+              style={s.shiftSubmitBtn}
+              activeOpacity={0.8}
+              onPress={() => setShowExtendPayment(false)}
+            >
+              <Text style={s.shiftSubmitBtnText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={s.shiftFormWrap}>
+            <Text style={[s.shiftFieldLabel, { fontSize: 15, color: colors.text, marginBottom: 6 }]}>
+              {extendPaymentTitle}
+            </Text>
+            <Text style={[s.notifItemBody, { marginBottom: 20 }]}>{extendPaymentBody}</Text>
+            <TouchableOpacity
+              style={[s.shiftSubmitBtn, { backgroundColor: "#7C3AED" }, extendPaymentLoading && { opacity: 0.6 }]}
+              activeOpacity={0.8}
+              disabled={extendPaymentLoading}
+              onPress={() => void handleCompleteExtendPayment()}
+            >
+              {extendPaymentLoading ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={s.shiftSubmitBtnText}>Pay</Text>
+              )}
+            </TouchableOpacity>
+          </View>
         )}
       </BottomSheet>
 

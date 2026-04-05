@@ -362,6 +362,8 @@ export default defineSchema({
     onboardingRentCycle: v.optional(v.string()),
     onboardingRentCycleCustomDay: v.optional(v.number()),
     onboardingExtraCharges: v.optional(v.string()),
+    /** Per-tenant rent override set by the operator during a room change. Takes precedence over the room option's rentAmount. */
+    rentAmountOverride: v.optional(v.number()),
   })
     .index("by_tenant", ["tenantUserId"])
     .index("by_property", ["propertyId"])

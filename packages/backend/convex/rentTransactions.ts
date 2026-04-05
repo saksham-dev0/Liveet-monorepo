@@ -50,10 +50,10 @@ export const getTenantRentInfo = query({
     );
     if (!active) return null;
 
-    // Resolve rent amount: prefer the selected room option, then fall back to
-    // the assigned room's option. Never pick an arbitrary property-wide option.
-    let rentAmount: number | null = null;
-    if (active.selectedRoomOptionId) {
+    // Resolve rent amount: prefer a per-tenant override set by the operator,
+    // then the selected room option, then the assigned room's option.
+    let rentAmount: number | null = active.rentAmountOverride ?? null;
+    if (rentAmount == null && active.selectedRoomOptionId) {
       const roomOption = await ctx.db.get(active.selectedRoomOptionId);
       rentAmount = roomOption?.rentAmount ?? null;
     }
@@ -97,10 +97,10 @@ export const submitExtendStayPayment = mutation({
     const property = await ctx.db.get(app.propertyId);
     if (!property) throw new Error("Property not found.");
 
-    // Resolve rent amount: prefer the selected room option, then fall back to
-    // the assigned room's option. Never pick an arbitrary property-wide option.
-    let rentAmount: number | null = null;
-    if (app.selectedRoomOptionId) {
+    // Resolve rent amount: prefer a per-tenant override set by the operator,
+    // then the selected room option, then the assigned room's option.
+    let rentAmount: number | null = app.rentAmountOverride ?? null;
+    if (rentAmount == null && app.selectedRoomOptionId) {
       const roomOption = await ctx.db.get(app.selectedRoomOptionId);
       rentAmount = roomOption?.rentAmount ?? null;
     }
@@ -182,9 +182,9 @@ export const sendExtendStayPaymentLink = mutation({
       throw new Error("Not authorised");
     }
 
-    // Resolve rent amount
-    let rentAmount: number | null = null;
-    if (app.selectedRoomOptionId) {
+    // Resolve rent amount: prefer a per-tenant override, then room option.
+    let rentAmount: number | null = app.rentAmountOverride ?? null;
+    if (rentAmount == null && app.selectedRoomOptionId) {
       const roomOption = await ctx.db.get(app.selectedRoomOptionId);
       rentAmount = roomOption?.rentAmount ?? null;
     }
@@ -223,11 +223,6 @@ export const sendExtendStayPaymentLink = mutation({
       description,
     });
 
-    // Update agreement duration on the application
-    await ctx.db.patch(args.applicationId, {
-      onboardingAgreementDuration: `${args.months} month${args.months > 1 ? "s" : ""}`,
-    });
-
     // Notify the tenant
     const propertyName = property.name ?? "your property";
     const roomInfo = app.assignedRoomNumber
@@ -244,5 +239,31 @@ export const sendExtendStayPaymentLink = mutation({
     });
 
     return { transactionId: txId, amount, months: args.months };
+  },
+});
+
+/**
+ * Tenant pays an existing pending extend-stay transaction that was created by
+ * the operator via sendExtendStayPaymentLink.
+ */
+export const payPendingExtendStay = mutation({
+  args: { transactionId: v.id("rentTransactions") },
+  handler: async (ctx, args) => {
+    const user = await requireTenantUser(ctx);
+
+    const tx = await ctx.db.get(args.transactionId);
+    if (!tx || tx.tenantUserId !== user._id) throw new Error("Transaction not found.");
+    if (tx.status === "paid") throw new Error("This payment has already been completed.");
+
+    await ctx.db.patch(args.transactionId, { status: "paid" });
+
+    // Update the application's agreement duration now that payment is confirmed.
+    if (tx.applicationId && tx.months) {
+      await ctx.db.patch(tx.applicationId, {
+        onboardingAgreementDuration: `${tx.months} month${tx.months > 1 ? "s" : ""}`,
+      });
+    }
+
+    return { amount: tx.amount, description: tx.description };
   },
 });
