@@ -52,6 +52,7 @@ export default function TasksScreen() {
 
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const TAB_BAR_CLEARANCE = 100;
 
   const loadTasks = useCallback(async () => {
     setLoading(true);
@@ -96,7 +97,7 @@ export default function TasksScreen() {
       style={styles.container}
       contentContainerStyle={[
         styles.contentContainer,
-        { paddingTop: insets.top + 10 },
+        { paddingTop: insets.top + 10, paddingBottom: insets.bottom + TAB_BAR_CLEARANCE },
       ]}
       showsVerticalScrollIndicator={false}
     >
@@ -205,7 +206,6 @@ const styles = StyleSheet.create({
   },
   contentContainer: {
     paddingHorizontal: 20,
-    paddingBottom: 28,
   },
   title: {
     fontSize: 26,
