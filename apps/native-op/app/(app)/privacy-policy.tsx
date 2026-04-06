@@ -9,6 +9,31 @@ import { colors } from "../../constants/theme";
 
 type ErrorBoundaryState = { hasError: boolean };
 
+function ErrorFallback({ onRetry }: { onRetry: () => void }) {
+  const insets = useSafeAreaInsets();
+  return (
+    <View
+      style={[s.errorContainer, { paddingTop: insets.top }]}
+      accessible
+      accessibilityRole="alert"
+    >
+      <Ionicons name="alert-circle-outline" size={48} color={colors.error} />
+      <Text style={s.errorTitle}>Something went wrong</Text>
+      <Text style={s.errorBody}>
+        We couldn't load the Privacy Policy. Please try again later.
+      </Text>
+      <TouchableOpacity
+        style={s.retryBtn}
+        onPress={onRetry}
+        accessibilityRole="button"
+        accessibilityLabel="Retry loading privacy policy"
+      >
+        <Text style={s.retryText}>Try Again</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 class PrivacyPolicyErrorBoundary extends React.Component<
   { children: React.ReactNode },
   ErrorBoundaryState
@@ -25,23 +50,7 @@ class PrivacyPolicyErrorBoundary extends React.Component<
 
   render() {
     if (this.state.hasError) {
-      return (
-        <View style={s.errorContainer} accessible accessibilityRole="alert">
-          <Ionicons name="alert-circle-outline" size={48} color={colors.error} />
-          <Text style={s.errorTitle}>Something went wrong</Text>
-          <Text style={s.errorBody}>
-            We couldn't load the Privacy Policy. Please try again later.
-          </Text>
-          <TouchableOpacity
-            style={s.retryBtn}
-            onPress={() => this.setState({ hasError: false })}
-            accessibilityRole="button"
-            accessibilityLabel="Retry loading privacy policy"
-          >
-            <Text style={s.retryText}>Try Again</Text>
-          </TouchableOpacity>
-        </View>
-      );
+      return <ErrorFallback onRetry={() => this.setState({ hasError: false })} />;
     }
     return this.props.children;
   }

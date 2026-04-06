@@ -223,11 +223,6 @@ export const sendExtendStayPaymentLink = mutation({
       description,
     });
 
-    // Update agreement duration on the application
-    await ctx.db.patch(args.applicationId, {
-      onboardingAgreementDuration: `${args.months} month${args.months > 1 ? "s" : ""}`,
-    });
-
     // Notify the tenant
     const propertyName = property.name ?? "your property";
     const roomInfo = app.assignedRoomNumber
@@ -244,5 +239,29 @@ export const sendExtendStayPaymentLink = mutation({
     });
 
     return { transactionId: txId, amount, months: args.months };
+  },
+});
+
+/**
+ * Tenant pays an existing pending extend-stay transaction created by the
+ * operator via sendExtendStayPaymentLink.
+ */
+export const payPendingExtendStayTransaction = mutation({
+  args: {
+    transactionId: v.id("rentTransactions"),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireTenantUser(ctx);
+    const tx = await ctx.db.get(args.transactionId);
+    if (!tx || tx.tenantUserId !== user._id) throw new Error("Transaction not found.");
+    if (tx.status !== "pending") throw new Error("This transaction has already been processed.");
+    await ctx.db.patch(args.transactionId, { status: "paid" });
+
+    // Update agreement duration now that payment is confirmed
+    await ctx.db.patch(tx.applicationId, {
+      onboardingAgreementDuration: `${tx.months} month${tx.months > 1 ? "s" : ""}`,
+    });
+
+    return { amount: tx.amount, description: tx.description };
   },
 });

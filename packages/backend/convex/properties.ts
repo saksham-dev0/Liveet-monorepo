@@ -1038,13 +1038,13 @@ export const operatorShiftTenant = mutation({
       assignedAt: Date.now(),
     });
 
-    // If operator set a new rent, update the room option
-    if (
-      typeof args.newRentAmount === "number" &&
-      args.newRentAmount > 0 &&
-      resolvedRoomOptionId
-    ) {
-      await ctx.db.patch(resolvedRoomOptionId, { rentAmount: args.newRentAmount });
+    // If operator set a new rent, store it as a tenant-scoped override on the
+    // application rather than mutating the shared roomOption record (which would
+    // affect all tenants referencing that option).
+    if (typeof args.newRentAmount === "number" && args.newRentAmount > 0) {
+      await ctx.db.patch(args.applicationId, {
+        rentAmountOverride: args.newRentAmount,
+      });
     }
 
     // Create a shift request record for audit trail
@@ -1093,6 +1093,10 @@ export const operatorRemoveTenant = mutation({
     if (!property || property.userId !== operator._id) {
       throw new Error("Not authorised");
     }
+
+    // Idempotency: if the tenant has already been removed, return early to
+    // avoid double-incrementing vacantUnits or re-patching the application.
+    if (app.moveOutDate) return;
 
     const today = new Date().toLocaleDateString("en-IN", {
       day: "2-digit",
