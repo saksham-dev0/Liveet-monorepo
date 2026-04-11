@@ -190,21 +190,6 @@ const QUICK_ACTIONS = [
   },
 ];
 
-const OVERVIEW_ROWS = [
-  { icon: "home-outline" as const, label: "Room", value: "Room 203" },
-  {
-    icon: "calendar-outline" as const,
-    label: "Agreement",
-    value: "12 months · Ends Dec 2026",
-  },
-  { icon: "lock-closed-outline" as const, label: "Lock-in", value: "6 months" },
-  {
-    icon: "time-outline" as const,
-    label: "Notice",
-    value: "30 days notice required",
-  },
-];
-
 const NOTICES = [
   {
     icon: "megaphone-outline" as const,
@@ -228,11 +213,34 @@ type NotificationItem = {
   createdAt: number;
 };
 
+type DashboardInfo = {
+  propertyName: string;
+  propertyCity: string | null;
+  assignedRoomNumber: string | null;
+  moveInDate: string | null;
+  rentAmount: number | null;
+  rentDue: { dueDate: string; daysLeft: number } | null;
+  agreementLabel: string | null;
+  lockInPeriod: string | null;
+  noticePeriod: string | null;
+} | null;
+
 function TenantDashboard({ insets }: { insets: EdgeInsets }) {
   const router = useRouter();
   const convex = useConvex();
-  const MOCK_RENT = { amount: 8500, dueDate: "April 1, 2026", daysLeft: 3 };
-  const MOCK_PROPERTY = { name: "Sunrise Apartments", city: "Bengaluru" };
+
+  const [dashboardInfo, setDashboardInfo] = useState<DashboardInfo | undefined>(undefined);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const info = await (convex as any).query("rentTransactions:getTenantDashboardInfo", {});
+        setDashboardInfo(info ?? null);
+      } catch {
+        setDashboardInfo(null);
+      }
+    })();
+  }, [convex]);
 
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -1002,7 +1010,9 @@ function TenantDashboard({ insets }: { insets: EdgeInsets }) {
         <View style={s.hCenter}>
           <Text style={s.hTitle}>My Home</Text>
           <Text style={s.hSub}>
-            {MOCK_PROPERTY.name} · {MOCK_PROPERTY.city}
+            {dashboardInfo
+              ? dashboardInfo.propertyName + (dashboardInfo.propertyCity ? ` · ${dashboardInfo.propertyCity}` : "")
+              : "Loading…"}
           </Text>
         </View>
         <TouchableOpacity
@@ -1031,21 +1041,47 @@ function TenantDashboard({ insets }: { insets: EdgeInsets }) {
         {/* Hero Rent Card */}
         <View style={s.dbHeroCard}>
           <Text style={s.dbHeroLabel}>NEXT RENT DUE</Text>
-          <Text style={s.dbHeroDate}>{MOCK_RENT.dueDate}</Text>
-          <Text style={s.dbHeroAmount}>
-            ₹{MOCK_RENT.amount.toLocaleString("en-IN")} / month
-          </Text>
-          <View style={s.dbHeroFooter}>
-            <View style={s.dbDueChip}>
-              <Ionicons name="time-outline" size={13} color={colors.white} />
-              <Text style={s.dbDueChipText}>
-                Due in {MOCK_RENT.daysLeft} days
+          {dashboardInfo === undefined ? (
+            <ActivityIndicator size="small" color={colors.white} style={{ marginVertical: 8 }} />
+          ) : dashboardInfo?.rentDue ? (
+            <>
+              <Text style={s.dbHeroDate}>{dashboardInfo.rentDue.dueDate}</Text>
+              <Text style={s.dbHeroAmount}>
+                {dashboardInfo.rentAmount != null
+                  ? `₹${dashboardInfo.rentAmount.toLocaleString("en-IN")} / month`
+                  : "Amount not set"}
               </Text>
-            </View>
-            <TouchableOpacity style={s.dbPayBtn} activeOpacity={0.8}>
-              <Text style={s.dbPayBtnText}>Pay Now</Text>
-            </TouchableOpacity>
-          </View>
+              <View style={s.dbHeroFooter}>
+                <View style={s.dbDueChip}>
+                  <Ionicons name="time-outline" size={13} color={colors.white} />
+                  <Text style={s.dbDueChipText}>
+                    Due in {dashboardInfo.rentDue.daysLeft} day{dashboardInfo.rentDue.daysLeft !== 1 ? "s" : ""}
+                  </Text>
+                </View>
+                <TouchableOpacity style={s.dbPayBtn} activeOpacity={0.8}>
+                  <Text style={s.dbPayBtnText}>Pay Now</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          ) : (
+            <>
+              <Text style={s.dbHeroDate}>—</Text>
+              {dashboardInfo?.rentAmount != null ? (
+                <Text style={s.dbHeroAmount}>
+                  ₹{dashboardInfo.rentAmount.toLocaleString("en-IN")} / month
+                </Text>
+              ) : null}
+              <View style={s.dbHeroFooter}>
+                <View style={s.dbDueChip}>
+                  <Ionicons name="time-outline" size={13} color={colors.white} />
+                  <Text style={s.dbDueChipText}>No due date set</Text>
+                </View>
+                <TouchableOpacity style={s.dbPayBtn} activeOpacity={0.8}>
+                  <Text style={s.dbPayBtnText}>Pay Now</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
         </View>
 
         {/* Quick Actions */}
@@ -1084,7 +1120,26 @@ function TenantDashboard({ insets }: { insets: EdgeInsets }) {
         {/* Property Overview */}
         <Text style={s.dbSectionTitle}>Property Overview</Text>
         <View style={s.dbOverviewCard}>
-          {OVERVIEW_ROWS.map((row, idx) => (
+          {((): Array<{ icon: keyof typeof Ionicons.glyphMap; label: string; value: string }> => {
+            if (!dashboardInfo) return [];
+            const rows: Array<{ icon: keyof typeof Ionicons.glyphMap; label: string; value: string }> = [];
+            if (dashboardInfo.assignedRoomNumber) {
+              rows.push({ icon: "home-outline", label: "Room", value: `Room ${dashboardInfo.assignedRoomNumber}` });
+            }
+            if (dashboardInfo.agreementLabel) {
+              rows.push({ icon: "calendar-outline", label: "Agreement", value: dashboardInfo.agreementLabel });
+            }
+            if (dashboardInfo.lockInPeriod) {
+              rows.push({ icon: "lock-closed-outline", label: "Lock-in", value: dashboardInfo.lockInPeriod });
+            }
+            if (dashboardInfo.noticePeriod) {
+              rows.push({ icon: "time-outline", label: "Notice", value: `${dashboardInfo.noticePeriod} notice required` });
+            }
+            if (dashboardInfo.moveInDate) {
+              rows.push({ icon: "enter-outline", label: "Move-in", value: dashboardInfo.moveInDate });
+            }
+            return rows;
+          })().map((row, idx, arr) => (
             <React.Fragment key={row.label}>
               <View style={s.dbOverviewRow}>
                 <View style={s.dbOverviewIconWrap}>
@@ -1095,7 +1150,7 @@ function TenantDashboard({ insets }: { insets: EdgeInsets }) {
                   <Text style={s.dbOverviewValue}>{row.value}</Text>
                 </View>
               </View>
-              {idx < OVERVIEW_ROWS.length - 1 && (
+              {idx < arr.length - 1 && (
                 <View style={s.dbDivider} />
               )}
             </React.Fragment>
