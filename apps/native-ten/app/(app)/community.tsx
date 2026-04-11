@@ -49,6 +49,7 @@ type Hangout = {
   status: string;
   isGoing: boolean;
   creatorName: string;
+  creatorUserId: string;
   communityName: string | null;
 };
 
@@ -282,6 +283,7 @@ export default function CommunityScreen() {
               hangout={item}
               onJoin={() => handleJoinHangout(item.id)}
               onLeave={() => handleLeaveHangout(item.id)}
+              onPress={() => router.push(`/(app)/community/hangout/${item.id}` as any)}
             />
           )}
         />
@@ -385,10 +387,12 @@ function HangoutCard({
   hangout,
   onJoin,
   onLeave,
+  onPress,
 }: {
   hangout: Hangout;
   onJoin: () => Promise<void>;
   onLeave: () => Promise<void>;
+  onPress: () => void;
 }) {
   const [loading, setLoading] = useState(false);
   const spotsLeft =
@@ -405,7 +409,7 @@ function HangoutCard({
   };
 
   return (
-    <View style={s.hangoutCard}>
+    <TouchableOpacity style={s.hangoutCard} onPress={onPress} activeOpacity={0.85}>
       <View style={s.hangoutAccent} />
       <View style={s.hangoutContent}>
         <View style={s.hangoutTopRow}>
@@ -480,7 +484,7 @@ function HangoutCard({
           </TouchableOpacity>
         </View>
       </View>
-    </View>
+    </TouchableOpacity>
   );
 }
 
