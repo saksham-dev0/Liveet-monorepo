@@ -138,7 +138,7 @@ export default function AppLayout() {
   const activeRouteName = getActiveRouteName(pathname);
   // Hide tab bar on pushed stacks (favorites, chat thread).
   const path = pathname ?? "";
-  const showTabBar = !path.includes("/favorites") && !path.includes("/chats/") && !path.includes("/kyc/") && !path.endsWith("/complaint");
+  const showTabBar = !path.includes("/favorites") && !path.includes("/chats/") && !path.includes("/kyc/") && !path.endsWith("/complaint") && !path.match(/\/community\/[^/]+/);
 
   const [isDashboard, setIsDashboard] = useState(discoverEvents.current() === "dashboard");
   useEffect(() => {
@@ -159,6 +159,7 @@ export default function AppLayout() {
       >
         <Stack.Screen name="index" options={{ animation: "none", gestureEnabled: false } as any} />
         <Stack.Screen name="community" options={{ animation: "none", gestureEnabled: false } as any} />
+        <Stack.Screen name="community/[id]" options={{ animation: "slide_from_right" } as any} />
         <Stack.Screen name="chats" options={{ animation: "none", gestureEnabled: false } as any} />
         <Stack.Screen name="chats/[propertyId]" options={{ animation: "default" } as any} />
         <Stack.Screen name="profile" options={{ animation: "none", gestureEnabled: false } as any} />

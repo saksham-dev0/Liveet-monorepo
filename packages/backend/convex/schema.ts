@@ -265,16 +265,45 @@ export default defineSchema({
     category: v.string(),
     createdByUserId: v.id("users"),
     isPublic: v.optional(v.boolean()),
+    propertyName: v.optional(v.string()),
+    bannerImageFileId: v.optional(v.id("_storage")),
+    bannerColor: v.optional(v.string()),
   }).index("by_creator", ["createdByUserId"]),
 
   /** Community memberships. */
   communityMembers: defineTable({
     communityId: v.id("communities"),
     userId: v.id("users"),
+    isAdmin: v.optional(v.boolean()),
   })
     .index("by_community", ["communityId"])
     .index("by_user", ["userId"])
     .index("by_community_and_user", ["communityId", "userId"]),
+
+  /** Events created within a community by admins. */
+  communityEvents: defineTable({
+    communityId: v.id("communities"),
+    createdByUserId: v.id("users"),
+    name: v.string(),
+    organizer: v.string(),
+    place: v.string(),
+    dateTime: v.string(),
+    about: v.optional(v.string()),
+    isFree: v.boolean(),
+    ticketPrice: v.optional(v.number()),
+    totalTickets: v.optional(v.number()),
+  })
+    .index("by_community", ["communityId"])
+    .index("by_creator", ["createdByUserId"]),
+
+  /** Registrations for community events. */
+  communityEventRegistrations: defineTable({
+    eventId: v.id("communityEvents"),
+    userId: v.id("users"),
+  })
+    .index("by_event", ["eventId"])
+    .index("by_user", ["userId"])
+    .index("by_event_and_user", ["eventId", "userId"]),
 
   /** Hangouts created within or outside a community. */
   hangouts: defineTable({

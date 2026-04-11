@@ -16,6 +16,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useConvex } from "convex/react";
+import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { colors, radii, cardShadow } from "../../constants/theme";
 
@@ -29,7 +30,13 @@ type Community = {
   memberCount: number;
   isMember: boolean;
   creatorName: string;
+  propertyName: string;
 };
+
+type Residency = {
+  propertyId: string;
+  propertyName: string;
+} | null;
 
 type Hangout = {
   id: string;
@@ -88,12 +95,14 @@ const TAB_BAR_CLEARANCE = 88;
 export default function CommunityScreen() {
   const insets = useSafeAreaInsets();
   const convex = useConvex();
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<"communities" | "hangouts">("communities");
   const [showCreateCommunity, setShowCreateCommunity] = useState(false);
   const [showCreateHangout, setShowCreateHangout] = useState(false);
 
   const [communities, setCommunities] = useState<Community[] | null>(null);
   const [hangouts, setHangouts] = useState<Hangout[] | null>(null);
+  const [residency, setResidency] = useState<Residency>(null);
   const mountedRef = useRef(true);
 
   const refreshCommunities = useCallback(async () => {
@@ -114,15 +123,25 @@ export default function CommunityScreen() {
     }
   }, [convex, hangouts]);
 
+  const refreshResidency = useCallback(async () => {
+    try {
+      const data = await (convex as any).query("communities:getMyResidency", {});
+      if (mountedRef.current) setResidency(data ?? null);
+    } catch {
+      // ignore — user may not be a tenant
+    }
+  }, [convex]);
+
   useFocusEffect(
     useCallback(() => {
       mountedRef.current = true;
       void refreshCommunities();
       void refreshHangouts();
+      void refreshResidency();
       return () => {
         mountedRef.current = false;
       };
-    }, [refreshCommunities, refreshHangouts])
+    }, [refreshCommunities, refreshHangouts, refreshResidency])
   );
 
   const handleJoinCommunity = async (id: string) => {
@@ -166,16 +185,18 @@ export default function CommunityScreen() {
       {/* Header */}
       <View style={s.header}>
         <Text style={s.headerTitle}>Community</Text>
-        <TouchableOpacity
-          style={s.createBtn}
-          onPress={() =>
-            activeTab === "communities"
-              ? setShowCreateCommunity(true)
-              : setShowCreateHangout(true)
-          }
-        >
-          <Ionicons name="add" size={22} color={colors.white} />
-        </TouchableOpacity>
+        {(activeTab === "hangouts" || residency) ? (
+          <TouchableOpacity
+            style={s.createBtn}
+            onPress={() =>
+              activeTab === "communities"
+                ? setShowCreateCommunity(true)
+                : setShowCreateHangout(true)
+            }
+          >
+            <Ionicons name="add" size={22} color={colors.white} />
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       {/* Tab Bar */}
@@ -216,9 +237,13 @@ export default function CommunityScreen() {
           <EmptyState
             icon="people-circle-outline"
             title="No communities yet"
-            subtitle="Be the first to create a community for tenants around you."
-            cta="Create Community"
-            onCta={() => setShowCreateCommunity(true)}
+            subtitle={
+              residency
+                ? "Be the first to create a community for tenants around you."
+                : "Communities are created by residents. Join one once someone creates it!"
+            }
+            cta={residency ? "Create Community" : undefined}
+            onCta={residency ? () => setShowCreateCommunity(true) : undefined}
           />
         ) : (
           <FlatList
@@ -231,6 +256,7 @@ export default function CommunityScreen() {
                 community={item}
                 onJoin={() => handleJoinCommunity(item.id)}
                 onLeave={() => handleLeaveCommunity(item.id)}
+                onPress={() => router.push(`/(app)/community/${item.id}` as any)}
               />
             )}
           />
@@ -266,6 +292,7 @@ export default function CommunityScreen() {
         visible={showCreateCommunity}
         onClose={() => setShowCreateCommunity(false)}
         onCreated={refreshCommunities}
+        residency={residency}
       />
       <CreateHangoutModal
         visible={showCreateHangout}
@@ -282,10 +309,12 @@ function CommunityCard({
   community,
   onJoin,
   onLeave,
+  onPress,
 }: {
   community: Community;
   onJoin: () => Promise<void>;
   onLeave: () => Promise<void>;
+  onPress: () => void;
 }) {
   const [loading, setLoading] = useState(false);
   const accent = ACCENT_COLORS[community.category] ?? "#6366F1";
@@ -301,7 +330,7 @@ function CommunityCard({
   };
 
   return (
-    <View style={s.card}>
+    <TouchableOpacity style={s.card} onPress={onPress} activeOpacity={0.85}>
       <View style={[s.cardIconWrap, { backgroundColor: accent + "18" }]}>
         <Ionicons name={icon} size={26} color={accent} />
       </View>
@@ -346,7 +375,7 @@ function CommunityCard({
           </Text>
         )}
       </TouchableOpacity>
-    </View>
+    </TouchableOpacity>
   );
 }
 
@@ -461,10 +490,12 @@ function CreateCommunityModal({
   visible,
   onClose,
   onCreated,
+  residency,
 }: {
   visible: boolean;
   onClose: () => void;
   onCreated: () => Promise<void>;
+  residency: Residency;
 }) {
   const convex = useConvex();
   const [name, setName] = useState("");
@@ -472,6 +503,9 @@ function CreateCommunityModal({
   const [category, setCategory] = useState("General");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  // Pre-fill propertyName from residency whenever modal opens
+  const propertyName = residency?.propertyName ?? "";
 
   const handleSubmit = async () => {
     if (!name.trim()) {
@@ -486,6 +520,7 @@ function CreateCommunityModal({
         description: description.trim() || undefined,
         category,
         isPublic: true,
+        propertyName: propertyName || undefined,
       });
       setName("");
       setDescription("");
@@ -515,6 +550,14 @@ function CreateCommunityModal({
           </View>
 
           <ScrollView showsVerticalScrollIndicator={false}>
+            <Text style={s.fieldLabel}>Property Name</Text>
+            <View style={[s.input, s.readonlyInput]}>
+              <Ionicons name="home-outline" size={15} color={colors.muted} style={{ marginRight: 6 }} />
+              <Text style={[s.readonlyText, !propertyName && { color: colors.muted }]}>
+                {propertyName || "No property"}
+              </Text>
+            </View>
+
             <Text style={s.fieldLabel}>Community Name *</Text>
             <TextInput
               style={s.input}
@@ -756,8 +799,8 @@ function EmptyState({
   icon: keyof typeof Ionicons.glyphMap;
   title: string;
   subtitle: string;
-  cta: string;
-  onCta: () => void;
+  cta?: string;
+  onCta?: () => void;
 }) {
   return (
     <View style={s.center}>
@@ -766,9 +809,11 @@ function EmptyState({
       </View>
       <Text style={s.emptyTitle}>{title}</Text>
       <Text style={s.emptySub}>{subtitle}</Text>
-      <TouchableOpacity style={s.emptyCta} onPress={onCta}>
-        <Text style={s.emptyCtaText}>{cta}</Text>
-      </TouchableOpacity>
+      {cta && onCta ? (
+        <TouchableOpacity style={s.emptyCta} onPress={onCta}>
+          <Text style={s.emptyCtaText}>{cta}</Text>
+        </TouchableOpacity>
+      ) : null}
     </View>
   );
 }
@@ -976,6 +1021,13 @@ const s = StyleSheet.create({
     color: colors.navy,
   },
   textArea: { minHeight: 80, textAlignVertical: "top", paddingTop: 13 },
+  readonlyInput: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.surfaceGray,
+    borderColor: colors.border,
+  },
+  readonlyText: { fontSize: 15, color: colors.navy, flex: 1 },
   categoryGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 4 },
   categoryChip: {
     flexDirection: "row",
