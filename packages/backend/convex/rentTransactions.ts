@@ -24,6 +24,158 @@ function parseDurationMonths(duration: string): number | null {
   return null;
 }
 
+/**
+ * Computes the next rent due date given a rental cycle string ("01 - 01", "15 - 15")
+ * or a custom day number, relative to today (ms timestamp).
+ */
+function computeNextDueDate(
+  cycleStr: string | null | undefined,
+  customDay: number | null | undefined,
+  nowMs: number,
+): { dueDate: string; daysLeft: number } | null {
+  let dueDay: number | null = null;
+
+  if (customDay != null && customDay >= 1 && customDay <= 31) {
+    dueDay = customDay;
+  } else if (cycleStr) {
+    // format "DD - DD" e.g. "01 - 01" or "15 - 15"
+    const m = cycleStr.trim().match(/^(\d{1,2})/);
+    if (m) dueDay = parseInt(m[1], 10);
+  }
+
+  if (!dueDay) return null;
+
+  const now = new Date(nowMs);
+  // Try this month first
+  let candidate = new Date(now.getFullYear(), now.getMonth(), dueDay);
+  if (candidate.getTime() <= nowMs) {
+    // Move to next month
+    candidate = new Date(now.getFullYear(), now.getMonth() + 1, dueDay);
+  }
+
+  const msInDay = 86400000;
+  const daysLeft = Math.ceil((candidate.getTime() - nowMs) / msInDay);
+  const dueDateStr = candidate.toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+
+  return { dueDate: dueDateStr, daysLeft };
+}
+
+/** Returns all info needed for the tenant dashboard home screen. */
+export const getTenantDashboardInfo = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) return null;
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) return null;
+
+    const apps = await ctx.db
+      .query("tenantMoveInApplications")
+      .withIndex("by_tenant", (q) => q.eq("tenantUserId", user._id))
+      .order("desc")
+      .take(10);
+
+    const active = apps.find(
+      (a) =>
+        a.status === "submitted" ||
+        a.status === "onboarded" ||
+        a.assignedRoomId != null,
+    );
+    if (!active) return null;
+
+    const property = await ctx.db.get(active.propertyId);
+    if (!property) return null;
+
+    // Resolve rent amount: tenant-level override > selected room option > assigned room option
+    let rentAmount: number | null = active.rentAmountOverride ?? null;
+    if (rentAmount == null && active.selectedRoomOptionId) {
+      const roomOption = await ctx.db.get(active.selectedRoomOptionId);
+      rentAmount = roomOption?.rentAmount ?? null;
+    }
+    if (rentAmount == null && active.assignedRoomId) {
+      const room = await ctx.db.get(active.assignedRoomId);
+      if (room?.roomOptionId) {
+        const roomOption = await ctx.db.get(room.roomOptionId);
+        rentAmount = roomOption?.rentAmount ?? null;
+      }
+    }
+
+    // Resolve rental cycle: tenant onboarding override > property rent config
+    let cycleStr: string | null = active.onboardingRentCycle ?? null;
+    let customDay: number | null = active.onboardingRentCycleCustomDay ?? null;
+    if (!cycleStr && !customDay) {
+      const propRent = await ctx.db
+        .query("propertyRent")
+        .withIndex("by_property", (q) => q.eq("propertyId", active.propertyId))
+        .unique();
+      cycleStr = propRent?.monthlyRentalCycle ?? null;
+    }
+
+    const rentDue = computeNextDueDate(cycleStr, customDay, Date.now());
+
+    // Agreement details: use tenant-level onboarding values if set, else property agreement
+    let agreementDuration: string | null = active.onboardingAgreementDuration ?? null;
+    let lockInPeriod: string | null = null;
+    let noticePeriod: string | null = null;
+    if (!agreementDuration) {
+      const propAgreement = await ctx.db
+        .query("propertyAgreement")
+        .withIndex("by_property", (q) => q.eq("propertyId", active.propertyId))
+        .unique();
+      agreementDuration = propAgreement?.agreementDuration ?? null;
+      lockInPeriod = propAgreement?.lockInPeriod ?? null;
+      noticePeriod = propAgreement?.noticePeriod ?? null;
+    }
+
+    // Compute agreement end date if we have a move-in date + duration
+    let agreementEndsLabel: string | null = null;
+    if (active.moveInDate && agreementDuration) {
+      const parts = active.moveInDate.split("/");
+      if (parts.length === 3) {
+        const [dd, mm, yyyy] = parts;
+        const moveIn = new Date(parseInt(yyyy), parseInt(mm) - 1, parseInt(dd));
+        const months = parseDurationMonths(agreementDuration);
+        if (months) {
+          const end = new Date(moveIn);
+          end.setMonth(end.getMonth() + months);
+          agreementEndsLabel = end.toLocaleDateString("en-IN", {
+            month: "short",
+            year: "numeric",
+          });
+        }
+      }
+    }
+
+    const agreementLabel = agreementDuration
+      ? agreementEndsLabel
+        ? `${agreementDuration} · Ends ${agreementEndsLabel}`
+        : agreementDuration
+      : null;
+
+    return {
+      propertyName: property.name?.trim() || "Your Property",
+      propertyCity: property.city ?? null,
+      assignedRoomNumber: active.assignedRoomNumber ?? null,
+      moveInDate: active.moveInDate ?? null,
+      rentAmount,
+      rentDue,
+      agreementLabel,
+      lockInPeriod,
+      noticePeriod,
+    };
+  },
+});
+
 /** Returns rent info needed to show extend-stay options. */
 export const getTenantRentInfo = query({
   args: {},
