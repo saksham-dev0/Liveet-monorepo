@@ -414,6 +414,77 @@ export const listCommunities = query({
 
 // ─── Hangouts ────────────────────────────────────────────────────────────────
 
+export const getHangout = query({
+  args: { hangoutId: v.id("hangouts") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    let currentUserId: string | null = null;
+    if (identity?.tokenIdentifier) {
+      const user = await ctx.db
+        .query("users")
+        .withIndex("by_tokenIdentifier", (q) =>
+          q.eq("tokenIdentifier", identity.tokenIdentifier),
+        )
+        .unique();
+      currentUserId = user?._id ?? null;
+    }
+
+    const h = await ctx.db.get(args.hangoutId);
+    if (!h) return null;
+
+    const attendeeRecords = await ctx.db
+      .query("hangoutAttendees")
+      .withIndex("by_hangout", (q) => q.eq("hangoutId", args.hangoutId))
+      .collect();
+
+    const creator = await ctx.db.get(h.createdByUserId);
+    const community = h.communityId ? await ctx.db.get(h.communityId) : null;
+
+    const attendees = await Promise.all(
+      attendeeRecords
+        .filter((a) => a.userId !== h.createdByUserId)
+        .map(async (a) => {
+          const user = await ctx.db.get(a.userId);
+          return {
+            userId: a.userId as string,
+            name: user?.name ?? "Unknown",
+            imageUrl: user?.imageUrl ?? null,
+          };
+        }),
+    );
+
+    const isGoing = currentUserId
+      ? attendeeRecords.some((a) => a.userId === currentUserId)
+      : false;
+    const isCreator = currentUserId === h.createdByUserId;
+    const attendeeCount = attendeeRecords.filter(
+      (a) => a.userId !== h.createdByUserId,
+    ).length;
+    const spotsLeft =
+      h.maxAttendees != null ? h.maxAttendees - attendeeCount : null;
+
+    return {
+      id: h._id as string,
+      title: h.title,
+      description: h.description ?? "",
+      location: h.location ?? "",
+      dateTime: h.dateTime,
+      maxAttendees: h.maxAttendees ?? null,
+      attendeeCount,
+      spotsLeft,
+      status: h.status ?? "open",
+      isGoing,
+      isCreator,
+      creatorUserId: h.createdByUserId as string,
+      creatorName: creator?.name ?? "Unknown",
+      creatorImageUrl: creator?.imageUrl ?? null,
+      communityName: community?.name ?? null,
+      attendees,
+      createdAt: h._creationTime,
+    };
+  },
+});
+
 export const createHangout = mutation({
   args: {
     communityId: v.optional(v.id("communities")),
@@ -478,7 +549,7 @@ export const requestJoinHangout = mutation({
           .query("hangoutAttendees")
           .withIndex("by_hangout", (q) => q.eq("hangoutId", args.hangoutId))
           .collect()
-      ).filter((a) => a.status === "accepted").length;
+      ).filter((a) => a.status === "accepted" && a.userId !== hangout.createdByUserId).length;
       if (acceptedCount >= hangout.maxAttendees)
         throw new Error("Hangout is full.");
     }
@@ -487,6 +558,16 @@ export const requestJoinHangout = mutation({
       hangoutId: args.hangoutId,
       userId: user._id,
       status: "accepted", // open hangouts: auto-accept
+    });
+
+    // Notify the creator that someone joined
+    await ctx.db.insert("notifications", {
+      tenantUserId: hangout.createdByUserId,
+      type: "hangout_join",
+      title: "Someone joined your hangout!",
+      body: `${user.name ?? "A user"} joined "${hangout.title}".`,
+      read: false,
+      refId: args.hangoutId,
     });
   },
 });
@@ -542,10 +623,11 @@ export const listHangouts = query({
           location: h.location ?? "",
           dateTime: h.dateTime,
           maxAttendees: h.maxAttendees ?? null,
-          attendeeCount: attendees.length,
+          attendeeCount: attendees.filter((a) => a.userId !== h.createdByUserId).length,
           status: h.status ?? "open",
           isGoing,
           creatorName: creator?.name ?? "Unknown",
+          creatorUserId: h.createdByUserId,
           communityName: community?.name ?? null,
           createdAt: h._creationTime,
         };
