@@ -32,12 +32,24 @@ type ChatRow = {
   unreadCount: number;
 };
 
+type PeerChatRow = {
+  conversationId: string;
+  otherUserId: string;
+  otherName: string;
+  otherImageUrl: string | null;
+  lastMessageAt: number | null;
+  lastMessageText: string | null;
+  lastMessageTimeLabel: string | null;
+  unread: number;
+};
+
 export default function ChatsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const convex = useConvex();
   const [query, setQuery] = useState("");
   const [chats, setChats] = useState<ChatRow[] | null>(null);
+  const [peerChats, setPeerChats] = useState<PeerChatRow[]>([]);
   const mountedRef = useRef(true);
 
   const refresh = useCallback(async () => {
@@ -55,14 +67,24 @@ export default function ChatsScreen() {
     }
   }, [convex]);
 
+  const refreshPeer = useCallback(async () => {
+    try {
+      const data = await (convex as any).query("peerChats:listMyChats", {});
+      if (mountedRef.current && Array.isArray(data)) setPeerChats(data as PeerChatRow[]);
+    } catch {
+      // keep existing
+    }
+  }, [convex]);
+
   useFocusEffect(
     useCallback(() => {
       mountedRef.current = true;
       void refresh();
+      void refreshPeer();
       return () => {
         mountedRef.current = false;
       };
-    }, [refresh])
+    }, [refresh, refreshPeer])
   );
 
   const loading = chats === null;
@@ -228,6 +250,55 @@ export default function ChatsScreen() {
               ))
             )}
           </View>
+
+          {/* Direct Messages (peer chats) */}
+          {peerChats.length > 0 ? (
+            <View style={{ marginTop: 20 }}>
+              <Text style={s.sectionLabel}>Direct Messages · {peerChats.length}</Text>
+              <View style={s.listCard}>
+                {peerChats.map((p) => (
+                  <TouchableOpacity
+                    key={p.conversationId}
+                    style={s.row}
+                    activeOpacity={0.75}
+                    onPress={() =>
+                      router.push(
+                        `/(app)/chats/peer/${p.conversationId}?otherName=${encodeURIComponent(p.otherName)}` as any,
+                      )
+                    }
+                  >
+                    <View style={s.avatarWrap}>
+                      <View style={s.avatarFallback}>
+                        <Ionicons name="person" size={22} color={colors.white} />
+                      </View>
+                      {p.unread > 0 ? <View style={s.onlineDot} /> : null}
+                    </View>
+                    <View style={s.rowContent}>
+                      <View style={s.rowTop}>
+                        <Text style={s.rowName} numberOfLines={1}>{p.otherName}</Text>
+                        {p.lastMessageTimeLabel ? (
+                          <Text style={s.rowTime}>{p.lastMessageTimeLabel}</Text>
+                        ) : null}
+                      </View>
+                      <View style={s.rowMid}>
+                        <Text
+                          style={[s.rowPreview, p.unread > 0 && s.rowPreviewBold]}
+                          numberOfLines={1}
+                        >
+                          {p.lastMessageText ?? "Tap to start chatting."}
+                        </Text>
+                        {p.unread > 0 ? (
+                          <View style={s.badge}>
+                            <Text style={s.badgeText}>{p.unread > 9 ? "9+" : p.unread}</Text>
+                          </View>
+                        ) : null}
+                      </View>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          ) : null}
         </ScrollView>
       )}
     </View>
