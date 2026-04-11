@@ -160,8 +160,10 @@ export default function AppLayout() {
         <Stack.Screen name="index" options={{ animation: "none", gestureEnabled: false } as any} />
         <Stack.Screen name="community" options={{ animation: "none", gestureEnabled: false } as any} />
         <Stack.Screen name="community/[id]" options={{ animation: "slide_from_right" } as any} />
+        <Stack.Screen name="community/hangout/[id]" options={{ animation: "slide_from_right" } as any} />
         <Stack.Screen name="chats" options={{ animation: "none", gestureEnabled: false } as any} />
         <Stack.Screen name="chats/[propertyId]" options={{ animation: "default" } as any} />
+        <Stack.Screen name="chats/peer/[conversationId]" options={{ animation: "default" } as any} />
         <Stack.Screen name="profile" options={{ animation: "none", gestureEnabled: false } as any} />
         {/* Liked must be true stack for swipe-back */}
         <Stack.Screen name="favorites" options={{ title: "Liked" }} />
