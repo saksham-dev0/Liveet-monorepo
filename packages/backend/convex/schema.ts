@@ -183,6 +183,26 @@ export default defineSchema({
     body: v.string(),
   }).index("by_conversation", ["conversationId"]),
 
+  /** Peer-to-peer conversations between two tenants (e.g. via hangout). */
+  peerConversations: defineTable({
+    userIdA: v.id("users"),
+    userIdB: v.id("users"),
+    lastMessageAt: v.optional(v.number()),
+    lastMessageText: v.optional(v.string()),
+    unreadA: v.optional(v.number()),
+    unreadB: v.optional(v.number()),
+  })
+    .index("by_userA", ["userIdA"])
+    .index("by_userB", ["userIdB"])
+    .index("by_pair", ["userIdA", "userIdB"]),
+
+  /** Messages in a peer conversation. */
+  peerMessages: defineTable({
+    conversationId: v.id("peerConversations"),
+    senderUserId: v.id("users"),
+    body: v.string(),
+  }).index("by_conversation", ["conversationId"]),
+
   /** In-app notifications sent to tenants (e.g. complaint resolved). */
   notifications: defineTable({
     tenantUserId: v.id("users"),
