@@ -15,6 +15,275 @@ async function requireUser(ctx: MutationCtx | QueryCtx) {
   return user;
 }
 
+// ─── Residency Check ────────────────────────────────────────────────────────
+
+/** Returns the current tenant's active residency (approved + assigned room), or null. */
+export const getMyResidency = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) return null;
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) return null;
+
+    const applications = await ctx.db
+      .query("tenantMoveInApplications")
+      .withIndex("by_tenant", (q) => q.eq("tenantUserId", user._id))
+      .collect();
+    const active = applications.find(
+      (r) => r.assignedRoomId != null || r.status === "submitted",
+    );
+    if (!active) return null;
+
+    const property = await ctx.db.get(active.propertyId);
+    return {
+      propertyId: active.propertyId,
+      propertyName: property?.name ?? "",
+    };
+  },
+});
+
+// ─── Single Community ────────────────────────────────────────────────────────
+
+export const getCommunity = query({
+  args: { communityId: v.id("communities") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    let currentUserId: string | null = null;
+    if (identity?.tokenIdentifier) {
+      const user = await ctx.db
+        .query("users")
+        .withIndex("by_tokenIdentifier", (q) =>
+          q.eq("tokenIdentifier", identity.tokenIdentifier),
+        )
+        .unique();
+      currentUserId = user?._id ?? null;
+    }
+
+    const c = await ctx.db.get(args.communityId);
+    if (!c) return null;
+
+    const members = await ctx.db
+      .query("communityMembers")
+      .withIndex("by_community", (q) => q.eq("communityId", c._id))
+      .collect();
+
+    const myMembership = currentUserId
+      ? members.find((m) => m.userId === currentUserId) ?? null
+      : null;
+    const isMember = myMembership !== null;
+    const isAdmin = myMembership?.isAdmin === true;
+    const adminCount = members.filter((m) => m.isAdmin).length;
+    const isSoleAdmin = isAdmin && adminCount === 1;
+
+    const creator = await ctx.db.get(c.createdByUserId);
+
+    // Collect up to 5 member names for avatar initials
+    const memberUsers = await Promise.all(
+      members.slice(0, 5).map((m) => ctx.db.get(m.userId)),
+    );
+
+    const bannerImageUrl = c.bannerImageFileId
+      ? await ctx.storage.getUrl(c.bannerImageFileId)
+      : null;
+
+    return {
+      id: c._id,
+      name: c.name,
+      description: c.description ?? "",
+      category: c.category,
+      isPublic: c.isPublic ?? true,
+      propertyName: c.propertyName ?? "",
+      memberCount: members.length,
+      isMember,
+      isAdmin,
+      isSoleAdmin,
+      isCreator: currentUserId === c.createdByUserId,
+      creatorName: creator?.name ?? "Unknown",
+      createdAt: c._creationTime,
+      memberNames: memberUsers
+        .filter(Boolean)
+        .map((u) => u!.name ?? "?"),
+      bannerImageUrl: bannerImageUrl ?? null,
+      bannerColor: c.bannerColor ?? null,
+    };
+  },
+});
+
+// ─── Community Settings ──────────────────────────────────────────────────────
+
+export const generateCommunityBannerUploadUrl = mutation({
+  args: {},
+  handler: async (ctx) => {
+    await requireUser(ctx);
+    return ctx.storage.generateUploadUrl();
+  },
+});
+
+export const updateCommunity = mutation({
+  args: {
+    communityId: v.id("communities"),
+    name: v.optional(v.string()),
+    description: v.optional(v.string()),
+    category: v.optional(v.string()),
+    isPublic: v.optional(v.boolean()),
+    bannerColor: v.optional(v.string()),
+    bannerImageFileId: v.optional(v.id("_storage")),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireUser(ctx);
+    const community = await ctx.db.get(args.communityId);
+    if (!community) throw new Error("Community not found.");
+    const membership = await ctx.db
+      .query("communityMembers")
+      .withIndex("by_community_and_user", (q) =>
+        q.eq("communityId", args.communityId).eq("userId", user._id),
+      )
+      .unique();
+    if (!membership?.isAdmin)
+      throw new Error("Only admins can edit this community.");
+
+    const patch: Record<string, any> = {};
+    if (args.name !== undefined) {
+      const name = args.name.trim();
+      if (!name) throw new Error("Name cannot be empty.");
+      patch.name = name;
+    }
+    if (args.description !== undefined) patch.description = args.description.trim() || undefined;
+    if (args.category !== undefined) patch.category = args.category;
+    if (args.isPublic !== undefined) patch.isPublic = args.isPublic;
+    if (args.bannerColor !== undefined) patch.bannerColor = args.bannerColor || undefined;
+    if (args.bannerImageFileId !== undefined) patch.bannerImageFileId = args.bannerImageFileId;
+
+    await ctx.db.patch(args.communityId, patch);
+  },
+});
+
+// ─── Member Management ───────────────────────────────────────────────────────
+
+export const listCommunityMembers = query({
+  args: { communityId: v.id("communities") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    let currentUserId: string | null = null;
+    if (identity?.tokenIdentifier) {
+      const user = await ctx.db
+        .query("users")
+        .withIndex("by_tokenIdentifier", (q) =>
+          q.eq("tokenIdentifier", identity.tokenIdentifier),
+        )
+        .unique();
+      currentUserId = user?._id ?? null;
+    }
+
+    const community = await ctx.db.get(args.communityId);
+    if (!community) return [];
+
+    const members = await ctx.db
+      .query("communityMembers")
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .collect();
+
+    return await Promise.all(
+      members.map(async (m) => {
+        const user = await ctx.db.get(m.userId);
+        return {
+          userId: m.userId,
+          name: user?.name ?? "Unknown",
+          isAdmin: m.isAdmin === true,
+          isCreator: m.userId === community.createdByUserId,
+          isMe: m.userId === currentUserId,
+        };
+      }),
+    );
+  },
+});
+
+export const makeAdmin = mutation({
+  args: {
+    communityId: v.id("communities"),
+    targetUserId: v.id("users"),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireUser(ctx);
+    // Caller must be an admin
+    const callerMembership = await ctx.db
+      .query("communityMembers")
+      .withIndex("by_community_and_user", (q) =>
+        q.eq("communityId", args.communityId).eq("userId", user._id),
+      )
+      .unique();
+    if (!callerMembership?.isAdmin) throw new Error("Only admins can promote members.");
+
+    const targetMembership = await ctx.db
+      .query("communityMembers")
+      .withIndex("by_community_and_user", (q) =>
+        q.eq("communityId", args.communityId).eq("userId", args.targetUserId),
+      )
+      .unique();
+    if (!targetMembership) throw new Error("User is not a member.");
+    await ctx.db.patch(targetMembership._id, { isAdmin: true });
+  },
+});
+
+export const removeAdmin = mutation({
+  args: {
+    communityId: v.id("communities"),
+    targetUserId: v.id("users"),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireUser(ctx);
+    const community = await ctx.db.get(args.communityId);
+    if (!community) throw new Error("Community not found.");
+
+    // Caller must be an admin
+    const callerMembership = await ctx.db
+      .query("communityMembers")
+      .withIndex("by_community_and_user", (q) =>
+        q.eq("communityId", args.communityId).eq("userId", user._id),
+      )
+      .unique();
+    if (!callerMembership?.isAdmin) throw new Error("Only admins can change roles.");
+
+    // Cannot demote the original creator
+    if (args.targetUserId === community.createdByUserId)
+      throw new Error("The original creator cannot be demoted.");
+
+    const targetMembership = await ctx.db
+      .query("communityMembers")
+      .withIndex("by_community_and_user", (q) =>
+        q.eq("communityId", args.communityId).eq("userId", args.targetUserId),
+      )
+      .unique();
+    if (!targetMembership) throw new Error("User is not a member.");
+    await ctx.db.patch(targetMembership._id, { isAdmin: false });
+  },
+});
+
+export const deleteCommunity = mutation({
+  args: { communityId: v.id("communities") },
+  handler: async (ctx, args) => {
+    const user = await requireUser(ctx);
+    const community = await ctx.db.get(args.communityId);
+    if (!community) throw new Error("Community not found.");
+    if (community.createdByUserId !== user._id)
+      throw new Error("Only the original creator can delete this community.");
+
+    // Delete all memberships first
+    const members = await ctx.db
+      .query("communityMembers")
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .collect();
+    await Promise.all(members.map((m) => ctx.db.delete(m._id)));
+    await ctx.db.delete(args.communityId);
+  },
+});
+
 // ─── Communities ────────────────────────────────────────────────────────────
 
 export const createCommunity = mutation({
@@ -23,11 +292,26 @@ export const createCommunity = mutation({
     description: v.optional(v.string()),
     category: v.string(),
     isPublic: v.optional(v.boolean()),
+    propertyName: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
     const name = args.name.trim();
     if (!name) throw new Error("Community name is required.");
+
+    // Only tenants currently residing in a property can create communities
+    const residency = await ctx.db
+      .query("tenantMoveInApplications")
+      .withIndex("by_tenant", (q) => q.eq("tenantUserId", user._id))
+      .collect();
+    const activeResidency = residency.find(
+      (r) => r.assignedRoomId != null || r.status === "submitted",
+    );
+    if (!activeResidency) {
+      throw new Error(
+        "Only tenants currently residing in a property can create communities.",
+      );
+    }
 
     const communityId = await ctx.db.insert("communities", {
       name,
@@ -35,12 +319,14 @@ export const createCommunity = mutation({
       category: args.category,
       createdByUserId: user._id,
       isPublic: args.isPublic ?? true,
+      propertyName: args.propertyName?.trim(),
     });
 
-    // Auto-join creator
+    // Auto-join creator as admin
     await ctx.db.insert("communityMembers", {
       communityId,
       userId: user._id,
+      isAdmin: true,
     });
 
     return { communityId };
@@ -118,6 +404,7 @@ export const listCommunities = query({
           memberCount: members.length,
           isMember,
           creatorName: creator?.name ?? "Unknown",
+          propertyName: c.propertyName ?? "",
           createdAt: c._creationTime,
         };
       }),
