@@ -92,7 +92,15 @@ export const updateUserProfile = mutation({
     if (args.brandName !== undefined) patch.brandName = args.brandName;
     if (args.phone !== undefined) patch.phone = args.phone;
     if (args.dateOfBirth !== undefined) patch.dateOfBirth = args.dateOfBirth;
-    if (args.profileImageStorageId !== undefined) patch.profileImageStorageId = args.profileImageStorageId;
+    if (args.profileImageStorageId !== undefined) {
+      if (
+        user.profileImageStorageId != null &&
+        user.profileImageStorageId !== args.profileImageStorageId
+      ) {
+        await ctx.storage.delete(user.profileImageStorageId);
+      }
+      patch.profileImageStorageId = args.profileImageStorageId;
+    }
 
     if (Object.keys(patch).length > 0) {
       await ctx.db.patch(user._id, patch);
@@ -112,6 +120,21 @@ export const generateProfileImageUploadUrl = mutation({
 export const getProfileImageUrl = query({
   args: { storageId: v.id("_storage") },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) throw new Error("Unauthenticated");
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) throw new Error("User not found");
+
+    if (user.profileImageStorageId !== args.storageId) {
+      throw new Error("Unauthorized: storageId does not belong to current user");
+    }
+
     return await ctx.storage.getUrl(args.storageId);
   },
 });
@@ -242,6 +265,11 @@ export const deleteOperatorAccount = mutation({
         .collect();
       for (const msg of messages) await ctx.db.delete(msg._id);
       await ctx.db.delete(conversation._id);
+    }
+
+    // Delete profile image blob if present
+    if (user.profileImageStorageId != null) {
+      await ctx.storage.delete(user.profileImageStorageId);
     }
 
     // Finally delete the user record

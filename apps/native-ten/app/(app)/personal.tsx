@@ -124,11 +124,12 @@ export default function PersonalScreen() {
   async function handleSave() {
     setSaving(true);
     try {
-      const patch: Record<string, unknown> = {};
-      if (name.trim()) patch.name = name.trim();
-      if (phone.trim()) patch.phone = phone.trim();
-      if (dateOfBirth.trim()) patch.dateOfBirth = dateOfBirth.trim();
-      if (profileImageStorageId) patch.profileImageStorageId = profileImageStorageId;
+      const patch: Record<string, unknown> = {
+        name: name.trim(),
+        phone: phone.trim(),
+        dateOfBirth: dateOfBirth.trim(),
+        profileImageStorageId: profileImageStorageId ?? null,
+      };
 
       await (convex as any).mutation("users:updateUserProfile", patch);
       router.back();
