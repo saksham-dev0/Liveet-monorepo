@@ -138,7 +138,7 @@ export default function AppLayout() {
   const activeRouteName = getActiveRouteName(pathname);
   // Hide tab bar on pushed stacks (favorites, chat thread).
   const path = pathname ?? "";
-  const showTabBar = !path.includes("/favorites") && !path.includes("/chats/") && !path.includes("/kyc/") && !path.endsWith("/complaint") && !path.match(/\/community\/[^/]+/);
+  const showTabBar = !path.includes("/favorites") && !path.includes("/chats/") && !path.includes("/kyc/") && !path.endsWith("/complaint") && !path.match(/\/community\/[^/]+/) && !path.endsWith("/personal") && !path.endsWith("/privacy-policy");
 
   const [isDashboard, setIsDashboard] = useState(discoverEvents.current() === "dashboard");
   useEffect(() => {
@@ -171,6 +171,8 @@ export default function AppLayout() {
         <Stack.Screen name="favorites/move-in/[propertyId]" options={{ title: "Move-in" }} />
         <Stack.Screen name="kyc/[propertyId]" options={{ animation: "slide_from_right" } as any} />
         <Stack.Screen name="complaint" options={{ animation: "slide_from_right" } as any} />
+        <Stack.Screen name="personal" options={{ animation: "slide_from_right" } as any} />
+        <Stack.Screen name="privacy-policy" options={{ animation: "slide_from_right" } as any} />
       </Stack>
 
       {showTabBar ? <BottomTabBar activeRouteName={activeRouteName} isDashboard={isDashboard} /> : null}

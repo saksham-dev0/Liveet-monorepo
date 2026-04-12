@@ -71,6 +71,9 @@ export const updateUserProfile = mutation({
   args: {
     name: v.optional(v.string()),
     brandName: v.optional(v.string()),
+    phone: v.optional(v.string()),
+    dateOfBirth: v.optional(v.string()),
+    profileImageStorageId: v.optional(v.id("_storage")),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -87,10 +90,29 @@ export const updateUserProfile = mutation({
     const patch: Record<string, unknown> = {};
     if (args.name !== undefined) patch.name = args.name;
     if (args.brandName !== undefined) patch.brandName = args.brandName;
+    if (args.phone !== undefined) patch.phone = args.phone;
+    if (args.dateOfBirth !== undefined) patch.dateOfBirth = args.dateOfBirth;
+    if (args.profileImageStorageId !== undefined) patch.profileImageStorageId = args.profileImageStorageId;
 
     if (Object.keys(patch).length > 0) {
       await ctx.db.patch(user._id, patch);
     }
+  },
+});
+
+export const generateProfileImageUploadUrl = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) throw new Error("Unauthenticated");
+    return await ctx.storage.generateUploadUrl();
+  },
+});
+
+export const getProfileImageUrl = query({
+  args: { storageId: v.id("_storage") },
+  handler: async (ctx, args) => {
+    return await ctx.storage.getUrl(args.storageId);
   },
 });
 

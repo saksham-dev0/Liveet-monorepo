@@ -14,6 +14,9 @@ export default defineSchema({
     preferredLanguage: v.optional(v.string()),
     primaryPropertyId: v.optional(v.id("properties")),
     referralCode: v.optional(v.string()),
+    phone: v.optional(v.string()),
+    dateOfBirth: v.optional(v.string()),
+    profileImageStorageId: v.optional(v.id("_storage")),
   }).index("by_tokenIdentifier", ["tokenIdentifier"]),
 
   onboardingProfiles: defineTable({
