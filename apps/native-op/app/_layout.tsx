@@ -92,7 +92,16 @@ function useConvexClerkAuth() {
           skipCache: options?.forceRefreshToken ?? false,
         });
         return token ?? null;
-      } catch {
+      } catch (err: any) {
+        if (err?.code === "clerk_offline") {
+          console.warn("[ConvexClerkAuth] Clerk offline — token fetch skipped:", err.message);
+        } else {
+          console.error("[ConvexClerkAuth] getToken failed:", {
+            code: err?.code,
+            message: err?.message,
+            stack: err?.stack,
+          });
+        }
         return null;
       }
     },
