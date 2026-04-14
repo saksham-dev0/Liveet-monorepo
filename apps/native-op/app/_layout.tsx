@@ -1,7 +1,7 @@
 import "./global.css";
 import React, { useCallback, useMemo } from "react";
 import { Stack, useRouter, type Href } from "expo-router";
-import { ClerkProvider, SignedIn, SignedOut, useAuth } from "@clerk/clerk-expo";
+import { ClerkProvider, useAuth } from "@clerk/clerk-expo";
 import { ConvexProviderWithAuth, ConvexReactClient } from "convex/react";
 import * as SecureStore from "expo-secure-store";
 
@@ -54,7 +54,11 @@ const convexLogger = {
     if (shouldFilterLog(msg)) return;
     console.warn(...args);
   },
-  error: (...args: unknown[]) => console.error(...args),
+  error: (...args: unknown[]) => {
+    const msg = String(args[0] ?? "");
+    if (msg.includes("Unauthenticated call to ensureCurrentUser")) return;
+    console.error(...args);
+  },
   logVerbose: () => {},
 };
 
@@ -82,11 +86,15 @@ function useConvexClerkAuth() {
 
   const fetchAccessToken = useCallback(
     async (options?: { forceRefreshToken?: boolean }) => {
-      const token = await getToken({
-        template: "convex",
-        skipCache: options?.forceRefreshToken ?? false,
-      });
-      return token ?? null;
+      try {
+        const token = await getToken({
+          template: "convex",
+          skipCache: options?.forceRefreshToken ?? false,
+        });
+        return token ?? null;
+      } catch {
+        return null;
+      }
     },
     [getToken],
   );
@@ -109,26 +117,22 @@ function RootLayoutContent() {
       publishableKey={clerkPublishableKey}
       tokenCache={tokenCache}
       standardBrowser={false}
-      afterSignOutUrl="/(auth)"
+      afterSignOutUrl="/"
       routerPush={(to) => {
-        router.push(to as Href);
+        if (to && !String(to).startsWith("nativeop:")) router.push(to as Href);
       }}
       routerReplace={(to) => {
-        router.replace(to as Href);
+        if (to && !String(to).startsWith("nativeop:")) router.replace(to as Href);
       }}
     >
       <ConvexProviderWithAuth client={convex} useAuth={useConvexClerkAuth}>
-        <SignedIn>
-          <Stack screenOptions={{ headerShown: false }}>
-            <Stack.Screen name="(app)" />
-            <Stack.Screen name="(onboarding)" />
-          </Stack>
-        </SignedIn>
-        <SignedOut>
-          <Stack screenOptions={{ headerShown: false }}>
-            <Stack.Screen name="(auth)" />
-          </Stack>
-        </SignedOut>
+        <Stack screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="index" />
+          <Stack.Screen name="(auth)" />
+          <Stack.Screen name="(app)" />
+          <Stack.Screen name="(onboarding)" />
+          <Stack.Screen name="oauth-native-callback" />
+        </Stack>
       </ConvexProviderWithAuth>
     </ClerkProvider>
   );

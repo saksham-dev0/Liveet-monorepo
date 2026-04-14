@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useSignIn, useSignUp, useOAuth } from "@clerk/clerk-expo";
+import * as Linking from "expo-linking";
 import { useConvex } from "convex/react";
 import { useSyncUserWithConvex } from "../hooks/useSyncUserWithConvex";
 import {
@@ -47,10 +48,20 @@ export default function AuthScreen() {
   const navigateAfterAuth = useCallback(async () => {
     await syncUser();
     try {
-      const status = await (convex as any).query(
-        "onboarding:getOnboardingStatus",
-        {},
-      );
+      // Retry query — Convex JWT may not be ready immediately after setActive
+      let status = null;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        status = await (convex as any).query(
+          "onboarding:getOnboardingStatus",
+          {},
+        );
+        if (status !== null) break;
+        if (attempt < 4) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, 300 + attempt * 300),
+          );
+        }
+      }
       if (status?.hasCompletedOnboarding) {
         router.replace("/(app)/(tabs)");
       } else if (
@@ -65,7 +76,7 @@ export default function AuthScreen() {
         router.replace("/(onboarding)/import-method" as any);
       }
     } catch {
-        router.replace("/(app)/(tabs)");
+      router.replace("/(app)/(tabs)");
     }
   }, [convex, router, syncUser]);
 
@@ -186,7 +197,9 @@ export default function AuthScreen() {
       setError(null);
       try {
         const { startOAuthFlow } = oAuth;
-        const { createdSessionId, setActive } = await startOAuthFlow();
+        const { createdSessionId, setActive } = await startOAuthFlow({
+          redirectUrl: Linking.createURL("/oauth-native-callback"),
+        });
         if (createdSessionId && setActive) {
           await setActive({ session: createdSessionId });
           await navigateAfterAuth();
