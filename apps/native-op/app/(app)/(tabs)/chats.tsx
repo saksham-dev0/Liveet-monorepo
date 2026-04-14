@@ -73,7 +73,7 @@ export default function ChatsTabScreen() {
   const showEmpty = !loading && (conversations ?? []).length === 0;
 
   const handleNewMessagePress = useCallback(() => {
-    router.push("/(app)/new-message");
+    router.push("/(app)/new-message" as any);
   }, [router]);
 
   return (

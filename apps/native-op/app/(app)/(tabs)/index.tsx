@@ -631,46 +631,45 @@ export default function TestScreen() {
           })()}
         </View>
 
-        {/* Rent Dues */}
-        {collectionSummary?.tenantsWithDues && collectionSummary.tenantsWithDues.length > 0 && (
-          <View style={styles.card}>
-            <View style={styles.transactionsHeader}>
-              <Text style={[styles.cardTitle, { color: "#DC2626" }]}>Rent Dues</Text>
-              <Pressable
-                style={styles.seeAllButton}
-                onPress={() => router.push("/(app)/all-rent-dues" as any)}
-              >
-                <Text style={styles.seeAllText}>View all</Text>
-                <Ionicons name="arrow-forward" size={14} color="#6B7280" />
-              </Pressable>
-            </View>
-            <Text style={styles.cardSubtitle}>
-              {collectionSummary.tenantsWithDues.length} tenant{collectionSummary.tenantsWithDues.length !== 1 ? "s" : ""} with overdue rent
+        {/* Recent Transactions */}
+        <View style={styles.card}>
+          <View style={styles.transactionsHeader}>
+            <Text style={styles.cardTitle}>
+              Recent Transactions
             </Text>
-            {collectionSummary.tenantsWithDues.slice(0, 3).map((t) => (
-              <View key={t.applicationId} style={styles.transactionRow}>
-                {t.imageUrl ? (
-                  <Image source={{ uri: t.imageUrl }} style={styles.kycTenantAvatar} />
-                ) : (
-                  <View style={styles.transactionIcon}>
-                    <Ionicons name="person" size={20} color="#DC2626" />
-                  </View>
-                )}
+            <Pressable
+              style={styles.seeAllButton}
+              onPress={() => router.push("/(app)/all-transactions" as any)}
+            >
+              <Text style={styles.seeAllText}>See all</Text>
+              <Ionicons name="arrow-forward" size={14} color="#6B7280" />
+            </Pressable>
+          </View>
+          {recentTransactions === null ? (
+            <Text style={styles.kycEmptyText}>Loading…</Text>
+          ) : recentTransactions.length === 0 ? (
+            <Text style={styles.kycEmptyText}>
+              No credited transactions yet. Paid move-ins will appear here.
+            </Text>
+          ) : (
+            recentTransactions.slice(0, 3).map((tx) => (
+              <View key={tx.applicationId} style={styles.transactionRow}>
+                <View style={styles.transactionIcon}>
+                  <Ionicons name="cash-outline" size={20} color="#16A34A" />
+                </View>
                 <View style={styles.transactionInfo}>
-                  <Text style={styles.transactionName} numberOfLines={1}>
-                    {t.tenantName}
-                  </Text>
-                  <Text style={styles.transactionDate} numberOfLines={1}>
-                    {t.roomNumber ? `Room ${t.roomNumber} · ` : ""}{t.overdueMonths} month{t.overdueMonths !== 1 ? "s" : ""} overdue
+                  <Text style={styles.transactionName}>{tx.tenantName}</Text>
+                  <Text style={styles.transactionDate}>
+                    {formatTransactionDate(tx.createdAt)}
                   </Text>
                 </View>
-                <Text style={[styles.transactionAmount, { color: "#DC2626" }]}>
-                  {`₹${Math.round(t.dueAmount).toLocaleString("en-IN")}`}
+                <Text style={[styles.transactionAmount, { color: "#16A34A" }]}>
+                  {formatCreditAmount(tx.amount)}
                 </Text>
               </View>
-            ))}
-          </View>
-        )}
+            ))
+          )}
+        </View>
 
         {/* Recent E-KYC tenants */}
         <View style={styles.card}>
@@ -713,45 +712,46 @@ export default function TestScreen() {
           )}
         </View>
 
-        {/* Recent Transactions */}
-        <View style={styles.card}>
-          <View style={styles.transactionsHeader}>
-            <Text style={styles.cardTitle}>
-              Recent Transactions
+        {/* Rent Dues */}
+        {collectionSummary?.tenantsWithDues && collectionSummary.tenantsWithDues.length > 0 && (
+          <View style={styles.card}>
+            <View style={styles.transactionsHeader}>
+              <Text style={[styles.cardTitle, { color: "#DC2626" }]}>Rent Dues</Text>
+              <Pressable
+                style={styles.seeAllButton}
+                onPress={() => router.push("/(app)/all-rent-dues" as any)}
+              >
+                <Text style={styles.seeAllText}>View all</Text>
+                <Ionicons name="arrow-forward" size={14} color="#6B7280" />
+              </Pressable>
+            </View>
+            <Text style={styles.cardSubtitle}>
+              {collectionSummary.tenantsWithDues.length} tenant{collectionSummary.tenantsWithDues.length !== 1 ? "s" : ""} with overdue rent
             </Text>
-            <Pressable
-              style={styles.seeAllButton}
-              onPress={() => router.push("/(app)/all-transactions" as any)}
-            >
-              <Text style={styles.seeAllText}>See all</Text>
-              <Ionicons name="arrow-forward" size={14} color="#6B7280" />
-            </Pressable>
-          </View>
-          {recentTransactions === null ? (
-            <Text style={styles.kycEmptyText}>Loading…</Text>
-          ) : recentTransactions.length === 0 ? (
-            <Text style={styles.kycEmptyText}>
-              No credited transactions yet. Paid move-ins will appear here.
-            </Text>
-          ) : (
-            recentTransactions.slice(0, 3).map((tx) => (
-              <View key={tx.applicationId} style={styles.transactionRow}>
-                <View style={styles.transactionIcon}>
-                  <Ionicons name="cash-outline" size={20} color="#16A34A" />
-                </View>
+            {collectionSummary.tenantsWithDues.slice(0, 3).map((t) => (
+              <View key={t.applicationId} style={styles.transactionRow}>
+                {t.imageUrl ? (
+                  <Image source={{ uri: t.imageUrl }} style={styles.kycTenantAvatar} />
+                ) : (
+                  <View style={styles.transactionIcon}>
+                    <Ionicons name="person" size={20} color="#DC2626" />
+                  </View>
+                )}
                 <View style={styles.transactionInfo}>
-                  <Text style={styles.transactionName}>{tx.tenantName}</Text>
-                  <Text style={styles.transactionDate}>
-                    {formatTransactionDate(tx.createdAt)}
+                  <Text style={styles.transactionName} numberOfLines={1}>
+                    {t.tenantName}
+                  </Text>
+                  <Text style={styles.transactionDate} numberOfLines={1}>
+                    {t.roomNumber ? `Room ${t.roomNumber} · ` : ""}{t.overdueMonths} month{t.overdueMonths !== 1 ? "s" : ""} overdue
                   </Text>
                 </View>
-                <Text style={[styles.transactionAmount, { color: "#16A34A" }]}>
-                  {formatCreditAmount(tx.amount)}
+                <Text style={[styles.transactionAmount, { color: "#DC2626" }]}>
+                  {`₹${Math.round(t.dueAmount).toLocaleString("en-IN")}`}
                 </Text>
               </View>
-            ))
-          )}
-        </View>
+            ))}
+          </View>
+        )}
 
         {/* Property switcher modal */}
         <Modal
