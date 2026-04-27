@@ -1105,7 +1105,11 @@ export const listActiveRoomAssignments = query({
           const parts = it.moveInDate.trim().split("/");
           if (parts.length !== 3) return null;
           const [dd, mm, yyyy] = parts.map(Number);
-          if (!dd || !mm || !yyyy || yyyy < 2000) return null;
+          if (!Number.isInteger(dd) || !Number.isInteger(mm) || !Number.isInteger(yyyy)) return null;
+          if (yyyy < 2000 || mm < 1 || mm > 12) return null;
+          const isLeap = (yyyy % 4 === 0 && yyyy % 100 !== 0) || yyyy % 400 === 0;
+          const daysInMonth = [31, isLeap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][mm - 1];
+          if (dd < 1 || dd > daysInMonth) return null;
           return Date.UTC(yyyy, mm - 1, dd);
         })();
         const startMs = parsedMoveIn ?? now;

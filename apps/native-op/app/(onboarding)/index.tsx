@@ -105,7 +105,7 @@ export default function OnboardingHome() {
     >
       <TouchableOpacity
         style={s.backBtn}
-        onPress={() => router.push("/(onboarding)/import-method" as any)}
+        onPress={() => router.canGoBack() ? router.back() : router.replace("/(onboarding)" as any)}
         activeOpacity={0.7}
       >
         <Ionicons name="arrow-back" size={20} color={colors.navy} />

@@ -132,6 +132,24 @@ export const completeTenantOnboarding = mutation({
       isAlreadyInLiveet: args.isAlreadyInLiveet,
       hasCompletedOnboarding: true,
     });
+
+    if (args.isAlreadyInLiveet) {
+      let importedTenant = await ctx.db
+        .query("importedTenants")
+        .withIndex("by_phone", (q) => q.eq("phone", args.phone))
+        .first();
+
+      if (!importedTenant && identity.email) {
+        importedTenant = await ctx.db
+          .query("importedTenants")
+          .withIndex("by_email", (q) => q.eq("email", identity.email!))
+          .first();
+      }
+
+      if (importedTenant && !importedTenant.linkedUserId) {
+        await ctx.db.patch(importedTenant._id, { linkedUserId: user._id });
+      }
+    }
   },
 });
 

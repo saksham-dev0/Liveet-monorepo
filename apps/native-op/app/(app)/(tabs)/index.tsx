@@ -114,7 +114,7 @@ export default function TestScreen() {
   const [recentTransactions, setRecentTransactions] = useState<
     RecentCreditedTransactionItem[] | null
   >(null);
-  const [chartYear, setChartYear] = useState<number>(new Date().getFullYear());
+  const [chartYear, setChartYear] = useState<number>(new Date().getUTCFullYear());
   const [monthlyChartData, setMonthlyChartData] = useState<{ months: number[]; year: number } | null>(null);
   const [collectionSummary, setCollectionSummary] = useState<{
     pendingAmount: number;
@@ -339,7 +339,7 @@ export default function TestScreen() {
         setPropertyName(null);
         setListingChecklistComplete(null);
         setMonthlyChartData(null as any);
-        setChartYear(new Date().getFullYear());
+        setChartYear(new Date().getUTCFullYear());
         setCollectionSummary(null);
         setMonthlyGrowth(null);
         setOverdueTenants(null);
@@ -630,7 +630,7 @@ export default function TestScreen() {
             <Text style={styles.chartYearLabel}>{chartYear}</Text>
             <Pressable
               style={styles.chartYearArrow}
-              disabled={chartYear >= new Date().getFullYear()}
+              disabled={chartYear >= new Date().getUTCFullYear()}
               onPress={() => {
                 const y = chartYear + 1;
                 setChartYear(y);
@@ -638,7 +638,7 @@ export default function TestScreen() {
                 void refreshMonthlyChartData(y);
               }}
             >
-              <Ionicons name="chevron-forward" size={16} color={chartYear >= new Date().getFullYear() ? "#D1D5DB" : "#1E293B"} />
+              <Ionicons name="chevron-forward" size={16} color={chartYear >= new Date().getUTCFullYear() ? "#D1D5DB" : "#1E293B"} />
             </Pressable>
           </View>
           {monthlyChartData === null ? (
@@ -648,7 +648,7 @@ export default function TestScreen() {
           ) : (() => {
             const chartMax = Math.max(...monthlyChartData.months, 1);
             const now = new Date();
-            const currentMonth = chartYear === now.getFullYear() ? now.getMonth() : -1;
+            const currentMonth = chartYear === now.getUTCFullYear() ? now.getUTCMonth() : -1;
             return (
               <ScrollView
                 horizontal
