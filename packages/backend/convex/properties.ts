@@ -380,7 +380,9 @@ export const getDashboardPropertyStats = query({
         if (it.linkedUserId) continue; // already counted via realOccupantIds
         importedOccupants++;
         if (it.paymentStatus === "paid" && typeof it.rent === "number" && it.rent > 0) {
-          totalPaidRentAmount += it.rent * (it.agreementDuration ?? 1);
+          const duration = it.agreementDuration ?? 1;
+          const deposit = typeof it.deposit === "number" ? it.deposit : 0;
+          totalPaidRentAmount += it.rent * duration + deposit;
         }
       }
 
@@ -1827,7 +1829,7 @@ export const getAllPaymentsForOperator = query({
         const periodEnd = addMonths(periodStart, months);
         items.push({
           id: `imported_${it._id}`,
-          applicationId: it._id as any,
+          applicationId: `imported_${it._id}`,
           type: "move_in",
           tenantName: it.name,
           tenantImageUrl: undefined,
@@ -2381,7 +2383,7 @@ export const getDashboardCollectionSummary = query({
     let pendingAmount = 0;
     let receivedLast24h = 0;
     const tenantsWithDues: Array<{
-      applicationId: Id<"tenantMoveInApplications">;
+      applicationId: string;
       tenantName: string;
       imageUrl?: string;
       roomNumber?: string;
@@ -2474,7 +2476,7 @@ export const getDashboardCollectionSummary = query({
         if (it.paymentStatus === "pending" && rent > 0) {
           pendingAmount += rent;
           tenantsWithDues.push({
-            applicationId: `imported_${it._id}` as any,
+            applicationId: `imported_${it._id}`,
             tenantName: it.name,
             imageUrl: undefined,
             roomNumber: it.roomNumber,
@@ -2482,9 +2484,7 @@ export const getDashboardCollectionSummary = query({
             overdueMonths: 1,
           });
         }
-        if (it.paymentStatus === "paid" && rent > 0 && it._creationTime >= windowStart) {
-          receivedLast24h += rent;
-        }
+        // Imported tenants have no reliable payment timestamp — skip from 24h window
       }
     }
 
@@ -2574,7 +2574,7 @@ export const getRoomAssignmentTasksForOperator = query({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity?.tokenIdentifier) {
       return { items: [] as Array<{
-        applicationId: Id<"tenantMoveInApplications">;
+        applicationId: string;
         priority: RoomTaskPriority;
         description: string;
         tenantName: string;
@@ -2591,7 +2591,7 @@ export const getRoomAssignmentTasksForOperator = query({
 
     if (!operator) {
       return { items: [] as Array<{
-        applicationId: Id<"tenantMoveInApplications">;
+        applicationId: string;
         priority: RoomTaskPriority;
         description: string;
         tenantName: string;
@@ -2605,7 +2605,7 @@ export const getRoomAssignmentTasksForOperator = query({
       .take(200);
 
     type InternalTask = {
-      applicationId: Id<"tenantMoveInApplications">;
+      applicationId: string;
       priority: RoomTaskPriority;
       description: string;
       tenantName: string;
@@ -2877,7 +2877,7 @@ export const getRoomAssignmentTasksForOperator = query({
           ? `Send rent reminder — ${formattedRent} pending`
           : "Send rent reminder — payment pending";
         collected.push({
-          applicationId: `imported_${it._id}` as any,
+          applicationId: `imported_${it._id}`,
           priority: "High" as RoomTaskPriority,
           description: desc,
           tenantName: it.name,

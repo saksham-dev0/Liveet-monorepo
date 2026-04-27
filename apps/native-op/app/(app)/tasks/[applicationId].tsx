@@ -178,6 +178,12 @@ export default function TaskDetailsScreen() {
       return;
     }
     try {
+      setImportedTenantData(null);
+      setComplaintData(null);
+      setShiftRequestData(null);
+      setMoveOutData(null);
+      setResolvedTenantName(null);
+      setPropertyName(null);
       if (isImportedTenant) {
         const importedId = applicationId.slice("imported_".length);
         const res = await (convex as any).query(
@@ -568,10 +574,25 @@ export default function TaskDetailsScreen() {
           <View style={s.sectionCard}>
             {importedTenantData ? (
               importedTenantData.isSignedUp && importedTenantData.linkedApplicationId ? (
-                <View style={s.resolvedBadge}>
-                  <Ionicons name="checkmark-circle" size={16} color="#16A34A" />
-                  <Text style={s.resolvedBadgeText}>Tenant has signed up</Text>
-                </View>
+                <>
+                  <View style={s.resolvedBadge}>
+                    <Ionicons name="checkmark-circle" size={16} color="#16A34A" />
+                    <Text style={s.resolvedBadgeText}>Tenant has signed up</Text>
+                  </View>
+                  <Pressable
+                    style={[s.actionBtn, s.actionBtnFilled, { marginTop: 12 }]}
+                    onPress={() => {
+                      const linkedId = importedTenantData.linkedApplicationId;
+                      if (!linkedId) return;
+                      router.push({
+                        pathname: "/(app)/tasks/[applicationId]",
+                        params: { applicationId: linkedId },
+                      } as any);
+                    }}
+                  >
+                    <Text style={s.actionBtnFilledText}>Open tenant</Text>
+                  </Pressable>
+                </>
               ) : (
                 <>
                   <Text style={s.sectionTitle}>Awaiting Signup</Text>
