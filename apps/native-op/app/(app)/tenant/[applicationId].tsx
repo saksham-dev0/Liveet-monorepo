@@ -55,6 +55,7 @@ type ManagePayload = {
   agreementDuration?: string;
   agreementLockIn?: string;
   isImported?: boolean;
+  isLinked?: boolean;
   checklist: {
     percentRemaining: number;
     completedCount: number;
@@ -429,13 +430,19 @@ export default function TenantManageScreen() {
         {data.isImported ? (
           <View style={[styles.card, { padding: 16, marginBottom: 12 }]}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-              <Ionicons name="time-outline" size={20} color="#3B82F6" />
+              <Ionicons
+                name={data.isLinked ? "checkmark-circle" : "time-outline"}
+                size={20}
+                color={data.isLinked ? "#16A34A" : "#3B82F6"}
+              />
               <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 14, fontWeight: "700", color: "#1D4ED8" }}>
-                  Awaiting tenant signup
+                <Text style={{ fontSize: 14, fontWeight: "700", color: data.isLinked ? "#166534" : "#1D4ED8" }}>
+                  {data.isLinked ? "Tenant account linked" : "Awaiting tenant signup"}
                 </Text>
                 <Text style={{ fontSize: 12, color: colors.muted, marginTop: 2, lineHeight: 17 }}>
-                  This tenant was imported from your file. Actions will be available once they sign up on the Liveet app.
+                  {data.isLinked
+                    ? "This tenant signed up and verified their account on the Liveet app."
+                    : "This tenant was imported from your file. Actions will be available once they sign up on the Liveet app."}
                 </Text>
               </View>
             </View>

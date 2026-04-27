@@ -208,8 +208,17 @@ export const hasPaidMoveInForTenant = query({
       .withIndex("by_tenant", (q) => q.eq("tenantUserId", user._id))
       .take(200);
 
-    const shouldShowDashboard = apps.some((app) => app.paymentStatus === "paid");
-    return { shouldShowDashboard };
+    if (apps.some((app) => app.paymentStatus === "paid")) {
+      return { shouldShowDashboard: true };
+    }
+
+    // Imported tenants linked during onboarding also show dashboard
+    const linkedImport = await ctx.db
+      .query("importedTenants")
+      .filter((q) => q.eq(q.field("linkedUserId"), user._id))
+      .first();
+
+    return { shouldShowDashboard: !!linkedImport };
   },
 });
 

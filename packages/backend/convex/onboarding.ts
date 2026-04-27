@@ -1086,14 +1086,14 @@ export const listActiveRoomAssignments = query({
       });
     }
 
-    // Include imported tenants that have a room assigned and haven't linked yet
+    // Include imported tenants that have a room assigned
     const importedList = await ctx.db
       .query("importedTenants")
       .withIndex("by_property", (q) => q.eq("propertyId", property._id))
       .collect();
 
     for (const it of importedList) {
-      if (!it.roomId || it.linkedUserId) continue; // linkedUserId = already counted via tenantMoveInApplications
+      if (!it.roomId) continue;
 
       const hasPendingPayment = it.paymentStatus !== "paid";
 

@@ -134,22 +134,48 @@ export const completeTenantOnboarding = mutation({
     });
 
     if (args.isAlreadyInLiveet) {
-      let importedTenant = await ctx.db
+      const importedTenant = await ctx.db
         .query("importedTenants")
         .withIndex("by_phone", (q) => q.eq("phone", args.phone))
         .first();
-
-      if (!importedTenant && identity.email) {
-        importedTenant = await ctx.db
-          .query("importedTenants")
-          .withIndex("by_email", (q) => q.eq("email", identity.email!))
-          .first();
-      }
 
       if (importedTenant && !importedTenant.linkedUserId) {
         await ctx.db.patch(importedTenant._id, { linkedUserId: user._id });
       }
     }
+  },
+});
+
+export const lookupImportedTenantByPhone = query({
+  args: { phone: v.string() },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) return null;
+
+    const phone = args.phone.trim();
+    if (!phone) return null;
+
+    const imported = await ctx.db
+      .query("importedTenants")
+      .withIndex("by_phone", (q) => q.eq("phone", phone))
+      .first();
+
+    if (!imported) return null;
+
+    const property = await ctx.db.get(imported.propertyId);
+
+    return {
+      importedTenantId: imported._id,
+      tenantName: imported.name,
+      propertyName: property?.name ?? null,
+      propertyCity: property?.city ?? null,
+      propertyState: property?.state ?? null,
+      propertyLine1: property?.line1 ?? null,
+      roomNumber: imported.roomNumber ?? null,
+      roomType: imported.roomType ?? null,
+      rent: imported.rent ?? null,
+      moveInDate: imported.moveInDate ?? null,
+    };
   },
 });
 
