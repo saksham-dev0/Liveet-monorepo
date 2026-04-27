@@ -29,6 +29,7 @@ type OnboardedTenantRow = {
   paymentStatus?: "paid" | "pending";
   isRentDue?: boolean;
   rentDueAmount?: number;
+  isImported?: boolean;
 };
 
 export default function ManageTabScreen() {
@@ -59,6 +60,7 @@ export default function ManageTabScreen() {
   const rentDueCount = (items ?? []).filter((i) => i.isRentDue).length;
   const paidCount = (items ?? []).filter((i) => !i.isRentDue && i.paymentStatus === "paid").length;
   const pendingCount = (items ?? []).filter((i) => i.paymentStatus === "pending").length + rentDueCount;
+  const importedCount = (items ?? []).filter((i) => i.isImported && !i.paymentStatus).length;
 
   return (
     <View style={[s.root, { paddingTop: insets.top + 8 }]}>
@@ -112,7 +114,12 @@ export default function ManageTabScreen() {
               <Text style={[s.statValue, { color: "#166534" }]}>{paidCount}</Text>
               <Text style={[s.statLabel, { color: "#16A34A" }]}>Paid</Text>
             </View>
-            {rentDueCount > 0 ? (
+            {importedCount > 0 ? (
+              <View style={[s.statCard, { backgroundColor: "#EFF6FF", borderColor: "#BFDBFE" }]}>
+                <Text style={[s.statValue, { color: "#1D4ED8" }]}>{importedCount}</Text>
+                <Text style={[s.statLabel, { color: "#3B82F6" }]}>Imported</Text>
+              </View>
+            ) : rentDueCount > 0 ? (
               <View style={[s.statCard, { backgroundColor: "#FEE2E2", borderColor: "#FECACA" }]}>
                 <Text style={[s.statValue, { color: "#991B1B" }]}>{rentDueCount}</Text>
                 <Text style={[s.statLabel, { color: "#DC2626" }]}>Rent Due</Text>
@@ -185,7 +192,18 @@ export default function ManageTabScreen() {
 
                 {/* Right side */}
                 <View style={s.cardRight}>
-                  <PaymentPill status={row.paymentStatus} isRentDue={row.isRentDue} rentDueAmount={row.rentDueAmount} />
+                  {row.isImported ? (
+                    row.paymentStatus ? (
+                      <PaymentPill status={row.paymentStatus} isRentDue={false} rentDueAmount={0} />
+                    ) : (
+                      <View style={[s.pill, { backgroundColor: "#EFF6FF" }]}>
+                        <View style={[s.pillDot, { backgroundColor: "#3B82F6" }]} />
+                        <Text style={[s.pillText, { color: "#1D4ED8" }]}>Imported</Text>
+                      </View>
+                    )
+                  ) : (
+                    <PaymentPill status={row.paymentStatus} isRentDue={row.isRentDue} rentDueAmount={row.rentDueAmount} />
+                  )}
                   <Ionicons name="chevron-forward" size={16} color={colors.muted} style={{ marginTop: 8 }} />
                 </View>
               </TouchableOpacity>

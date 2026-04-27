@@ -302,6 +302,7 @@ export default function RoomConfigScreen() {
       });
 
       setNumRooms("");
+      void loadOccupancy();
     } catch (err: any) {
       setError(err?.message ?? "Failed to add rooms.");
     } finally {

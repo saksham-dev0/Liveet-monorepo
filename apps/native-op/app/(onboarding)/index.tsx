@@ -8,6 +8,7 @@ import {
   View,
 } from "react-native";
 import { useRouter } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 import { useConvex } from "convex/react";
 import {
   colors,
@@ -102,6 +103,15 @@ export default function OnboardingHome() {
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
     >
+      <TouchableOpacity
+        style={s.backBtn}
+        onPress={() => router.push("/(onboarding)/import-method" as any)}
+        activeOpacity={0.7}
+      >
+        <Ionicons name="arrow-back" size={20} color={colors.navy} />
+        <Text style={s.backText}>Back</Text>
+      </TouchableOpacity>
+
       <View style={s.headerRow}>
         <View style={s.headerText}>
           <Text style={s.greetingLabel}>Welcome back</Text>
@@ -190,6 +200,17 @@ const s = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.pageBg,
+  },
+  backBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 16,
+  },
+  backText: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: colors.navy,
   },
   headerRow: {
     flexDirection: "row",

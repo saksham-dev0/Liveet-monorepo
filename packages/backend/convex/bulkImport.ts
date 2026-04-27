@@ -55,6 +55,19 @@ export const getLatestImport = query({
   },
 });
 
+export const getImportedTenantsForProperty = query({
+  args: { propertyId: v.id("properties") },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserDoc(ctx);
+    const property = await ctx.db.get(args.propertyId);
+    if (!property || property.userId !== user._id) return [];
+    return await ctx.db
+      .query("importedTenants")
+      .withIndex("by_property", (q: any) => q.eq("propertyId", args.propertyId))
+      .take(500);
+  },
+});
+
 /* ================================================================== */
 /*  INTERNAL MUTATIONS (called from the action in bulkImportAction.ts) */
 /* ================================================================== */
@@ -105,6 +118,7 @@ interface ParsedTenant {
   deposit?: number;
   agreementDuration?: number;
   moveInDate?: string;
+  paymentStatus?: "paid" | "pending";
 }
 
 interface ParsedImportData {
@@ -181,13 +195,13 @@ export const insertParsedData = internalMutation({
     >();
 
     for (const tenant of parsed.tenants) {
-      const key = `${tenant.roomType || "single"}-${tenant.rent || 0}`;
+      const key = mapRoomCategory(tenant.roomType);
       const existing = roomTypeMap.get(key);
       if (existing) {
         existing.count++;
       } else {
         roomTypeMap.set(key, {
-          category: mapRoomCategory(tenant.roomType),
+          category: key,
           rentAmount: tenant.rent || 0,
           count: 1,
         });
@@ -250,63 +264,38 @@ export const insertParsedData = internalMutation({
       }
 
       const floorId = floorMap.get(floorNumber)!;
-      const roomTypeKey = `${tenant.roomType || "single"}-${tenant.rent || 0}`;
+      const roomTypeKey = mapRoomCategory(tenant.roomType);
       const roomOptionId = roomOptionIds.get(roomTypeKey);
+
+      const roomNumber =
+        tenant.roomNumber ||
+        `${floorNumber}${String(importedCount + 1).padStart(2, "0")}`;
 
       const roomId = await ctx.db.insert("rooms", {
         propertyId,
         floorId,
         roomOptionId,
-        roomNumber:
-          tenant.roomNumber ||
-          `${floorNumber}${String(importedCount + 1).padStart(2, "0")}`,
+        roomNumber,
         displayName: tenant.roomNumber || undefined,
         category: mapRoomCategory(tenant.roomType),
       });
 
-      // Create a placeholder tenant user
-      const placeholderTokenId = `bulk_import_${user._id}_${Date.now()}_${importedCount}`;
-
-      const tenantUserId = await ctx.db.insert("users", {
-        tokenIdentifier: placeholderTokenId,
-        clerkUserId: placeholderTokenId,
-        name: tenant.name,
-        email: tenant.email || undefined,
-        role: "tenant",
-        hasCompletedOnboarding: false,
-      });
-
-      // Parse moveInDate (DD/MM/YYYY) to timestamp for assignedAt
-      let assignedAt = Date.now();
-      if (tenant.moveInDate) {
-        const parts = tenant.moveInDate.split("/");
-        if (parts.length === 3) {
-          const d = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
-          if (!isNaN(d.getTime())) assignedAt = d.getTime();
-        }
-      }
-
-      // Format agreement duration as "X months" for parseDurationMonths()
-      const agreementDurationStr = tenant.agreementDuration
-        ? `${tenant.agreementDuration} months`
-        : undefined;
-
-      // Create move-in application
-      await ctx.db.insert("tenantMoveInApplications", {
-        tenantUserId,
+      // Store tenant in importedTenants table (no user account created)
+      await ctx.db.insert("importedTenants", {
+        operatorId: user._id,
         propertyId,
-        status: "onboarded",
-        legalNameAsOnId: tenant.name,
+        roomId,
+        roomNumber,
+        name: tenant.name,
         phone: tenant.phone || undefined,
         email: tenant.email || undefined,
+        roomType: tenant.roomType || undefined,
+        rent: tenant.rent || undefined,
+        deposit: tenant.deposit || undefined,
         moveInDate: tenant.moveInDate || undefined,
-        assignedRoomId: roomId,
-        assignedRoomNumber: tenant.roomNumber || undefined,
-        assignedAt,
-        paymentStatus: "paid",
-        onboardingSecurityDeposit: tenant.deposit || undefined,
-        onboardingAgreementDuration: agreementDurationStr,
-        selectedRoomOptionId: roomOptionId,
+        agreementDuration: tenant.agreementDuration || undefined,
+        paymentStatus: (tenant.paymentStatus === "paid" || tenant.paymentStatus === "pending") ? tenant.paymentStatus : undefined,
+        importId: importId as any,
       });
 
       importedCount++;

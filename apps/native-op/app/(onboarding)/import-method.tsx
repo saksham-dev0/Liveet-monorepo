@@ -32,7 +32,7 @@ export default function ImportMethodScreen() {
       <TouchableOpacity
         style={s.optionCard}
         activeOpacity={0.7}
-        onPress={() => router.replace("/(onboarding)" as any)}
+        onPress={() => router.push("/(onboarding)" as any)}
       >
         <View style={s.iconCircle}>
           <Ionicons name="create-outline" size={28} color={colors.white} />

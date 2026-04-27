@@ -72,6 +72,15 @@ type MoveOutRequestData = {
   createdAt: number;
 };
 
+type ImportedTenantTaskData = {
+  name: string;
+  phone?: string;
+  roomNumber?: string;
+  propertyName?: string;
+  isSignedUp: boolean;
+  linkedApplicationId: string | null;
+};
+
 type AssignmentPayload =
   | { notFound: true }
   | {
@@ -142,6 +151,7 @@ export default function TaskDetailsScreen() {
   const [moveOutData, setMoveOutData] = useState<MoveOutRequestData | null>(null);
   const [actingOnMoveOut, setActingOnMoveOut] = useState(false);
   const [moveOutMessage, setMoveOutMessage] = useState<string | null>(null);
+  const [importedTenantData, setImportedTenantData] = useState<ImportedTenantTaskData | null>(null);
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
   const [assigning, setAssigning] = useState(false);
   const [markingPaid, setMarkingPaid] = useState(false);
@@ -149,6 +159,8 @@ export default function TaskDetailsScreen() {
   const [assignMessage, setAssignMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const isImportedTenant =
+    typeof applicationId === "string" && applicationId.startsWith("imported_");
   const isQuickRequest = taskDescription === "Move-in request by new user";
   const isComplaintTask =
     typeof taskDescription === "string" &&
@@ -166,7 +178,18 @@ export default function TaskDetailsScreen() {
       return;
     }
     try {
-      if (isMoveOutRequestTask) {
+      if (isImportedTenant) {
+        const importedId = applicationId.slice("imported_".length);
+        const res = await (convex as any).query(
+          "properties:getImportedTenantTask",
+          { importedTenantId: importedId },
+        );
+        if (res) {
+          setImportedTenantData(res as ImportedTenantTaskData);
+          setResolvedTenantName(res.name ?? null);
+          setPropertyName(res.propertyName ?? null);
+        }
+      } else if (isMoveOutRequestTask) {
         const res = await (convex as any).query(
           "moveOutRequests:getMoveOutRequestById",
           { moveOutRequestId: applicationId },
@@ -246,7 +269,7 @@ export default function TaskDetailsScreen() {
     } finally {
       setLoading(false);
     }
-  }, [applicationId, convex, isComplaintTask, isQuickRequest]);
+  }, [applicationId, convex, isImportedTenant, isComplaintTask, isQuickRequest, isMoveOutRequestTask, isShiftRequestTask]);
 
   useEffect(() => {
     void load();
@@ -540,8 +563,48 @@ export default function TaskDetailsScreen() {
           </View>
         ) : null}
 
+        {/* ─── Imported tenant ─── */}
+        {!loading && isImportedTenant ? (
+          <View style={s.sectionCard}>
+            {importedTenantData ? (
+              importedTenantData.isSignedUp && importedTenantData.linkedApplicationId ? (
+                <View style={s.resolvedBadge}>
+                  <Ionicons name="checkmark-circle" size={16} color="#16A34A" />
+                  <Text style={s.resolvedBadgeText}>Tenant has signed up</Text>
+                </View>
+              ) : (
+                <>
+                  <Text style={s.sectionTitle}>Awaiting Signup</Text>
+                  <Text style={s.sectionBody}>
+                    This tenant was imported via bulk import and has not yet signed up on the app.
+                    Once they sign up and link their account, tasks will appear here.
+                  </Text>
+                  <View style={[s.resolvedBadge, { backgroundColor: "#FEF3C7", marginTop: 8 }]}>
+                    <Ionicons name="time-outline" size={16} color="#D97706" />
+                    <Text style={[s.resolvedBadgeText, { color: "#D97706" }]}>Awaiting tenant signup</Text>
+                  </View>
+                  {importedTenantData.phone ? (
+                    <View style={[s.detailRow, { marginTop: 12 }]}>
+                      <Text style={s.detailLabel}>Phone</Text>
+                      <Text style={s.detailValue}>{importedTenantData.phone}</Text>
+                    </View>
+                  ) : null}
+                  {importedTenantData.roomNumber ? (
+                    <View style={s.detailRow}>
+                      <Text style={s.detailLabel}>Room</Text>
+                      <Text style={s.detailValue}>{importedTenantData.roomNumber}</Text>
+                    </View>
+                  ) : null}
+                </>
+              )
+            ) : (
+              <Text style={s.infoText}>Could not load tenant details.</Text>
+            )}
+          </View>
+        ) : null}
+
         {/* ─── Quick request: tenant details + action buttons ─── */}
-        {!loading && isQuickRequest && quickRequestData ? (
+        {!loading && !isImportedTenant && isQuickRequest && quickRequestData ? (
           <>
             <View style={s.sectionCard}>
               <Text style={s.sectionTitle}>Tenant Details</Text>
@@ -617,7 +680,7 @@ export default function TaskDetailsScreen() {
         ) : null}
 
         {/* ─── Complaint task ─── */}
-        {!loading && isComplaintTask ? (
+        {!loading && !isImportedTenant && isComplaintTask ? (
           <View style={s.sectionCard}>
             <Text style={s.sectionTitle}>Complaint Details</Text>
 
@@ -739,6 +802,7 @@ export default function TaskDetailsScreen() {
 
         {/* ─── Pending payment task ─── */}
         {!loading &&
+        !isImportedTenant &&
         !isComplaintTask &&
         !isQuickRequest &&
         isPendingPaymentTask ? (
@@ -787,7 +851,7 @@ export default function TaskDetailsScreen() {
         ) : null}
 
         {/* ─── Shift request task ─── */}
-        {!loading && isShiftRequestTask ? (
+        {!loading && !isImportedTenant && isShiftRequestTask ? (
           <View style={s.sectionCard}>
             <Text style={s.sectionTitle}>Shift Request Details</Text>
 
@@ -964,7 +1028,7 @@ export default function TaskDetailsScreen() {
         ) : null}
 
         {/* ─── Move-out request task ─── */}
-        {!loading && isMoveOutRequestTask ? (
+        {!loading && !isImportedTenant && isMoveOutRequestTask ? (
           <View style={s.sectionCard}>
             <Text style={s.sectionTitle}>Move-out Request Details</Text>
             {moveOutData ? (
@@ -1046,6 +1110,7 @@ export default function TaskDetailsScreen() {
 
         {/* ─── Standard task: room assignment ─── */}
         {!loading &&
+        !isImportedTenant &&
         !isComplaintTask &&
         !isQuickRequest &&
         !isPendingPaymentTask &&

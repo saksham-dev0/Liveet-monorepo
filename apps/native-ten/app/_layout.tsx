@@ -1,7 +1,7 @@
 import "./global.css";
 import React, { useCallback, useMemo } from "react";
-import { Stack } from "expo-router";
-import { ClerkProvider, SignedIn, SignedOut, useAuth } from "@clerk/clerk-expo";
+import { Stack, useRouter, type Href } from "expo-router";
+import { ClerkProvider, useAuth } from "@clerk/clerk-expo";
 import { ConvexProviderWithAuth, ConvexReactClient } from "convex/react";
 import * as SecureStore from "expo-secure-store";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -102,42 +102,37 @@ function useConvexClerkAuth() {
   );
 }
 
-export default function RootLayout() {
-  // #region agent log
-  fetch("http://127.0.0.1:7705/ingest/31413d30-c336-48c7-b2f1-ff91680701eb", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Debug-Session-Id": "d028b5",
-    },
-    body: JSON.stringify({
-      sessionId: "d028b5",
-      location: "apps/native-op/app/_layout.tsx:RootLayout",
-      message: "render RootLayout",
-      data: {},
-      runId: "routing-op-1",
-      hypothesisId: "H-structure",
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion agent log
+function RootLayoutContent() {
+  const router = useRouter();
 
   return (
+    <ClerkProvider
+      publishableKey={clerkPublishableKey}
+      tokenCache={tokenCache}
+      afterSignOutUrl="/"
+      routerPush={(to) => {
+        if (to && !String(to).startsWith("nativeten:")) router.push(to as Href);
+      }}
+      routerReplace={(to) => {
+        if (to && !String(to).startsWith("nativeten:")) router.replace(to as Href);
+      }}
+    >
+      <ConvexProviderWithAuth client={convex} useAuth={useConvexClerkAuth}>
+        <Stack screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="index" />
+          <Stack.Screen name="(auth)" />
+          <Stack.Screen name="(onboarding)" />
+          <Stack.Screen name="(app)" />
+        </Stack>
+      </ConvexProviderWithAuth>
+    </ClerkProvider>
+  );
+}
+
+export default function RootLayout() {
+  return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <ClerkProvider publishableKey={clerkPublishableKey} tokenCache={tokenCache}>
-        <ConvexProviderWithAuth client={convex} useAuth={useConvexClerkAuth}>
-          <SignedIn>
-            <Stack screenOptions={{ headerShown: false }}>
-              <Stack.Screen name="(app)" />
-            </Stack>
-          </SignedIn>
-          <SignedOut>
-            <Stack screenOptions={{ headerShown: false }}>
-              <Stack.Screen name="(auth)" />
-            </Stack>
-          </SignedOut>
-        </ConvexProviderWithAuth>
-      </ClerkProvider>
+      <RootLayoutContent />
     </GestureHandlerRootView>
   );
 }

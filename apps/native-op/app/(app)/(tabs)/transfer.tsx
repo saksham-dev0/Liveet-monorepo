@@ -181,11 +181,11 @@ export default function PaymentsScreen() {
             <Pressable
               key={item.id}
               style={s.paymentRow}
-              onPress={() =>
+              onPress={() => {
                 router.push(
                   `/(app)/payment/${encodeURIComponent(item.id)}` as any,
-                )
-              }
+                );
+              }}
               android_ripple={{ color: colors.border }}
             >
               {/* Avatar */}
@@ -216,8 +216,8 @@ export default function PaymentsScreen() {
                 </Text>
               </View>
 
-              {/* Remind button (pending only) */}
-              {item.status === "pending" && (
+              {/* Remind button (pending only, not for imported tenants) */}
+              {item.status === "pending" && !item.id.startsWith("imported_") && (
                 <Pressable
                   style={s.remindBtn}
                   onPress={(e) => {

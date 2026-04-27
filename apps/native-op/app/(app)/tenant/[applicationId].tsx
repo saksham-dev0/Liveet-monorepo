@@ -54,6 +54,7 @@ type ManagePayload = {
   metaLine: string;
   agreementDuration?: string;
   agreementLockIn?: string;
+  isImported?: boolean;
   checklist: {
     percentRemaining: number;
     completedCount: number;
@@ -108,10 +109,19 @@ export default function TenantManageScreen() {
     setLoading(true);
     setNotFound(false);
     try {
-      const res = await (convex as any).query(
-        "properties:getTenantManageDetails",
-        { applicationId },
-      );
+      let res;
+      if (applicationId.startsWith("imported_")) {
+        const importedTenantId = applicationId.slice("imported_".length);
+        res = await (convex as any).query(
+          "properties:getImportedTenantManageDetails",
+          { importedTenantId },
+        );
+      } else {
+        res = await (convex as any).query(
+          "properties:getTenantManageDetails",
+          { applicationId },
+        );
+      }
       if (res?.notFound) {
         setNotFound(true);
         setData(null);
@@ -416,59 +426,77 @@ export default function TenantManageScreen() {
           }
         />
 
-        <ActionRow
-          icon="business-outline"
-          iconBg={colors.inputBg}
-          title="Shift tenant"
-          subtitle={
-            data.assignedRoomNumber
-              ? `Current room: ${data.assignedRoomNumber}`
-              : "Change room or property."
-          }
-          right={
-            <Pressable style={styles.outlineBtnSm} onPress={openShiftModal}>
-              <Text style={styles.outlineBtnSmText}>Change</Text>
-            </Pressable>
-          }
-        />
-
-        <ActionRow
-          icon="document-text-outline"
-          iconBg={colors.inputBg}
-          title="Agreement"
-          subtitle={
-            data.onboardingAgreementDuration
-              ? `Duration: ${data.onboardingAgreementDuration}`
-              : data.agreementDuration
-                ? `Duration: ${data.agreementDuration}`
-                : data.agreementLockIn
-                  ? `Lock-in: ${data.agreementLockIn}`
-                  : "Agreement on file"
-          }
-          right={
-            <Pressable style={styles.outlineBtnSm} onPress={openExtendModal}>
-              <Text style={styles.outlineBtnSmText}>Extend stay</Text>
-            </Pressable>
-          }
-        />
-
-        <View style={[styles.card, styles.offboardCard]}>
-          <View style={styles.offboardHeader}>
-            <View style={[styles.iconCircle, { backgroundColor: colors.inputBg }]}>
-              <Ionicons name="arrow-up-outline" size={18} color={colors.error} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.offboardTitle}>Tenant moving out?</Text>
-              <Text style={styles.offboardBody}>
-                Set a move-out date to vacate the unit. You can still view tenant
-                records afterward.
-              </Text>
+        {data.isImported ? (
+          <View style={[styles.card, { padding: 16, marginBottom: 12 }]}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+              <Ionicons name="time-outline" size={20} color="#3B82F6" />
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 14, fontWeight: "700", color: "#1D4ED8" }}>
+                  Awaiting tenant signup
+                </Text>
+                <Text style={{ fontSize: 12, color: colors.muted, marginTop: 2, lineHeight: 17 }}>
+                  This tenant was imported from your file. Actions will be available once they sign up on the Liveet app.
+                </Text>
+              </View>
             </View>
           </View>
-          <Pressable style={styles.removeBtn} onPress={handleRemoveTenant}>
-            <Text style={styles.removeBtnText}>Remove tenant</Text>
-          </Pressable>
-        </View>
+        ) : (
+          <>
+            <ActionRow
+              icon="business-outline"
+              iconBg={colors.inputBg}
+              title="Shift tenant"
+              subtitle={
+                data.assignedRoomNumber
+                  ? `Current room: ${data.assignedRoomNumber}`
+                  : "Change room or property."
+              }
+              right={
+                <Pressable style={styles.outlineBtnSm} onPress={openShiftModal}>
+                  <Text style={styles.outlineBtnSmText}>Change</Text>
+                </Pressable>
+              }
+            />
+
+            <ActionRow
+              icon="document-text-outline"
+              iconBg={colors.inputBg}
+              title="Agreement"
+              subtitle={
+                data.onboardingAgreementDuration
+                  ? `Duration: ${data.onboardingAgreementDuration}`
+                  : data.agreementDuration
+                    ? `Duration: ${data.agreementDuration}`
+                    : data.agreementLockIn
+                      ? `Lock-in: ${data.agreementLockIn}`
+                      : "Agreement on file"
+              }
+              right={
+                <Pressable style={styles.outlineBtnSm} onPress={openExtendModal}>
+                  <Text style={styles.outlineBtnSmText}>Extend stay</Text>
+                </Pressable>
+              }
+            />
+
+            <View style={[styles.card, styles.offboardCard]}>
+              <View style={styles.offboardHeader}>
+                <View style={[styles.iconCircle, { backgroundColor: colors.inputBg }]}>
+                  <Ionicons name="arrow-up-outline" size={18} color={colors.error} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.offboardTitle}>Tenant moving out?</Text>
+                  <Text style={styles.offboardBody}>
+                    Set a move-out date to vacate the unit. You can still view tenant
+                    records afterward.
+                  </Text>
+                </View>
+              </View>
+              <Pressable style={styles.removeBtn} onPress={handleRemoveTenant}>
+                <Text style={styles.removeBtnText}>Remove tenant</Text>
+              </Pressable>
+            </View>
+          </>
+        )}
 
         <Text style={styles.sectionLabel}>Quick links</Text>
         <Pressable

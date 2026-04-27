@@ -17,6 +17,7 @@ export default defineSchema({
     phone: v.optional(v.string()),
     dateOfBirth: v.optional(v.string()),
     profileImageStorageId: v.optional(v.id("_storage")),
+    isAlreadyInLiveet: v.optional(v.boolean()),
   }).index("by_tokenIdentifier", ["tokenIdentifier"]),
 
   onboardingProfiles: defineTable({
@@ -420,6 +421,31 @@ export default defineSchema({
     .index("by_tenant", ["tenantUserId"])
     .index("by_property", ["propertyId"])
     .index("by_tenant_and_property", ["tenantUserId", "propertyId"]),
+
+  /** Tenants pre-loaded by operator via bulk import; used for verification when tenant signs up. */
+  importedTenants: defineTable({
+    operatorId: v.id("users"),
+    propertyId: v.id("properties"),
+    roomId: v.optional(v.id("rooms")),
+    roomNumber: v.optional(v.string()),
+    name: v.string(),
+    phone: v.optional(v.string()),
+    email: v.optional(v.string()),
+    roomType: v.optional(v.string()),
+    rent: v.optional(v.number()),
+    deposit: v.optional(v.number()),
+    moveInDate: v.optional(v.string()),
+    agreementDuration: v.optional(v.number()),
+    paymentStatus: v.optional(v.union(v.literal("paid"), v.literal("pending"))),
+    importId: v.id("bulkImports"),
+    /** Set when tenant signs up and is verified */
+    linkedUserId: v.optional(v.id("users")),
+  })
+    .index("by_property", ["propertyId"])
+    .index("by_operator", ["operatorId"])
+    .index("by_import", ["importId"])
+    .index("by_phone", ["phone"])
+    .index("by_email", ["email"]),
 
   /** Bulk-import jobs triggered during onboarding (XLSX / CSV → Gemini AI). */
   bulkImports: defineTable({
