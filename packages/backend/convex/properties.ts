@@ -370,14 +370,13 @@ export const getDashboardPropertyStats = query({
         }
       }
 
-      // Count imported tenants as occupants (not yet linked to a real user account)
+      // Count imported tenants as occupants (linkedUserId just means they signed up — still in importedTenants)
       const importedList = await ctx.db
         .query("importedTenants")
         .withIndex("by_property", (q) => q.eq("propertyId", p._id))
         .take(500);
       let importedOccupants = 0;
       for (const it of importedList) {
-        if (it.linkedUserId) continue; // already counted via realOccupantIds
         importedOccupants++;
         if (it.paymentStatus === "paid" && typeof it.rent === "number" && it.rent > 0) {
           const duration = it.agreementDuration ?? 1;
@@ -628,6 +627,7 @@ export const listOnboardedTenantsForManage = query({
       isRentDue: boolean;
       rentDueAmount: number;
       isImported: boolean;
+      isLinked: boolean;
     }> = [];
 
     for (const row of collected.slice(0, limit)) {
@@ -644,10 +644,11 @@ export const listOnboardedTenantsForManage = query({
         isRentDue: row.isRentDue,
         rentDueAmount: row.rentDueAmount,
         isImported: false,
+        isLinked: false,
       });
     }
 
-    // Also include imported tenants (bulk-imported, no real user account yet)
+    // Also include imported tenants (with or without a linked real user account)
     for (const p of properties) {
       const importedList = await ctx.db
         .query("importedTenants")
@@ -656,8 +657,6 @@ export const listOnboardedTenantsForManage = query({
 
       const propertyName = p.name?.trim() || "Unnamed property";
       for (const it of importedList) {
-        // Skip if already linked to a real user (they'll show via tenantMoveInApplications)
-        if (it.linkedUserId) continue;
         out.push({
           applicationId: `imported_${it._id}`,
           propertyId: p._id,
@@ -670,6 +669,7 @@ export const listOnboardedTenantsForManage = query({
           isRentDue: false,
           rentDueAmount: 0,
           isImported: true,
+          isLinked: !!it.linkedUserId,
         });
       }
     }
@@ -952,6 +952,7 @@ export const getImportedTenantManageDetails = query({
       agreementDuration: undefined,
       agreementLockIn: undefined,
       isImported: true as const,
+      isLinked: !!it.linkedUserId,
       checklist: {
         percentRemaining: 100,
         completedCount: 0,
@@ -1477,7 +1478,7 @@ export const getMonthlyRentChartData = query({
         .withIndex("by_property", (q) => q.eq("propertyId", property._id))
         .take(500);
       for (const it of importedList) {
-        if (it.linkedUserId || it.paymentStatus !== "paid") continue;
+        if (it.paymentStatus !== "paid") continue;
         if (typeof it.rent !== "number" || it.rent <= 0) continue;
         const ts = parseDDMMYYYY(it.moveInDate) ?? it._creationTime;
         const mIdx = getMonthIndex(ts);
@@ -1595,7 +1596,7 @@ export const getMonthlyGrowth = query({
         .withIndex("by_property", (q) => q.eq("propertyId", property._id))
         .take(500);
       for (const it of importedList) {
-        if (it.linkedUserId || it.paymentStatus !== "paid") continue;
+        if (it.paymentStatus !== "paid") continue;
         if (typeof it.rent !== "number" || it.rent <= 0) continue;
         const parsedDate = (() => {
           if (!it.moveInDate) return null;
@@ -1819,7 +1820,6 @@ export const getAllPaymentsForOperator = query({
         .withIndex("by_property", (q) => q.eq("propertyId", property._id))
         .take(500);
       for (const it of importedList) {
-        if (it.linkedUserId) continue; // already handled via tenantMoveInApplications
         if (!it.paymentStatus) continue; // no payment info to show
         const rent = typeof it.rent === "number" && it.rent > 0 ? it.rent : 0;
         if (rent === 0) continue;
@@ -2307,7 +2307,7 @@ export const getYearlyCollectionTotal = query({
         .withIndex("by_property", (q) => q.eq("propertyId", property._id))
         .take(500);
       for (const it of importedList) {
-        if (it.linkedUserId || it.paymentStatus !== "paid") continue;
+        if (it.paymentStatus !== "paid") continue;
         if (typeof it.rent !== "number" || it.rent <= 0) continue;
         const parsedDate = (() => {
           if (!it.moveInDate) return null;
@@ -2471,7 +2471,6 @@ export const getDashboardCollectionSummary = query({
         .withIndex("by_property", (q) => q.eq("propertyId", property._id))
         .take(500);
       for (const it of importedList) {
-        if (it.linkedUserId) continue; // handled via tenantMoveInApplications
         const rent = typeof it.rent === "number" && it.rent > 0 ? it.rent : 0;
         if (it.paymentStatus === "pending" && rent > 0) {
           pendingAmount += rent;
@@ -2867,7 +2866,6 @@ export const getRoomAssignmentTasksForOperator = query({
         .withIndex("by_property", (q) => q.eq("propertyId", property._id))
         .take(300);
       for (const it of importedList) {
-        if (it.linkedUserId) continue; // already tracked as real tenant
         if (it.paymentStatus !== "pending") continue;
         const rent = typeof it.rent === "number" && it.rent > 0 ? it.rent : 0;
         const formattedRent = rent > 0

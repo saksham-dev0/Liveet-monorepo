@@ -30,6 +30,7 @@ type OnboardedTenantRow = {
   isRentDue?: boolean;
   rentDueAmount?: number;
   isImported?: boolean;
+  isLinked?: boolean;
 };
 
 export default function ManageTabScreen() {
@@ -193,7 +194,12 @@ export default function ManageTabScreen() {
                 {/* Right side */}
                 <View style={s.cardRight}>
                   {row.isImported ? (
-                    row.paymentStatus ? (
+                    row.isLinked ? (
+                      <View style={[s.pill, { backgroundColor: "#F0FDF4" }]}>
+                        <View style={[s.pillDot, { backgroundColor: "#16A34A" }]} />
+                        <Text style={[s.pillText, { color: "#166534" }]}>Linked</Text>
+                      </View>
+                    ) : row.paymentStatus ? (
                       <PaymentPill status={row.paymentStatus} isRentDue={false} rentDueAmount={0} />
                     ) : (
                       <View style={[s.pill, { backgroundColor: "#EFF6FF" }]}>

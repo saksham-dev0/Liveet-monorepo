@@ -91,7 +91,66 @@ export const getTenantDashboardInfo = query({
         a.status === "onboarded" ||
         a.assignedRoomId != null,
     );
-    if (!active) return null;
+
+    // Fall back to importedTenants record for tenants linked during onboarding
+    if (!active) {
+      const imported = await ctx.db
+        .query("importedTenants")
+        .filter((q) => q.eq(q.field("linkedUserId"), user._id))
+        .first();
+      if (!imported) return null;
+
+      const property = await ctx.db.get(imported.propertyId);
+      if (!property) return null;
+
+      const propRent = await ctx.db
+        .query("propertyRent")
+        .withIndex("by_property", (q) => q.eq("propertyId", imported.propertyId))
+        .unique();
+      const propAgreement = await ctx.db
+        .query("propertyAgreement")
+        .withIndex("by_property", (q) => q.eq("propertyId", imported.propertyId))
+        .unique();
+
+      const rentDue = computeNextDueDate(propRent?.monthlyRentalCycle ?? null, null, Date.now());
+
+      const agreementDuration = imported.agreementDuration
+        ? `${imported.agreementDuration} month${imported.agreementDuration > 1 ? "s" : ""}`
+        : propAgreement?.agreementDuration ?? null;
+
+      let agreementEndsLabel: string | null = null;
+      if (imported.moveInDate && agreementDuration) {
+        const parts = imported.moveInDate.split("/");
+        if (parts.length === 3) {
+          const [dd, mm, yyyy] = parts;
+          const moveIn = new Date(parseInt(yyyy), parseInt(mm) - 1, parseInt(dd));
+          const months = parseDurationMonths(agreementDuration);
+          if (months) {
+            const end = new Date(moveIn);
+            end.setMonth(end.getMonth() + months);
+            agreementEndsLabel = end.toLocaleDateString("en-IN", { month: "short", year: "numeric" });
+          }
+        }
+      }
+
+      const agreementLabel = agreementDuration
+        ? agreementEndsLabel
+          ? `${agreementDuration} · Ends ${agreementEndsLabel}`
+          : agreementDuration
+        : null;
+
+      return {
+        propertyName: property.name?.trim() || "Your Property",
+        propertyCity: property.city ?? null,
+        assignedRoomNumber: imported.roomNumber ?? null,
+        moveInDate: imported.moveInDate ?? null,
+        rentAmount: imported.rent ?? null,
+        rentDue,
+        agreementLabel,
+        lockInPeriod: propAgreement?.lockInPeriod ?? null,
+        noticePeriod: propAgreement?.noticePeriod ?? null,
+      };
+    }
 
     const property = await ctx.db.get(active.propertyId);
     if (!property) return null;
