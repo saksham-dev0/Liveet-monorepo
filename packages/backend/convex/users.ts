@@ -108,6 +108,33 @@ export const updateUserProfile = mutation({
   },
 });
 
+export const completeTenantOnboarding = mutation({
+  args: {
+    name: v.string(),
+    phone: v.string(),
+    isAlreadyInLiveet: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) throw new Error("Unauthenticated");
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) throw new Error("User not found");
+
+    await ctx.db.patch(user._id, {
+      name: args.name,
+      phone: args.phone,
+      isAlreadyInLiveet: args.isAlreadyInLiveet,
+      hasCompletedOnboarding: true,
+    });
+  },
+});
+
 export const generateProfileImageUploadUrl = mutation({
   args: {},
   handler: async (ctx) => {

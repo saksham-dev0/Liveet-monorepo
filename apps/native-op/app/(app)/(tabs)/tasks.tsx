@@ -149,20 +149,18 @@ export default function TasksScreen() {
                   styles.taskCardPressable,
                   pressed ? { opacity: 0.92 } : null,
                 ]}
-                onPress={() =>
-                  router.push(
-                    {
-                      pathname: "/(app)/tasks/[applicationId]",
-                      params: {
-                        applicationId: task.id,
-                        taskDescription: task.description,
-                        priority: task.priority,
-                        dueLabel: task.dueLabel,
-                        tenantName: task.tenantName,
-                      },
-                    } as unknown as Href,
-                  )
-                }
+                onPress={() => {
+                  router.push({
+                    pathname: "/(app)/tasks/[applicationId]",
+                    params: {
+                      applicationId: task.id,
+                      taskDescription: task.description,
+                      priority: task.priority,
+                      dueLabel: task.dueLabel,
+                      tenantName: task.tenantName,
+                    },
+                  } as unknown as Href);
+                }}
               >
                 <View style={styles.taskTopRow}>
                   <View

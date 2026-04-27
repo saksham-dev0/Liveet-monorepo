@@ -9,6 +9,7 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useSignIn, useSignUp, useOAuth } from "@clerk/clerk-expo";
+import { useConvex } from "convex/react";
 import { useSyncUserWithConvex } from "../hooks/useSyncUserWithConvex";
 
 type AuthStep = "email" | "otp";
@@ -28,15 +29,39 @@ export default function AuthScreen() {
   const [error, setError] = useState<string | null>(null);
 
   const { syncUser } = useSyncUserWithConvex();
+  const convex = useConvex();
 
   const googleOAuth = useOAuth({ strategy: "oauth_google" });
   const appleOAuth = useOAuth({ strategy: "oauth_apple" });
 
-  const navigateAfterAuth = useCallback(async () => {
-    // Kick off Convex user sync, but don't block navigation on it.
-    void syncUser();
-    router.replace("/(app)");
-  }, [router, syncUser]);
+  const navigateAfterAuth = useCallback(async (newUser?: boolean) => {
+    await syncUser();
+    if (newUser) {
+      // New signup — always go to onboarding
+      router.replace("/(onboarding)" as any);
+      return;
+    }
+    // Existing user — check if they completed onboarding (handles old records with undefined)
+    try {
+      let user = null;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        user = await (convex as any).query("users:getCurrentUser", {});
+        if (user !== null) break;
+        if (attempt < 4) {
+          await new Promise((resolve) => setTimeout(resolve, 300 + attempt * 300));
+        }
+      }
+      if (user?.hasCompletedOnboarding === false) {
+        // Explicitly false means new user who hasn't completed — this shouldn't happen here
+        // but guard anyway
+        router.replace("/(onboarding)" as any);
+      } else {
+        router.replace("/(app)");
+      }
+    } catch {
+      router.replace("/(app)");
+    }
+  }, [convex, router, syncUser]);
 
   const handleSendCode = useCallback(async () => {
     if (!signInLoaded || !signUpLoaded) return;
@@ -222,7 +247,7 @@ export default function AuthScreen() {
             if (result.createdSessionId) {
               await setSignUpActive({ session: result.createdSessionId });
             }
-            await navigateAfterAuth();
+            await navigateAfterAuth(true);
             return;
           }
 

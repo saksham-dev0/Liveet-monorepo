@@ -19,6 +19,7 @@ interface ParsedTenant {
   deposit?: number;
   agreementDuration?: number;
   moveInDate?: string;
+  paymentStatus?: "paid" | "pending";
 }
 
 interface ParsedImportData {
@@ -147,6 +148,7 @@ For each tenant row, extract:
 - deposit: Security deposit amount (number only)
 - agreementDuration: Agreement duration in months (number only)
 - moveInDate: Move-in date in DD/MM/YYYY format
+- paymentStatus: Current payment/rent status. Map to "paid" or "pending". Look for columns like "Payment Status", "Rent Status", "Status", "Payment", "Paid/Pending". If clearly paid/cleared map to "paid", if due/pending/unpaid map to "pending". Omit if not present.
 
 IMPORTANT RULES:
 - Be smart about column header matching. Headers might be in Hindi, abbreviated, or use different naming conventions.
@@ -173,7 +175,8 @@ Return ONLY valid JSON (no markdown, no code fences) in this exact format:
       "rent": 0,
       "deposit": 0,
       "agreementDuration": 0,
-      "moveInDate": "DD/MM/YYYY or null"
+      "moveInDate": "DD/MM/YYYY or null",
+      "paymentStatus": "paid|pending|null"
     }
   ]
 }

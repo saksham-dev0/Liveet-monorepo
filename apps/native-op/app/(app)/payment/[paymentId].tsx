@@ -192,8 +192,10 @@ export default function PaymentDetailScreen() {
               {formatPeriod(detail.periodStart, detail.periodEnd)}
             </Text>
           </View>
-          <View style={s.paidBadge}>
-            <Text style={s.paidBadgeText}>Paid</Text>
+          <View style={[s.paidBadge, detail.status === "pending" && s.pendingBadge]}>
+            <Text style={[s.paidBadgeText, detail.status === "pending" && s.pendingBadgeText]}>
+              {detail.status === "paid" ? "Paid" : "Pending"}
+            </Text>
           </View>
         </View>
 
@@ -392,6 +394,12 @@ const s = StyleSheet.create({
     fontSize: 13,
     fontWeight: "700",
     color: "#15803D",
+  },
+  pendingBadge: {
+    backgroundColor: "#FFFBEB",
+  },
+  pendingBadgeText: {
+    color: "#B45309",
   },
   tenantRow: {
     flexDirection: "row",

@@ -1086,6 +1086,42 @@ export const listActiveRoomAssignments = query({
       });
     }
 
+    // Include imported tenants that have a room assigned and haven't linked yet
+    const importedList = await ctx.db
+      .query("importedTenants")
+      .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+      .collect();
+
+    for (const it of importedList) {
+      if (!it.roomId || it.linkedUserId) continue; // linkedUserId = already counted via tenantMoveInApplications
+
+      const hasPendingPayment = it.paymentStatus !== "paid";
+
+      // Compute isRentDue from moveInDate + agreementDuration
+      let isRentDue = false;
+      if (!hasPendingPayment) {
+        const parsedMoveIn = (() => {
+          if (!it.moveInDate) return null;
+          const parts = it.moveInDate.trim().split("/");
+          if (parts.length !== 3) return null;
+          const [dd, mm, yyyy] = parts.map(Number);
+          if (!dd || !mm || !yyyy || yyyy < 2000) return null;
+          return Date.UTC(yyyy, mm - 1, dd);
+        })();
+        const startMs = parsedMoveIn ?? now;
+        const months = typeof it.agreementDuration === "number" && it.agreementDuration > 0 ? it.agreementDuration : 1;
+        const paidUntilDate = new Date(startMs);
+        paidUntilDate.setMonth(paidUntilDate.getMonth() + months);
+        isRentDue = now > paidUntilDate.getTime() + gracePeriodMs;
+      }
+
+      result.push({
+        roomId: it.roomId as string,
+        hasPendingPayment,
+        isRentDue,
+      });
+    }
+
     return result;
   },
 });

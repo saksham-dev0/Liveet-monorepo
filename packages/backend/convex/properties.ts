@@ -333,54 +333,34 @@ export const getDashboardPropertyStats = query({
     let vacantUnits = 0;
     let occupiedUnits = 0;
     let totalPaidRentAmount = 0;
-    /** Tenants who completed E-KYC / move-in for any of this operator's properties (distinct users). */
-    const occupantsWithKyc = new Set<Id<"users">>();
+    let totalOccupants = 0;
     const roomOptionCache = new Map<Id<"roomOptions">, Doc<"roomOptions"> | null>();
 
     for (const p of properties) {
       const total = p.totalUnits ?? 0;
-      let vacant = p.vacantUnits;
-      if (vacant === undefined && total > 0) {
-        const rooms = await ctx.db
-          .query("rooms")
-          .withIndex("by_property", (q) => q.eq("propertyId", p._id))
-          .take(1000);
-        const occupiedByRooms = rooms.length;
-        vacant = Math.max(0, total - occupiedByRooms);
-      }
-      const vacantN = vacant ?? 0;
-      vacantUnits += vacantN;
-      occupiedUnits += Math.max(0, total - vacantN);
 
       const moveInApps = await ctx.db
         .query("tenantMoveInApplications")
         .withIndex("by_property", (q) => q.eq("propertyId", p._id))
         .take(500);
+
+      const realOccupantIds = new Set<Id<"users">>();
       for (const app of moveInApps) {
         if (app.moveOutDate) continue;
         if (isMoveInKycComplete(app)) {
-          occupantsWithKyc.add(app.tenantUserId);
+          realOccupantIds.add(app.tenantUserId);
         }
 
-        if (app.paymentStatus !== "paid" || !app.selectedRoomOptionId) {
-          continue;
-        }
+        if (app.paymentStatus !== "paid" || !app.selectedRoomOptionId) continue;
 
-        const selectedRoomOptionId = app.selectedRoomOptionId;
-        let roomOption = roomOptionCache.get(selectedRoomOptionId);
+        let roomOption = roomOptionCache.get(app.selectedRoomOptionId);
         if (roomOption === undefined) {
-          roomOption = await ctx.db.get(selectedRoomOptionId);
-          roomOptionCache.set(selectedRoomOptionId, roomOption);
+          roomOption = await ctx.db.get(app.selectedRoomOptionId);
+          roomOptionCache.set(app.selectedRoomOptionId, roomOption);
         }
-        if (!roomOption || roomOption.propertyId !== p._id) {
-          continue;
-        }
+        if (!roomOption || roomOption.propertyId !== p._id) continue;
         const rentAmount = roomOption.rentAmount;
-        if (
-          typeof rentAmount === "number" &&
-          !Number.isNaN(rentAmount) &&
-          rentAmount > 0
-        ) {
+        if (typeof rentAmount === "number" && !Number.isNaN(rentAmount) && rentAmount > 0) {
           const rentMonths = parseDurationMonths(app.onboardingAgreementDuration, "getDashboardPropertyStats");
           const securityDeposit =
             typeof app.onboardingSecurityDeposit === "number" && app.onboardingSecurityDeposit > 0
@@ -389,12 +369,32 @@ export const getDashboardPropertyStats = query({
           totalPaidRentAmount += rentAmount * rentMonths + securityDeposit;
         }
       }
+
+      // Count imported tenants as occupants (not yet linked to a real user account)
+      const importedList = await ctx.db
+        .query("importedTenants")
+        .withIndex("by_property", (q) => q.eq("propertyId", p._id))
+        .take(500);
+      let importedOccupants = 0;
+      for (const it of importedList) {
+        if (it.linkedUserId) continue; // already counted via realOccupantIds
+        importedOccupants++;
+        if (it.paymentStatus === "paid" && typeof it.rent === "number" && it.rent > 0) {
+          totalPaidRentAmount += it.rent * (it.agreementDuration ?? 1);
+        }
+      }
+
+      const propertyOccupants = realOccupantIds.size + importedOccupants;
+      totalOccupants += propertyOccupants;
+      const propertyVacant = Math.max(0, total - propertyOccupants);
+      vacantUnits += propertyVacant;
+      occupiedUnits += propertyOccupants;
     }
 
     return {
       vacantUnits,
       occupiedUnits,
-      occupantsWithKyc: occupantsWithKyc.size,
+      occupantsWithKyc: totalOccupants,
       totalPaidRentAmount,
     };
   },
@@ -615,7 +615,7 @@ export const listOnboardedTenantsForManage = query({
     collected.sort((a, b) => b._creationTime - a._creationTime);
 
     const out: Array<{
-      applicationId: Id<"tenantMoveInApplications">;
+      applicationId: string;
       propertyId: Id<"properties">;
       propertyName: string;
       legalNameAsOnId: string;
@@ -625,6 +625,7 @@ export const listOnboardedTenantsForManage = query({
       paymentStatus: "paid" | "pending" | undefined;
       isRentDue: boolean;
       rentDueAmount: number;
+      isImported: boolean;
     }> = [];
 
     for (const row of collected.slice(0, limit)) {
@@ -640,10 +641,44 @@ export const listOnboardedTenantsForManage = query({
         paymentStatus: row.paymentStatus,
         isRentDue: row.isRentDue,
         rentDueAmount: row.rentDueAmount,
+        isImported: false,
       });
     }
 
-    return { items: out };
+    // Also include imported tenants (bulk-imported, no real user account yet)
+    for (const p of properties) {
+      const importedList = await ctx.db
+        .query("importedTenants")
+        .withIndex("by_property", (q) => q.eq("propertyId", p._id))
+        .take(200);
+
+      const propertyName = p.name?.trim() || "Unnamed property";
+      for (const it of importedList) {
+        // Skip if already linked to a real user (they'll show via tenantMoveInApplications)
+        if (it.linkedUserId) continue;
+        out.push({
+          applicationId: `imported_${it._id}`,
+          propertyId: p._id,
+          propertyName,
+          legalNameAsOnId: it.name,
+          imageUrl: undefined,
+          phone: it.phone ?? "",
+          moveInDate: it.moveInDate,
+          paymentStatus: it.paymentStatus,
+          isRentDue: false,
+          rentDueAmount: 0,
+          isImported: true,
+        });
+      }
+    }
+
+    out.sort((a, b) => {
+      // Real tenants first, then imported
+      if (a.isImported !== b.isImported) return a.isImported ? 1 : -1;
+      return 0;
+    });
+
+    return { items: out.slice(0, limit) };
   },
 });
 
@@ -852,6 +887,81 @@ export const getTenantManageDetails = query({
         segmentFilled,
         currentTaskLabel,
         steps: steps.map((s) => ({ key: s.key, label: s.label, done: s.done })),
+      },
+    };
+  },
+});
+
+/** Detail view for a bulk-imported tenant (no real user account yet). */
+export const getImportedTenantManageDetails = query({
+  args: { importedTenantId: v.id("importedTenants") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) return { notFound: true as const };
+
+    const operator = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!operator) return { notFound: true as const };
+
+    const it = await ctx.db.get(args.importedTenantId);
+    if (!it) return { notFound: true as const };
+
+    const property = await ctx.db.get(it.propertyId);
+    if (!property || property.userId !== operator._id) return { notFound: true as const };
+
+    const roomOption = it.roomId
+      ? await (async () => {
+          const room = await ctx.db.get(it.roomId!);
+          return room?.roomOptionId ? await ctx.db.get(room.roomOptionId) : null;
+        })()
+      : null;
+
+    const metaLine = [
+      it.roomType ?? (roomOption?.category ?? ""),
+      it.roomNumber ? `Room ${it.roomNumber}` : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+
+    return {
+      notFound: false as const,
+      applicationId: `imported_${it._id}`,
+      propertyId: property._id,
+      propertyName: property.name?.trim() || "Unnamed property",
+      legalNameAsOnId: it.name,
+      tenantImageUrl: undefined,
+      phone: it.phone ?? "",
+      email: it.email ?? "",
+      moveInDate: it.moveInDate,
+      paymentStatus: undefined,
+      paymentMethod: undefined,
+      assignedRoomId: it.roomId,
+      assignedRoomNumber: it.roomNumber,
+      selectedRoomOptionId: undefined,
+      rentAmount: it.rent,
+      onboardingAgreementDuration: it.agreementDuration
+        ? `${it.agreementDuration} months`
+        : undefined,
+      metaLine: metaLine || "Imported tenant",
+      agreementDuration: undefined,
+      agreementLockIn: undefined,
+      isImported: true as const,
+      checklist: {
+        percentRemaining: 100,
+        completedCount: 0,
+        totalSteps: 4,
+        segmentFilled: [false, false, false, false],
+        currentTaskLabel: "Awaiting tenant signup",
+        steps: [
+          { key: "contact", label: "Tenant contact & profile", done: false },
+          { key: "payment", label: "Rent payment", done: false },
+          { key: "agreement", label: "Rental agreement signed", done: false },
+          { key: "emergency", label: "Emergency contacts", done: false },
+        ],
       },
     };
   },
@@ -1265,8 +1375,8 @@ export const getRecentCreditedTransactionsForDashboard = query({
  * extend-stay payments (rentTransactions) for the operator's active property.
  */
 export const getMonthlyRentChartData = query({
-  args: {},
-  handler: async (ctx) => {
+  args: { year: v.optional(v.number()) },
+  handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity?.tokenIdentifier) return null;
 
@@ -1288,50 +1398,35 @@ export const getMonthlyRentChartData = query({
         .withIndex("by_user", (q) => q.eq("userId", user._id))
         .take(500);
     }
+    const year = args.year ?? new Date().getUTCFullYear();
     if (properties.length === 0) {
-      return { weeks: [0, 0, 0, 0] };
+      return { months: new Array(12).fill(0) as number[], year };
     }
 
-    const propertyIdSet = new Set(properties.map((p) => p._id));
+    const yearStart = Date.UTC(year, 0, 1);
+    const yearEnd = Date.UTC(year + 1, 0, 1);
 
-    // Compute week start timestamps for the current month (UTC)
-    const now = new Date();
-    const monthStart = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
-    );
-    const monthEnd = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1),
-    );
+    // monthTotals[0] = Jan, [11] = Dec
+    const monthTotals: number[] = new Array(12).fill(0);
 
-    // Week boundaries: 1–7, 8–14, 15–21, 22–end
-    const weekBoundaries = [
-      { start: monthStart.getTime(), end: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 8)).getTime() },
-      { start: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 8)).getTime(), end: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 15)).getTime() },
-      { start: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 15)).getTime(), end: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 22)).getTime() },
-      { start: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 22)).getTime(), end: monthEnd.getTime() },
-    ];
-
-    const weekTotals = [0, 0, 0, 0];
-
-    function getWeekIndex(ts: number): number {
-      for (let i = 0; i < weekBoundaries.length; i++) {
-        const wb = weekBoundaries[i]!;
-        if (ts >= wb.start && ts < wb.end) return i;
-      }
-      return -1;
+    function getMonthIndex(ts: number): number {
+      if (ts < yearStart || ts >= yearEnd) return -1;
+      return new Date(ts).getUTCMonth();
     }
 
-    function parseDurationMonthsLocal(duration: string): number | null {
-      const s = duration.trim().toLowerCase();
-      const monthMatch = s.match(/^(\d+)\s*month/);
-      if (monthMatch) return parseInt(monthMatch[1], 10);
-      const yearMatch = s.match(/^(\d+)\s*year/);
-      if (yearMatch) return parseInt(yearMatch[1], 10) * 12;
-      return null;
+    // Parse "DD/MM/YYYY" → UTC timestamp. Returns null if invalid.
+    function parseDDMMYYYY(s: string | undefined): number | null {
+      if (!s) return null;
+      const parts = s.trim().split("/");
+      if (parts.length !== 3) return null;
+      const [dd, mm, yyyy] = parts.map(Number);
+      if (!dd || !mm || !yyyy || yyyy < 2000) return null;
+      const ts = Date.UTC(yyyy, mm - 1, dd);
+      return isNaN(ts) ? null : ts;
     }
 
-    // Aggregate initial move-in payments from tenantMoveInApplications
     const roomOptionCache = new Map<Id<"roomOptions">, Doc<"roomOptions"> | null>();
+
     for (const property of properties) {
       const apps = await ctx.db
         .query("tenantMoveInApplications")
@@ -1340,19 +1435,17 @@ export const getMonthlyRentChartData = query({
 
       for (const app of apps) {
         if (app.paymentStatus !== "paid" || !app.selectedRoomOptionId) continue;
-        const ts = app.paidAt ?? app._creationTime;
-        if (ts < monthStart.getTime() || ts >= monthEnd.getTime()) continue;
-        const weekIdx = getWeekIndex(ts);
-        if (weekIdx === -1) continue;
+        // Use paidAt → parsed moveInDate → _creationTime (last resort)
+        const ts = app.paidAt ?? parseDDMMYYYY(app.moveInDate) ?? app._creationTime;
+        const mIdx = getMonthIndex(ts);
+        if (mIdx === -1) continue;
 
         let roomOption = roomOptionCache.get(app.selectedRoomOptionId);
         if (roomOption === undefined) {
           roomOption = await ctx.db.get(app.selectedRoomOptionId);
           roomOptionCache.set(app.selectedRoomOptionId, roomOption);
         }
-        if (!roomOption) continue;
-        if (!propertyIdSet.has(roomOption.propertyId)) continue;
-
+        if (!roomOption || roomOption.propertyId !== property._id) continue;
         const rentAmount = roomOption.rentAmount;
         if (typeof rentAmount !== "number" || rentAmount <= 0) continue;
 
@@ -1361,29 +1454,39 @@ export const getMonthlyRentChartData = query({
             ? app.onboardingSecurityDeposit
             : 0;
         const rentMonths = parseDurationMonths(app.onboardingAgreementDuration, "getMonthlyRentChartData");
-
-        weekTotals[weekIdx] = (weekTotals[weekIdx] ?? 0) + rentAmount * rentMonths + securityDeposit;
+        monthTotals[mIdx] = (monthTotals[mIdx] ?? 0) + rentAmount * rentMonths + securityDeposit;
       }
-    }
 
-    // Aggregate extend-stay payments from rentTransactions
-    for (const property of properties) {
       const txs = await ctx.db
         .query("rentTransactions")
         .withIndex("by_property", (q) => q.eq("propertyId", property._id))
         .take(500);
-
       for (const tx of txs) {
         if (tx.status !== "paid") continue;
-        const ts = tx._creationTime;
-        if (ts < monthStart.getTime() || ts >= monthEnd.getTime()) continue;
-        const weekIdx = getWeekIndex(ts);
-        if (weekIdx === -1) continue;
-        weekTotals[weekIdx] = (weekTotals[weekIdx] ?? 0) + tx.amount;
+        const mIdx = getMonthIndex(tx._creationTime);
+        if (mIdx === -1) continue;
+        monthTotals[mIdx] = (monthTotals[mIdx] ?? 0) + tx.amount;
+      }
+
+      // Imported tenants: use parsed moveInDate as the bucket date (not _creationTime
+      // which reflects when the operator ran bulk import, not when tenants actually paid)
+      const importedList = await ctx.db
+        .query("importedTenants")
+        .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+        .take(500);
+      for (const it of importedList) {
+        if (it.linkedUserId || it.paymentStatus !== "paid") continue;
+        if (typeof it.rent !== "number" || it.rent <= 0) continue;
+        const ts = parseDDMMYYYY(it.moveInDate) ?? it._creationTime;
+        const mIdx = getMonthIndex(ts);
+        if (mIdx === -1) continue;
+        const itDeposit = typeof it.deposit === "number" && it.deposit > 0 ? it.deposit : 0;
+        const itMonths = typeof it.agreementDuration === "number" && it.agreementDuration > 0 ? it.agreementDuration : 1;
+        monthTotals[mIdx] = (monthTotals[mIdx] ?? 0) + it.rent * itMonths + itDeposit;
       }
     }
 
-    return { weeks: weekTotals };
+    return { months: monthTotals, year };
   },
 });
 
@@ -1482,6 +1585,30 @@ export const getMonthlyGrowth = query({
         const ts = tx._creationTime;
         if (ts >= curStart && ts < curEnd) currentMonth += tx.amount;
         else if (ts >= prevStart && ts < prevEnd) previousMonth += tx.amount;
+      }
+
+      // Imported tenants
+      const importedList = await ctx.db
+        .query("importedTenants")
+        .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+        .take(500);
+      for (const it of importedList) {
+        if (it.linkedUserId || it.paymentStatus !== "paid") continue;
+        if (typeof it.rent !== "number" || it.rent <= 0) continue;
+        const parsedDate = (() => {
+          if (!it.moveInDate) return null;
+          const parts = it.moveInDate.trim().split("/");
+          if (parts.length !== 3) return null;
+          const [dd, mm, yyyy] = parts.map(Number);
+          if (!dd || !mm || !yyyy || yyyy < 2000) return null;
+          return Date.UTC(yyyy, mm - 1, dd);
+        })();
+        const ts = parsedDate ?? it._creationTime;
+        const itMonths = typeof it.agreementDuration === "number" && it.agreementDuration > 0 ? it.agreementDuration : 1;
+        const itDeposit = typeof it.deposit === "number" && it.deposit > 0 ? it.deposit : 0;
+        const total = it.rent * itMonths + itDeposit;
+        if (ts >= curStart && ts < curEnd) currentMonth += total;
+        else if (ts >= prevStart && ts < prevEnd) previousMonth += total;
       }
     }
 
@@ -1683,6 +1810,43 @@ export const getAllPaymentsForOperator = query({
       }
     }
 
+    // Include imported tenants as payment items
+    for (const property of properties) {
+      const importedList = await ctx.db
+        .query("importedTenants")
+        .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+        .take(500);
+      for (const it of importedList) {
+        if (it.linkedUserId) continue; // already handled via tenantMoveInApplications
+        if (!it.paymentStatus) continue; // no payment info to show
+        const rent = typeof it.rent === "number" && it.rent > 0 ? it.rent : 0;
+        if (rent === 0) continue;
+        const months = it.agreementDuration ?? 1;
+        const securityDeposit = typeof it.deposit === "number" ? it.deposit : 0;
+        const periodStart = it._creationTime;
+        const periodEnd = addMonths(periodStart, months);
+        items.push({
+          id: `imported_${it._id}`,
+          applicationId: it._id as any,
+          type: "move_in",
+          tenantName: it.name,
+          tenantImageUrl: undefined,
+          roomNumber: it.roomNumber,
+          propertyName: property.name ?? undefined,
+          amount: rent * months + securityDeposit,
+          rentAmount: rent,
+          months,
+          securityDeposit,
+          paymentMethod: undefined,
+          paidAt: it._creationTime,
+          status: it.paymentStatus,
+          description: "Imported tenant rent",
+          periodStart,
+          periodEnd,
+        });
+      }
+    }
+
     items.sort((a, b) => b.paidAt - a.paidAt);
     return { items };
   },
@@ -1720,7 +1884,45 @@ export const getPaymentDetailForOperator = query({
     let txDoc: Doc<"rentTransactions"> | null = null;
     let isMoveIn = false;
 
-    if (args.encodedId.startsWith("movein_")) {
+    if (args.encodedId.startsWith("imported_")) {
+      const importedId = args.encodedId.slice("imported_".length) as Id<"importedTenants">;
+      const it = await ctx.db.get(importedId);
+      if (!it) return null;
+      const property = await ctx.db.get(it.propertyId);
+      if (!property || property.userId !== user._id) return null;
+      const rent = typeof it.rent === "number" && it.rent > 0 ? it.rent : 0;
+      const months = it.agreementDuration ?? 1;
+      const securityDeposit = typeof it.deposit === "number" ? it.deposit : 0;
+      const periodStart = it._creationTime;
+      const periodEnd = addMonths(periodStart, months);
+      return {
+        encodedId: args.encodedId,
+        applicationId: it._id as any,
+        tenantName: it.name,
+        tenantImageUrl: undefined,
+        tenantPhone: it.phone,
+        roomNumber: it.roomNumber,
+        roomCategory: it.roomType,
+        propertyName: property.name,
+        amount: rent * months + securityDeposit,
+        rentAmount: rent,
+        months,
+        securityDeposit,
+        periodStart,
+        periodEnd,
+        paidAt: it._creationTime,
+        paymentMode: undefined,
+        description: months > 1 ? `Rent ×${months}mo + Security deposit` : "Rent + Security deposit",
+        status: (it.paymentStatus ?? "pending") as "paid" | "pending",
+        agreementDuration: months > 1 ? `${months} months` : "1 month",
+        rentCycle: "Monthly",
+        gracePeriodDays: undefined,
+        summary: {
+          totalPaid: it.paymentStatus === "paid" ? rent * months + securityDeposit : 0,
+          pendingAmount: it.paymentStatus === "paid" ? 0 : rent * months + securityDeposit,
+        },
+      };
+    } else if (args.encodedId.startsWith("movein_")) {
       const appId = args.encodedId.slice("movein_".length) as Id<"tenantMoveInApplications">;
       app = await ctx.db.get(appId);
       isMoveIn = true;
@@ -1846,6 +2048,52 @@ export const getPaymentDetailForOperator = query({
         totalPaid: allTimePaid,
         pendingAmount: pendingMonthlyRent,
       },
+    };
+  },
+});
+
+/**
+ * Returns imported tenant info for the task detail screen.
+ * If the tenant has signed up (linkedUserId set), returns the linked applicationId.
+ */
+export const getImportedTenantTask = query({
+  args: { importedTenantId: v.string() },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) return null;
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) return null;
+
+    const it = await ctx.db.get(args.importedTenantId as Id<"importedTenants">);
+    if (!it) return null;
+
+    const property = await ctx.db.get(it.propertyId);
+    if (!property || property.userId !== user._id) return null;
+
+    let linkedApplicationId: string | null = null;
+    if (it.linkedUserId) {
+      const app = await ctx.db
+        .query("tenantMoveInApplications")
+        .withIndex("by_tenant_and_property", (q) =>
+          q.eq("tenantUserId", it.linkedUserId!).eq("propertyId", it.propertyId),
+        )
+        .unique();
+      linkedApplicationId = app?._id ?? null;
+    }
+
+    return {
+      name: it.name,
+      phone: it.phone,
+      roomNumber: it.roomNumber,
+      propertyName: property.name,
+      isSignedUp: !!it.linkedUserId,
+      linkedApplicationId,
     };
   },
 });
@@ -2050,6 +2298,30 @@ export const getYearlyCollectionTotal = query({
           total += tx.amount;
         }
       }
+
+      // Imported tenants
+      const importedList = await ctx.db
+        .query("importedTenants")
+        .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+        .take(500);
+      for (const it of importedList) {
+        if (it.linkedUserId || it.paymentStatus !== "paid") continue;
+        if (typeof it.rent !== "number" || it.rent <= 0) continue;
+        const parsedDate = (() => {
+          if (!it.moveInDate) return null;
+          const parts = it.moveInDate.trim().split("/");
+          if (parts.length !== 3) return null;
+          const [dd, mm, yyyy] = parts.map(Number);
+          if (!dd || !mm || !yyyy || yyyy < 2000) return null;
+          return Date.UTC(yyyy, mm - 1, dd);
+        })();
+        const ts = parsedDate ?? it._creationTime;
+        if (ts >= yearStart && ts < yearEnd) {
+          const itMonths = typeof it.agreementDuration === "number" && it.agreementDuration > 0 ? it.agreementDuration : 1;
+          const itDeposit = typeof it.deposit === "number" && it.deposit > 0 ? it.deposit : 0;
+          total += it.rent * itMonths + itDeposit;
+        }
+      }
     }
 
     return { total };
@@ -2186,6 +2458,32 @@ export const getDashboardCollectionSummary = query({
             dueAmount: monthlyRent * overdueMonths,
             overdueMonths,
           });
+        }
+      }
+    }
+
+    // Include imported tenants' pending rent in collection summary
+    for (const property of properties) {
+      const importedList = await ctx.db
+        .query("importedTenants")
+        .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+        .take(500);
+      for (const it of importedList) {
+        if (it.linkedUserId) continue; // handled via tenantMoveInApplications
+        const rent = typeof it.rent === "number" && it.rent > 0 ? it.rent : 0;
+        if (it.paymentStatus === "pending" && rent > 0) {
+          pendingAmount += rent;
+          tenantsWithDues.push({
+            applicationId: `imported_${it._id}` as any,
+            tenantName: it.name,
+            imageUrl: undefined,
+            roomNumber: it.roomNumber,
+            dueAmount: rent,
+            overdueMonths: 1,
+          });
+        }
+        if (it.paymentStatus === "paid" && rent > 0 && it._creationTime >= windowStart) {
+          receivedLast24h += rent;
         }
       }
     }
@@ -2557,6 +2855,36 @@ export const getRoomAssignmentTasksForOperator = query({
           _creationTime: app._creationTime,
         });
 
+        if (collected.length >= limit * 3) break;
+      }
+      if (collected.length >= limit * 3) break;
+    }
+
+    // Add reminder tasks for imported tenants with pending payment status
+    for (const property of properties) {
+      const importedList = await ctx.db
+        .query("importedTenants")
+        .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+        .take(300);
+      for (const it of importedList) {
+        if (it.linkedUserId) continue; // already tracked as real tenant
+        if (it.paymentStatus !== "pending") continue;
+        const rent = typeof it.rent === "number" && it.rent > 0 ? it.rent : 0;
+        const formattedRent = rent > 0
+          ? (rent >= 1000 ? `₹${(rent / 1000).toFixed(1)}k` : `₹${rent}`)
+          : "";
+        const desc = formattedRent
+          ? `Send rent reminder — ${formattedRent} pending`
+          : "Send rent reminder — payment pending";
+        collected.push({
+          applicationId: `imported_${it._id}` as any,
+          priority: "High" as RoomTaskPriority,
+          description: desc,
+          tenantName: it.name,
+          dueLabel: "Pending payment",
+          _dueTs: null,
+          _creationTime: it._creationTime,
+        });
         if (collected.length >= limit * 3) break;
       }
       if (collected.length >= limit * 3) break;

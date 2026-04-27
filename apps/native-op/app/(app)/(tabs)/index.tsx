@@ -17,7 +17,7 @@ import { useAuth } from "@clerk/clerk-expo";
 import { useConvex } from "convex/react";
 import { useFocusEffect } from "@react-navigation/native";
 
-const WEEK_LABELS = ["Week 1", "Week 2", "Week 3", "Week 4"];
+const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 const DASHBOARD_STAT_CARDS = [
   { label: "Occupants" },
@@ -114,7 +114,8 @@ export default function TestScreen() {
   const [recentTransactions, setRecentTransactions] = useState<
     RecentCreditedTransactionItem[] | null
   >(null);
-  const [monthlyChartData, setMonthlyChartData] = useState<number[] | null>(null);
+  const [chartYear, setChartYear] = useState<number>(new Date().getFullYear());
+  const [monthlyChartData, setMonthlyChartData] = useState<{ months: number[]; year: number } | null>(null);
   const [collectionSummary, setCollectionSummary] = useState<{
     pendingAmount: number;
     receivedLast24h: number;
@@ -242,17 +243,22 @@ export default function TestScreen() {
     }
   }, [convex]);
 
-  const refreshMonthlyChartData = useCallback(async () => {
+  const refreshMonthlyChartData = useCallback(async (year?: number) => {
     try {
+      const targetYear = year ?? chartYear;
       const data = await (convex as any).query(
         "properties:getMonthlyRentChartData",
-        {},
+        { year: targetYear },
       );
-      setMonthlyChartData(Array.isArray(data?.weeks) ? data.weeks : [0, 0, 0, 0]);
+      if (Array.isArray(data?.months)) {
+        setMonthlyChartData({ months: data.months, year: data.year ?? targetYear });
+      } else {
+        setMonthlyChartData({ months: new Array(12).fill(0), year: targetYear });
+      }
     } catch {
-      setMonthlyChartData([0, 0, 0, 0]);
+      setMonthlyChartData({ months: new Array(12).fill(0), year: chartYear });
     }
-  }, [convex]);
+  }, [convex, chartYear]);
 
   const openRemindModal = useCallback(async () => {
     setRemindModalVisible(true);
@@ -332,7 +338,8 @@ export default function TestScreen() {
         setRecentTransactions(null);
         setPropertyName(null);
         setListingChecklistComplete(null);
-        setMonthlyChartData(null);
+        setMonthlyChartData(null as any);
+        setChartYear(new Date().getFullYear());
         setCollectionSummary(null);
         setMonthlyGrowth(null);
         setOverdueTenants(null);
@@ -441,7 +448,7 @@ export default function TestScreen() {
         {/* Balance Card */}
         <View style={styles.heroCard}>
           <View style={styles.heroHeader}>
-            <Text style={styles.heroLabel}>Total Balance</Text>
+            <Text style={styles.heroLabel}>This Month</Text>
             {monthlyGrowth !== null && monthlyGrowth.previousMonth > 0 && (() => {
               const pct = ((monthlyGrowth.currentMonth - monthlyGrowth.previousMonth) / monthlyGrowth.previousMonth) * 100;
               const up = pct >= 0;
@@ -457,7 +464,7 @@ export default function TestScreen() {
           </View>
 
           <Text style={styles.heroAmount}>
-            {formatInrAmount(dashboardStats?.totalPaidRentAmount ?? 0)}
+            {formatInrAmount(monthlyGrowth?.currentMonth ?? 0)}
           </Text>
 
           {/* Action Buttons */}
@@ -491,7 +498,7 @@ export default function TestScreen() {
               {
                 maxHeight: moreAnim.interpolate({
                   inputRange: [0, 1],
-                  outputRange: [0, 120],
+                  outputRange: [0, 160],
                 }),
                 opacity: moreAnim,
               },
@@ -509,9 +516,16 @@ export default function TestScreen() {
                 </View>
                 <View style={styles.moreDropdownDivider} />
                 <View>
-                  <Text style={styles.moreDropdownLabel}>Collected this year</Text>
+                  <Text style={styles.moreDropdownLabel}>This year</Text>
                   <Text style={styles.moreDropdownValue}>
                     {yearlyTotal === null ? "—" : compactInr(yearlyTotal)}
+                  </Text>
+                </View>
+                <View style={styles.moreDropdownDivider} />
+                <View>
+                  <Text style={styles.moreDropdownLabel}>Till date</Text>
+                  <Text style={styles.moreDropdownValue}>
+                    {dashboardStats === null ? "—" : compactInr(dashboardStats.totalPaidRentAmount)}
                   </Text>
                 </View>
               </View>
@@ -582,51 +596,93 @@ export default function TestScreen() {
           </View>
         )}
 
-        {/* Spending Chart */}
+        {/* Yearly Collection Chart */}
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Collection this month</Text>
+          <View style={styles.transactionsHeader}>
+            <Text style={styles.cardTitle}>
+              Collection
+            </Text>
+            {monthlyChartData && (() => {
+              const total = monthlyChartData.months.reduce((s, v) => s + v, 0);
+              return total > 0 ? (
+                <Text style={styles.chartYearTotal}>
+                  {total >= 100000
+                    ? `₹${(total / 100000).toFixed(1)}L`
+                    : total >= 1000
+                    ? `₹${(total / 1000).toFixed(1)}k`
+                    : `₹${Math.round(total)}`}
+                </Text>
+              ) : null;
+            })()}
+          </View>
+          <View style={styles.chartYearSelector}>
+            <Pressable
+              style={styles.chartYearArrow}
+              onPress={() => {
+                const y = chartYear - 1;
+                setChartYear(y);
+                setMonthlyChartData(null);
+                void refreshMonthlyChartData(y);
+              }}
+            >
+              <Ionicons name="chevron-back" size={16} color="#1E293B" />
+            </Pressable>
+            <Text style={styles.chartYearLabel}>{chartYear}</Text>
+            <Pressable
+              style={styles.chartYearArrow}
+              disabled={chartYear >= new Date().getFullYear()}
+              onPress={() => {
+                const y = chartYear + 1;
+                setChartYear(y);
+                setMonthlyChartData(null);
+                void refreshMonthlyChartData(y);
+              }}
+            >
+              <Ionicons name="chevron-forward" size={16} color={chartYear >= new Date().getFullYear() ? "#D1D5DB" : "#1E293B"} />
+            </Pressable>
+          </View>
           {monthlyChartData === null ? (
             <Text style={styles.kycEmptyText}>Loading…</Text>
-          ) : monthlyChartData.every((v) => v === 0) ? (
-            <Text style={styles.kycEmptyText}>
-              No rent collected this month yet.
-            </Text>
+          ) : monthlyChartData.months.every((v) => v === 0) ? (
+            <Text style={styles.kycEmptyText}>No rent collected this year yet.</Text>
           ) : (() => {
-            const chartMax = Math.max(...monthlyChartData, 1);
-            const ySteps = [
-              Math.round(chartMax),
-              Math.round(chartMax * 0.75),
-              Math.round(chartMax * 0.5),
-              Math.round(chartMax * 0.25),
-            ];
+            const chartMax = Math.max(...monthlyChartData.months, 1);
+            const now = new Date();
+            const currentMonth = chartYear === now.getFullYear() ? now.getMonth() : -1;
             return (
-              <View style={styles.chartContainer}>
-                <View style={styles.chartBars}>
-                  {WEEK_LABELS.map((label, i) => {
-                    const value = monthlyChartData[i] ?? 0;
-                    return (
-                      <View key={label} style={styles.barGroup}>
-                        <View style={styles.barWrapper}>
-                          <View
-                            style={[
-                              styles.bar,
-                              { height: Math.max((value / chartMax) * 120, value > 0 ? 4 : 0) },
-                            ]}
-                          />
-                        </View>
-                        <Text style={styles.barLabel}>{label}</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.chartScrollContent}
+              >
+                {MONTH_LABELS.map((label, i) => {
+                  const value = monthlyChartData.months[i] ?? 0;
+                  const isCurrentMonth = i === currentMonth;
+                  return (
+                    <View key={label} style={styles.barGroup}>
+                      <Text style={styles.barValueLabel}>
+                        {value >= 1000
+                          ? `₹${(value / 1000).toFixed(0)}k`
+                          : value > 0
+                          ? `₹${value}`
+                          : ""}
+                      </Text>
+                      <View style={styles.barWrapper}>
+                        <View
+                          style={[
+                            styles.bar,
+                            isCurrentMonth && styles.barCurrent,
+                            { height: Math.max((value / chartMax) * 100, value > 0 ? 4 : 0) },
+                          ]}
+                        />
                       </View>
-                    );
-                  })}
-                </View>
-                <View style={styles.chartYAxis}>
-                  {ySteps.map((step) => (
-                    <Text key={step} style={styles.yAxisLabel}>
-                      {step >= 1000 ? `₹${Math.round(step / 1000)}k` : `₹${step}`}
-                    </Text>
-                  ))}
-                </View>
-              </View>
+                      <Text style={[styles.barLabel, isCurrentMonth && styles.barLabelCurrent]}>
+                        {label}
+                      </Text>
+                    </View>
+                  );
+                })}
+              </ScrollView>
             );
           })()}
         </View>
@@ -1162,41 +1218,70 @@ const styles = StyleSheet.create({
     color: "#1a1a1a",
     marginRight: 8,
   },
-  chartContainer: {
+  chartScrollContent: {
     flexDirection: "row",
     alignItems: "flex-end",
-  },
-  chartBars: {
-    flex: 1,
-    flexDirection: "row",
-    justifyContent: "space-around",
-    alignItems: "flex-end",
+    paddingBottom: 4,
+    gap: 6,
   },
   barGroup: {
     alignItems: "center",
+    width: 44,
+  },
+  barValueLabel: {
+    fontSize: 9,
+    color: "#9CA3AF",
+    marginBottom: 3,
+    textAlign: "center",
   },
   barWrapper: {
-    height: 120,
+    height: 100,
     justifyContent: "flex-end",
   },
   bar: {
-    width: 40,
+    width: 28,
     backgroundColor: "#1E293B",
-    borderRadius: 6,
+    borderRadius: 5,
+  },
+  barCurrent: {
+    backgroundColor: "#D4F542",
   },
   barLabel: {
-    fontSize: 12,
-    color: "#6B7280",
-    marginTop: 8,
-  },
-  chartYAxis: {
-    justifyContent: "space-between",
-    height: 120,
-    marginLeft: 8,
-  },
-  yAxisLabel: {
     fontSize: 11,
-    color: "#9CA3AF",
+    color: "#6B7280",
+    marginTop: 6,
+  },
+  barLabelCurrent: {
+    color: "#1E293B",
+    fontWeight: "700",
+  },
+  chartYearTotal: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#1E293B",
+    marginBottom: 16,
+  },
+  chartYearSelector: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 8,
+    marginBottom: 16,
+  },
+  chartYearArrow: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    backgroundColor: "#F3F4F6",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  chartYearLabel: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#1E293B",
+    minWidth: 40,
+    textAlign: "center",
   },
   transactionsHeader: {
     flexDirection: "row",
