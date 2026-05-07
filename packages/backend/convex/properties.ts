@@ -2331,6 +2331,115 @@ export const getYearlyCollectionTotal = query({
 });
 
 /**
+ * Returns current-year and previous-year collection totals for the year-over-year
+ * growth badge in the Balance Card hero.
+ */
+export const getYearlyGrowth = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.tokenIdentifier) return null;
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) return null;
+
+    let properties: Doc<"properties">[];
+    if (user.primaryPropertyId) {
+      const primary = await ctx.db.get(user.primaryPropertyId);
+      properties = primary && primary.userId === user._id ? [primary] : [];
+    } else {
+      properties = await ctx.db
+        .query("properties")
+        .withIndex("by_user", (q) => q.eq("userId", user._id))
+        .take(500);
+    }
+    if (properties.length === 0) return { currentYear: 0, previousYear: 0 };
+
+    const now = new Date();
+    const curYearStart = Date.UTC(now.getUTCFullYear(), 0, 1);
+    const curYearEnd = Date.UTC(now.getUTCFullYear() + 1, 0, 1);
+    const prevYearStart = Date.UTC(now.getUTCFullYear() - 1, 0, 1);
+    const prevYearEnd = curYearStart;
+
+    let currentYear = 0;
+    let previousYear = 0;
+    const roomOptionCache = new Map<Id<"roomOptions">, Doc<"roomOptions"> | null>();
+
+    for (const property of properties) {
+      const apps = await ctx.db
+        .query("tenantMoveInApplications")
+        .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+        .take(500);
+
+      for (const app of apps) {
+        if (app.paymentStatus !== "paid" || !app.selectedRoomOptionId) continue;
+        const ts = app.paidAt ?? app._creationTime;
+        const inCur = ts >= curYearStart && ts < curYearEnd;
+        const inPrev = ts >= prevYearStart && ts < prevYearEnd;
+        if (!inCur && !inPrev) continue;
+
+        let roomOption = roomOptionCache.get(app.selectedRoomOptionId);
+        if (roomOption === undefined) {
+          roomOption = await ctx.db.get(app.selectedRoomOptionId);
+          roomOptionCache.set(app.selectedRoomOptionId, roomOption);
+        }
+        if (!roomOption || roomOption.propertyId !== property._id) continue;
+        const rent = roomOption.rentAmount ?? 0;
+        const months = parseDurationMonths(app.onboardingAgreementDuration, "getYearlyGrowth");
+        const security =
+          typeof app.onboardingSecurityDeposit === "number" && app.onboardingSecurityDeposit > 0
+            ? app.onboardingSecurityDeposit
+            : 0;
+        const total = rent * months + security;
+        if (inCur) currentYear += total;
+        else previousYear += total;
+      }
+
+      const txs = await ctx.db
+        .query("rentTransactions")
+        .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+        .take(500);
+      for (const tx of txs) {
+        if (tx.status !== "paid") continue;
+        const ts = tx._creationTime;
+        if (ts >= curYearStart && ts < curYearEnd) currentYear += tx.amount;
+        else if (ts >= prevYearStart && ts < prevYearEnd) previousYear += tx.amount;
+      }
+
+      const importedList = await ctx.db
+        .query("importedTenants")
+        .withIndex("by_property", (q) => q.eq("propertyId", property._id))
+        .take(500);
+      for (const it of importedList) {
+        if (it.paymentStatus !== "paid") continue;
+        if (typeof it.rent !== "number" || it.rent <= 0) continue;
+        const parsedDate = (() => {
+          if (!it.moveInDate) return null;
+          const parts = it.moveInDate.trim().split("/");
+          if (parts.length !== 3) return null;
+          const [dd, mm, yyyy] = parts.map(Number);
+          if (!dd || !mm || !yyyy || yyyy < 2000) return null;
+          return Date.UTC(yyyy, mm - 1, dd);
+        })();
+        const ts = parsedDate ?? it._creationTime;
+        const itMonths = typeof it.agreementDuration === "number" && it.agreementDuration > 0 ? it.agreementDuration : 1;
+        const itDeposit = typeof it.deposit === "number" && it.deposit > 0 ? it.deposit : 0;
+        const total = it.rent * itMonths + itDeposit;
+        if (ts >= curYearStart && ts < curYearEnd) currentYear += total;
+        else if (ts >= prevYearStart && ts < prevYearEnd) previousYear += total;
+      }
+    }
+
+    return { currentYear, previousYear };
+  },
+});
+
+/**
  * Returns pending (overdue after agreement expiry) and received-last-24h totals
  * for the operator's active property, shown in the Balance Card stat row.
  *

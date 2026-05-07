@@ -215,7 +215,7 @@ export const hasPaidMoveInForTenant = query({
     // Imported tenants linked during onboarding also show dashboard
     const linkedImport = await ctx.db
       .query("importedTenants")
-      .filter((q) => q.eq(q.field("linkedUserId"), user._id))
+      .withIndex("by_linkedUserId", (q) => q.eq("linkedUserId", user._id))
       .first();
 
     return { shouldShowDashboard: !!linkedImport };

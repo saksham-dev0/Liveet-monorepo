@@ -128,9 +128,9 @@ export default function TestScreen() {
       overdueMonths: number;
     }>;
   } | null>(null);
-  const [monthlyGrowth, setMonthlyGrowth] = useState<{
-    currentMonth: number;
-    previousMonth: number;
+  const [yearlyGrowth, setYearlyGrowth] = useState<{
+    currentYear: number;
+    previousYear: number;
   } | null>(null);
 
   // Remind modal
@@ -292,14 +292,14 @@ export default function TestScreen() {
 
   const refreshMonthlyGrowth = useCallback(async () => {
     try {
-      const data = await (convex as any).query("properties:getMonthlyGrowth", {});
-      setMonthlyGrowth(
+      const data = await (convex as any).query("properties:getYearlyGrowth", {});
+      setYearlyGrowth(
         data
-          ? { currentMonth: data.currentMonth ?? 0, previousMonth: data.previousMonth ?? 0 }
-          : { currentMonth: 0, previousMonth: 0 },
+          ? { currentYear: data.currentYear ?? 0, previousYear: data.previousYear ?? 0 }
+          : { currentYear: 0, previousYear: 0 },
       );
     } catch {
-      setMonthlyGrowth({ currentMonth: 0, previousMonth: 0 });
+      setYearlyGrowth({ currentYear: 0, previousYear: 0 });
     }
   }, [convex]);
 
@@ -341,7 +341,7 @@ export default function TestScreen() {
         setMonthlyChartData(null as any);
         setChartYear(new Date().getUTCFullYear());
         setCollectionSummary(null);
-        setMonthlyGrowth(null);
+        setYearlyGrowth(null);
         setOverdueTenants(null);
         setYearlyTotal(null);
         // Refresh all dashboard data for the new active property
@@ -448,9 +448,10 @@ export default function TestScreen() {
         {/* Balance Card */}
         <View style={styles.heroCard}>
           <View style={styles.heroHeader}>
-            <Text style={styles.heroLabel}>This Month</Text>
-            {monthlyGrowth !== null && monthlyGrowth.previousMonth > 0 && (() => {
-              const pct = ((monthlyGrowth.currentMonth - monthlyGrowth.previousMonth) / monthlyGrowth.previousMonth) * 100;
+            <Text style={styles.heroLabel}>This Year</Text>
+            {yearlyGrowth !== null && yearlyGrowth.previousYear > 0 && monthlyChartData !== null && (() => {
+              const curYearTotal = monthlyChartData.months.reduce((s, v) => s + v, 0);
+              const pct = ((curYearTotal - yearlyGrowth.previousYear) / yearlyGrowth.previousYear) * 100;
               const up = pct >= 0;
               return (
                 <View style={[styles.changeBadge, !up && styles.changeBadgeDown]}>
@@ -464,7 +465,7 @@ export default function TestScreen() {
           </View>
 
           <Text style={styles.heroAmount}>
-            {formatInrAmount(monthlyGrowth?.currentMonth ?? 0)}
+            {formatInrAmount(monthlyChartData?.months.reduce((s, v) => s + v, 0) ?? 0)}
           </Text>
 
           {/* Action Buttons */}
@@ -476,8 +477,12 @@ export default function TestScreen() {
             <Pressable style={styles.actionButton} onPress={() => router.push("/(app)/all-transactions" as any)}>
               <Ionicons name="trending-up" size={14} color="#fff" />
               <Text style={styles.actionButtonText} numberOfLines={1}>
-                {monthlyGrowth && monthlyGrowth.previousMonth > 0
-                  ? `${monthlyGrowth.currentMonth >= monthlyGrowth.previousMonth ? "+" : ""}${compactInr(monthlyGrowth.currentMonth - monthlyGrowth.previousMonth)}`
+                {yearlyGrowth && yearlyGrowth.previousYear > 0
+                  ? (() => {
+                      const cur = monthlyChartData?.months.reduce((s, v) => s + v, 0) ?? 0;
+                      const diff = cur - yearlyGrowth.previousYear;
+                      return `${diff >= 0 ? "+" : ""}${compactInr(diff)}`;
+                    })()
                   : "Income"}
               </Text>
             </Pressable>

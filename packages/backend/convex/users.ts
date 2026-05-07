@@ -113,6 +113,7 @@ export const completeTenantOnboarding = mutation({
     name: v.string(),
     phone: v.string(),
     isAlreadyInLiveet: v.boolean(),
+    importedTenantId: v.optional(v.id("importedTenants")),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -133,15 +134,24 @@ export const completeTenantOnboarding = mutation({
       hasCompletedOnboarding: true,
     });
 
-    if (args.isAlreadyInLiveet) {
-      const importedTenant = await ctx.db
-        .query("importedTenants")
-        .withIndex("by_phone", (q) => q.eq("phone", args.phone))
-        .first();
-
-      if (importedTenant && !importedTenant.linkedUserId) {
-        await ctx.db.patch(importedTenant._id, { linkedUserId: user._id });
+    if (args.isAlreadyInLiveet && args.importedTenantId) {
+      const importedTenant = await ctx.db.get(args.importedTenantId);
+      if (!importedTenant || importedTenant.phone !== args.phone.trim()) {
+        throw new Error("Imported tenant verification failed");
       }
+      if (importedTenant.linkedUserId) {
+        throw new Error("Imported tenant already linked");
+      }
+      // Reject if multiple unlinked rows exist for this phone (ambiguous match)
+      const others = await ctx.db
+        .query("importedTenants")
+        .withIndex("by_phone", (q) => q.eq("phone", args.phone.trim()))
+        .collect();
+      const unlinked = others.filter((t) => !t.linkedUserId);
+      if (unlinked.length > 1) {
+        throw new Error("Multiple unlinked records found for this phone — cannot auto-link");
+      }
+      await ctx.db.patch(importedTenant._id, { linkedUserId: user._id });
     }
   },
 });
