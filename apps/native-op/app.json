@@ -34,12 +34,12 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/liveet-logo.png",
-          "imageWidth": 200,
+          "image": "./assets/images/liveet-logo-ios.png",
+          "imageWidth": 250,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff",
+          "backgroundColor": "#000000",
           "dark": {
-            "image": "./assets/images/liveet-logo.png",
+            "image": "./assets/images/liveet-logo-ios.png",
             "backgroundColor": "#000000"
           }
         }

@@ -68,13 +68,15 @@ export default function OnboardingScreen() {
     }
   }
 
-  async function submitOnboarding(skipToLiveet: boolean) {
+  async function submitOnboarding(skipToLiveet?: boolean) {
     setLoading(true);
     try {
+      const resolvedIsAlreadyInLiveet = typeof skipToLiveet === "boolean" ? skipToLiveet : isAlreadyInLiveet!;
       await (convex as any).mutation("users:completeTenantOnboarding", {
         name: name.trim(),
         phone: phone.trim(),
-        isAlreadyInLiveet: skipToLiveet || isAlreadyInLiveet!,
+        isAlreadyInLiveet: resolvedIsAlreadyInLiveet,
+        ...(resolvedIsAlreadyInLiveet && matchedTenant ? { importedTenantId: matchedTenant.importedTenantId } : {}),
       });
       router.replace("/(app)");
     } catch {

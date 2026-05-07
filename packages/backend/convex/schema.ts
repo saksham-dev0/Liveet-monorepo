@@ -445,7 +445,8 @@ export default defineSchema({
     .index("by_operator", ["operatorId"])
     .index("by_import", ["importId"])
     .index("by_phone", ["phone"])
-    .index("by_email", ["email"]),
+    .index("by_email", ["email"])
+    .index("by_linkedUserId", ["linkedUserId"]),
 
   /** Bulk-import jobs triggered during onboarding (XLSX / CSV → Gemini AI). */
   bulkImports: defineTable({

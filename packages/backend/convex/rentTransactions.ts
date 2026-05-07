@@ -96,7 +96,7 @@ export const getTenantDashboardInfo = query({
     if (!active) {
       const imported = await ctx.db
         .query("importedTenants")
-        .filter((q) => q.eq(q.field("linkedUserId"), user._id))
+        .withIndex("by_linkedUserId", (q) => q.eq("linkedUserId", user._id))
         .first();
       if (!imported) return null;
 
