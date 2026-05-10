@@ -433,6 +433,7 @@ export default function RoomConfigScreen() {
   const totalRooms = floors.reduce((sum, f) => sum + f.rooms.length, 0);
 
   return (
+    <View style={styles.safeArea}>
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -821,15 +822,20 @@ export default function RoomConfigScreen() {
         </View>
       </Modal>
     </KeyboardAvoidingView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: colors.pageBg,
+  },
   container: {
     flex: 1,
-    backgroundColor: colors.white,
     paddingTop: 4,
     paddingHorizontal: 20,
+    backgroundColor: colors.pageBg,
   },
   scroll: { flex: 1 },
   scrollContent: { flexGrow: 1, paddingBottom: 40 },

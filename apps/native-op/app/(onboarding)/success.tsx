@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Image as ExpoImage } from "expo-image";
 import { useRouter } from "expo-router";
 import { useConvex } from "convex/react";
 import { colors, radii, card as cardStyle } from "../../constants/theme";
@@ -37,7 +38,11 @@ export default function OnboardingSuccessScreen() {
         ) : (
           <>
             <View style={s.iconCircle}>
-              <Text style={s.iconText}>{"\u2713"}</Text>
+              <ExpoImage
+                source={require("../../assets/fluent-emojis/party_popper_3d.webp")}
+                style={s.emojiIcon}
+                contentFit="contain"
+              />
             </View>
             <Text style={s.title}>Details submitted successfully</Text>
             <Text style={s.subtitle}>
@@ -70,15 +75,15 @@ const s = StyleSheet.create({
     alignItems: "center",
   },
   iconCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: colors.primary,
+    width: 88,
+    height: 88,
+    borderRadius: 24,
+    backgroundColor: "#FEF9C3",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 24,
   },
-  iconText: { fontSize: 40, color: colors.white, fontWeight: "700" },
+  emojiIcon: { width: 54, height: 54 },
   title: {
     fontSize: 22,
     fontWeight: "800",
