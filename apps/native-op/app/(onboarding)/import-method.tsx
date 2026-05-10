@@ -7,6 +7,7 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { Image as ExpoImage } from "expo-image";
 import {
   colors,
   radii,
@@ -35,7 +36,11 @@ export default function ImportMethodScreen() {
         onPress={() => router.push("/(onboarding)" as any)}
       >
         <View style={s.iconCircle}>
-          <Ionicons name="create-outline" size={28} color={colors.white} />
+          <ExpoImage
+            source={require("../../assets/fluent-emojis/briefcase_3d.webp")}
+            style={s.emojiIcon}
+            contentFit="contain"
+          />
         </View>
         <Text style={s.optionTitle}>Add details manually</Text>
         <Text style={s.optionDesc}>
@@ -55,7 +60,11 @@ export default function ImportMethodScreen() {
         onPress={() => router.push("/(onboarding)/bulk-import" as any)}
       >
         <View style={[s.iconCircle, s.iconCircleAlt]}>
-          <Ionicons name="document-text-outline" size={28} color={colors.white} />
+          <ExpoImage
+            source={require("../../assets/fluent-emojis/robot_3d.webp")}
+            style={s.emojiIcon}
+            contentFit="contain"
+          />
         </View>
         <Text style={s.optionTitle}>Import from file</Text>
         <Text style={s.optionDesc}>
@@ -118,6 +127,10 @@ const s = StyleSheet.create({
   },
   iconCircleAlt: {
     backgroundColor: "#16A34A",
+  },
+  emojiIcon: {
+    width: 32,
+    height: 32,
   },
   optionTitle: {
     fontSize: 18,

@@ -45,9 +45,10 @@ type RoomOption = {
 export default function RoomCategoryScreen() {
   const router = useRouter();
   const convex = useConvex();
-  const { propertyId, category } = useLocalSearchParams<{
+  const { propertyId, category, editOptionId } = useLocalSearchParams<{
     propertyId: string;
     category: string;
+    editOptionId?: string;
   }>();
 
   const [loading, setLoading] = useState(true);
@@ -81,6 +82,21 @@ export default function RoomCategoryScreen() {
         setTotalUnits(status.property?.totalUnits ?? 0);
         const filtered = all.filter((opt) => opt.category === category);
         setRoomOptions(filtered);
+
+        // Auto-open edit form when navigated with a specific option id
+        if (editOptionId) {
+          const target = all.find((o) => o._id === editOptionId);
+          if (target) {
+            setEditingOption(target);
+            setTypeName(target.typeName ?? "");
+            setNumberOfRooms(String(target.numberOfRooms ?? 1));
+            setRentAmount(target.rentAmount != null ? String(target.rentAmount) : "");
+            setAttachedWashroom(target.attachedWashroom ?? false);
+            setAttachedBalcony(target.attachedBalcony ?? false);
+            setAirConditioner(target.airConditioner ?? false);
+            setGeyser(target.geyser ?? false);
+          }
+        }
       } catch {
         // ignore
       } finally {
@@ -199,7 +215,10 @@ export default function RoomCategoryScreen() {
     geyser;
 
   const handleProceed = async () => {
-    if (hasFormData) {
+    if (editingOption) {
+      const updated = await handleUpdateOption();
+      if (updated) router.back();
+    } else if (hasFormData) {
       const added = await handleAddOption();
       if (added) router.back();
     } else {
@@ -227,10 +246,11 @@ export default function RoomCategoryScreen() {
       setError("Please enter at least 1 room.");
       return false;
     }
-    const maxRooms = maxRoomsWhenEditing;
-    if (num > maxRooms) {
+    // Only enforce capacity when the room count actually increased
+    const originalNum = editingOption.numberOfRooms ?? 1;
+    if (num > originalNum && num > maxRoomsWhenEditing) {
       setError(
-        `You can set at most ${maxRooms} room(s) for this option (${bedsRemaining} beds remaining).`,
+        `You can add at most ${maxRoomsWhenEditing} room(s) of this type.`,
       );
       return false;
     }

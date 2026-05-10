@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { Image as ExpoImage } from "expo-image";
 import * as DocumentPicker from "expo-document-picker";
 import { useConvex } from "convex/react";
 import {
@@ -36,6 +37,7 @@ type ImportPhase =
 type ImportResult = {
   totalRows?: number;
   importedRows?: number;
+  propertyId?: string;
   error?: string;
 };
 
@@ -139,6 +141,7 @@ export default function BulkImportScreen() {
         setResult({
           totalRows: status.totalRows,
           importedRows: status.importedRows,
+          propertyId: status.propertyId,
         });
         setPhase("completed");
       } else if (status?.status === "failed") {
@@ -233,7 +236,11 @@ export default function BulkImportScreen() {
         <View style={s.statusCard}>
           <Animated.View style={{ opacity: pulseAnim }}>
             <View style={s.aiIconCircle}>
-              <Ionicons name="sparkles" size={32} color="#D4F542" />
+              <ExpoImage
+                source={require("../../assets/fluent-emojis/robot_3d.webp")}
+                style={s.statusEmoji}
+                contentFit="contain"
+              />
             </View>
           </Animated.View>
           <Text style={s.statusTitle}>AI is analyzing your data...</Text>
@@ -249,7 +256,11 @@ export default function BulkImportScreen() {
       {phase === "completed" && (
         <View style={s.statusCard}>
           <View style={s.successCircle}>
-            <Ionicons name="checkmark" size={36} color={colors.white} />
+            <ExpoImage
+              source={require("../../assets/fluent-emojis/party_popper_3d.webp")}
+              style={s.statusEmoji}
+              contentFit="contain"
+            />
           </View>
           <Text style={s.statusTitle}>Import successful!</Text>
           <View style={s.statsRow}>
@@ -274,7 +285,11 @@ export default function BulkImportScreen() {
       {phase === "failed" && (
         <View style={s.statusCard}>
           <View style={s.errorCircle}>
-            <Ionicons name="close" size={36} color={colors.white} />
+            <ExpoImage
+              source={require("../../assets/fluent-emojis/face_with_tears_of_joy_3d.webp")}
+              style={s.statusEmoji}
+              contentFit="contain"
+            />
           </View>
           <Text style={s.statusTitle}>Import failed</Text>
           <Text style={s.errorText}>
@@ -287,13 +302,29 @@ export default function BulkImportScreen() {
       <View style={{ flex: 1 }} />
       <View style={footerRow}>
         {phase === "completed" ? (
-          <TouchableOpacity
-            style={primaryButton}
-            onPress={handleContinue}
-            activeOpacity={0.7}
-          >
-            <Text style={primaryButtonText}>Continue setup</Text>
-          </TouchableOpacity>
+          <>
+            {result.propertyId && (
+              <TouchableOpacity
+                style={secondaryButton}
+                onPress={() =>
+                  router.push({
+                    pathname: "/(onboarding)/edit-room-config" as any,
+                    params: { propertyId: result.propertyId },
+                  })
+                }
+                activeOpacity={0.7}
+              >
+                <Text style={secondaryButtonText}>Edit room config</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              style={primaryButton}
+              onPress={handleContinue}
+              activeOpacity={0.7}
+            >
+              <Text style={primaryButtonText}>Continue setup</Text>
+            </TouchableOpacity>
+          </>
         ) : phase === "failed" ? (
           <>
             <TouchableOpacity
@@ -411,13 +442,17 @@ const s = StyleSheet.create({
     paddingVertical: 32,
   },
   aiIconCircle: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: colors.primary,
+    width: 72,
+    height: 72,
+    borderRadius: 20,
+    backgroundColor: "#1E293B",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 16,
+  },
+  statusEmoji: {
+    width: 42,
+    height: 42,
   },
   statusTitle: {
     fontSize: 18,
@@ -440,10 +475,10 @@ const s = StyleSheet.create({
     fontStyle: "italic",
   },
   successCircle: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: "#16A34A",
+    width: 72,
+    height: 72,
+    borderRadius: 20,
+    backgroundColor: "#FEF9C3",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 12,
@@ -471,10 +506,10 @@ const s = StyleSheet.create({
     backgroundColor: colors.border,
   },
   errorCircle: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: colors.error,
+    width: 72,
+    height: 72,
+    borderRadius: 20,
+    backgroundColor: "#FEE2E2",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 12,

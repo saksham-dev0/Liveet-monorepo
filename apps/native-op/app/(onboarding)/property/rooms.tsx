@@ -9,6 +9,7 @@ import {
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useConvex } from "convex/react";
+import { Ionicons } from "@expo/vector-icons";
 import {
   colors,
   card,
@@ -20,6 +21,7 @@ import {
   primaryButtonText,
   stepLabel,
   title,
+  radii,
 } from "../../../constants/theme";
 
 const fullWidthPrimaryBtn = {
@@ -49,6 +51,10 @@ type RoomOption = {
   numberOfRooms?: number;
   typeName?: string;
   rentAmount?: number;
+  attachedWashroom?: boolean;
+  attachedBalcony?: boolean;
+  airConditioner?: boolean;
+  geyser?: boolean;
   customFeatures?: string[];
 };
 
@@ -121,6 +127,14 @@ export default function RoomOptionsScreen() {
     } as any);
   };
 
+  const handleEditOption = (opt: RoomOption) => {
+    if (!propertyId) return;
+    router.push({
+      pathname: "/(onboarding)/property/room-category",
+      params: { propertyId, category: opt.category, editOptionId: opt._id },
+    } as any);
+  };
+
   const handleProceed = () => {
     if (!propertyId) return;
     router.push({
@@ -144,27 +158,57 @@ export default function RoomOptionsScreen() {
 
         {ROOM_CATEGORIES.map((category) => {
           const items = optionsByCategory[category.key] ?? [];
-          const bedsInCategory = items.reduce(
-            (sum, opt) =>
-              sum + (opt.numberOfRooms ?? 1) * (BEDS_PER_CATEGORY[opt.category] ?? 1),
-            0,
-          );
-          const summary =
-            items.length === 0
-              ? "No options added yet"
-              : `${items.length} option${items.length > 1 ? "s" : ""}${bedsInCategory > 0 ? ` · ${bedsInCategory} beds` : ""}`;
           return (
-            <TouchableOpacity
-              key={category.key}
-              style={styles.row}
-              onPress={() => handleOpenCategory(category.key)}
-            >
-              <View>
+            <View key={category.key} style={styles.categoryBlock}>
+              {/* Category header row */}
+              <View style={styles.categoryHeader}>
                 <Text style={styles.rowTitle}>{category.label}</Text>
-                <Text style={styles.rowSubtitle}>{summary}</Text>
+                <TouchableOpacity
+                  style={styles.addChip}
+                  onPress={() => handleOpenCategory(category.key)}
+                >
+                  <Ionicons name="add" size={14} color={colors.primary} />
+                  <Text style={styles.addChipText}>Add room</Text>
+                </TouchableOpacity>
               </View>
-              <Text style={styles.rowAction}>+ Add room</Text>
-            </TouchableOpacity>
+
+              {/* Existing options */}
+              {items.length === 0 ? (
+                <Text style={styles.emptyHint}>No options added yet</Text>
+              ) : (
+                items.map((opt) => {
+                  const amenityCount = [
+                    opt.attachedWashroom,
+                    opt.attachedBalcony,
+                    opt.airConditioner,
+                    opt.geyser,
+                  ].filter(Boolean).length;
+                  const customCount = opt.customFeatures?.length ?? 0;
+                  const totalAmenities = amenityCount + customCount;
+                  return (
+                    <View key={opt._id} style={styles.optionCard}>
+                      <View style={styles.optionLeft}>
+                        <Text style={styles.optionName}>
+                          {opt.typeName || category.label}
+                        </Text>
+                        <Text style={styles.optionMeta}>
+                          {opt.numberOfRooms ?? 1} room{(opt.numberOfRooms ?? 1) !== 1 ? "s" : ""}
+                          {opt.rentAmount ? ` · ₹${opt.rentAmount}/mo` : ""}
+                          {totalAmenities > 0 ? ` · ${totalAmenities} amenit${totalAmenities !== 1 ? "ies" : "y"}` : " · No amenities"}
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        style={styles.editBtn}
+                        onPress={() => handleEditOption(opt)}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        <Ionicons name="pencil-outline" size={15} color={colors.primary} />
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })
+              )}
+            </View>
           );
         })}
 
@@ -202,7 +246,7 @@ const styles = StyleSheet.create({
   },
   rowTitle: {
     fontSize: 15,
-    fontWeight: "500",
+    fontWeight: "600",
     color: colors.navy,
   },
   rowSubtitle: {
@@ -223,5 +267,69 @@ const styles = StyleSheet.create({
   },
   footerRow: {
     marginTop: 28,
+  },
+  /* new */
+  categoryBlock: {
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+    gap: 8,
+  },
+  categoryHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  addChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radii.pill,
+    borderWidth: 1.5,
+    borderColor: colors.primary,
+  },
+  addChipText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: colors.primary,
+  },
+  emptyHint: {
+    fontSize: 12,
+    color: colors.muted,
+    fontStyle: "italic",
+    paddingLeft: 2,
+  },
+  optionCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.inputBg,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  optionLeft: { flex: 1 },
+  optionName: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: colors.navy,
+  },
+  optionMeta: {
+    fontSize: 12,
+    color: colors.muted,
+    marginTop: 2,
+  },
+  editBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: colors.white,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: colors.border,
   },
 });

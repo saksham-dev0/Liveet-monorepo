@@ -116,6 +116,7 @@ export default function TestScreen() {
   >(null);
   const [chartYear, setChartYear] = useState<number>(new Date().getUTCFullYear());
   const [monthlyChartData, setMonthlyChartData] = useState<{ months: number[]; year: number } | null>(null);
+  const [curYearMonths, setCurYearMonths] = useState<number[]>([]);
   const [collectionSummary, setCollectionSummary] = useState<{
     pendingAmount: number;
     receivedLast24h: number;
@@ -246,14 +247,24 @@ export default function TestScreen() {
   const refreshMonthlyChartData = useCallback(async (year?: number) => {
     try {
       const targetYear = year ?? chartYear;
+      const nowYear = new Date().getUTCFullYear();
       const data = await (convex as any).query(
         "properties:getMonthlyRentChartData",
         { year: targetYear },
       );
       if (Array.isArray(data?.months)) {
         setMonthlyChartData({ months: data.months, year: data.year ?? targetYear });
+        if (targetYear === nowYear) setCurYearMonths(data.months);
       } else {
         setMonthlyChartData({ months: new Array(12).fill(0), year: targetYear });
+        if (targetYear === nowYear) setCurYearMonths(new Array(12).fill(0));
+      }
+      if (targetYear !== nowYear) {
+        const curData = await (convex as any).query(
+          "properties:getMonthlyRentChartData",
+          { year: nowYear },
+        );
+        setCurYearMonths(Array.isArray(curData?.months) ? curData.months : new Array(12).fill(0));
       }
     } catch {
       setMonthlyChartData({ months: new Array(12).fill(0), year: chartYear });
@@ -449,8 +460,8 @@ export default function TestScreen() {
         <View style={styles.heroCard}>
           <View style={styles.heroHeader}>
             <Text style={styles.heroLabel}>This Year</Text>
-            {yearlyGrowth !== null && yearlyGrowth.previousYear > 0 && monthlyChartData !== null && (() => {
-              const curYearTotal = monthlyChartData.months.reduce((s, v) => s + v, 0);
+            {yearlyGrowth !== null && yearlyGrowth.previousYear > 0 && (() => {
+              const curYearTotal = curYearMonths.reduce((s, v) => s + v, 0);
               const pct = ((curYearTotal - yearlyGrowth.previousYear) / yearlyGrowth.previousYear) * 100;
               const up = pct >= 0;
               return (
@@ -465,7 +476,7 @@ export default function TestScreen() {
           </View>
 
           <Text style={styles.heroAmount}>
-            {formatInrAmount(monthlyChartData?.months.reduce((s, v) => s + v, 0) ?? 0)}
+            {formatInrAmount(curYearMonths.reduce((s, v) => s + v, 0))}
           </Text>
 
           {/* Action Buttons */}
@@ -479,7 +490,7 @@ export default function TestScreen() {
               <Text style={styles.actionButtonText} numberOfLines={1}>
                 {yearlyGrowth && yearlyGrowth.previousYear > 0
                   ? (() => {
-                      const cur = monthlyChartData?.months.reduce((s, v) => s + v, 0) ?? 0;
+                      const cur = curYearMonths.reduce((s, v) => s + v, 0);
                       const diff = cur - yearlyGrowth.previousYear;
                       return `${diff >= 0 ? "+" : ""}${compactInr(diff)}`;
                     })()

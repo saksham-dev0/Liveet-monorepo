@@ -6,7 +6,9 @@ import {
   Button,
   Pressable,
   StyleSheet,
+  TouchableOpacity,
 } from "react-native";
+import { Image } from "expo-image";
 import { useRouter } from "expo-router";
 import { useSignIn, useSignUp, useOAuth } from "@clerk/clerk-expo";
 import { useConvex } from "convex/react";
@@ -392,16 +394,32 @@ export default function AuthScreen() {
         </View>
 
         <View style={styles.oauthRow}>
-          <Button
-            title="Google"
+          <TouchableOpacity
+            style={[styles.oauthBtn, loading && styles.oauthBtnDisabled]}
             onPress={() => handleOAuth("google")}
             disabled={loading}
-          />
-          <Button
-            title="Apple"
+            activeOpacity={0.75}
+          >
+            <Image
+              source={require("../../assets/images/google-icon-logo.svg")}
+              style={styles.oauthLogo}
+              contentFit="contain"
+            />
+            <Text style={styles.oauthBtnText}>Google</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.oauthBtn, loading && styles.oauthBtnDisabled]}
             onPress={() => handleOAuth("apple")}
             disabled={loading}
-          />
+            activeOpacity={0.75}
+          >
+            <Image
+              source={require("../../assets/images/Apple_logo_black.svg")}
+              style={styles.oauthLogo}
+              contentFit="contain"
+            />
+            <Text style={styles.oauthBtnText}>Apple</Text>
+          </TouchableOpacity>
         </View>
       </View>
     </View>
@@ -480,6 +498,30 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     gap: 12,
+  },
+  oauthBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    borderWidth: 1.5,
+    borderColor: "#e5e7eb",
+    borderRadius: 10,
+    paddingVertical: 12,
+    backgroundColor: "#fff",
+  },
+  oauthBtnDisabled: {
+    opacity: 0.45,
+  },
+  oauthLogo: {
+    width: 20,
+    height: 20,
+  },
+  oauthBtnText: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#1E293B",
   },
 });
 

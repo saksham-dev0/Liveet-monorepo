@@ -634,18 +634,22 @@ export const updateRoomOption = mutation({
     if (numRooms < 1 || !Number.isInteger(numRooms)) {
       throw new Error("Number of rooms must be at least 1.");
     }
-    const newBeds = bedsForOption(existing.category, numRooms);
-    if (bedsWithoutThis + newBeds > totalUnits) {
-      const bedsRemaining = totalUnits - bedsWithoutThis;
-      const maxRooms =
-        BEDS_PER_CATEGORY[existing.category] != null
-          ? Math.floor(
-              bedsRemaining / (BEDS_PER_CATEGORY[existing.category] ?? 1),
-            )
-          : 0;
-      throw new Error(
-        `Total beds would exceed ${totalUnits} units. You can set at most ${maxRooms} room(s) for this option (${bedsRemaining} beds remaining).`,
-      );
+    // Only enforce capacity when room count actually increases
+    const originalRooms = existing.numberOfRooms ?? 1;
+    if (numRooms > originalRooms) {
+      const newBeds = bedsForOption(existing.category, numRooms);
+      if (bedsWithoutThis + newBeds > totalUnits) {
+        const bedsRemaining = totalUnits - bedsWithoutThis;
+        const maxRooms =
+          BEDS_PER_CATEGORY[existing.category] != null
+            ? Math.floor(
+                bedsRemaining / (BEDS_PER_CATEGORY[existing.category] ?? 1),
+              )
+            : 0;
+        throw new Error(
+          `Total beds would exceed ${totalUnits} units. You can set at most ${maxRooms} room(s) for this option.`,
+        );
+      }
     }
 
     await ctx.db.patch(args.roomOptionId, {

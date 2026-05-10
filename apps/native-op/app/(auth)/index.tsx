@@ -11,6 +11,7 @@ import {
   ScrollView,
   Image,
 } from "react-native";
+import { Image as ExpoImage } from "expo-image";
 import { useRouter } from "expo-router";
 import { useSignIn, useSignUp, useOAuth } from "@clerk/clerk-expo";
 import * as Linking from "expo-linking";
@@ -331,19 +332,27 @@ export default function AuthScreen() {
 
           <View style={s.oauthRow}>
             <Pressable
-              style={s.oauthBtn}
+              style={[s.oauthBtn, loading && s.oauthBtnDisabled]}
               onPress={() => handleOAuth("google")}
               disabled={loading}
             >
-              <Text style={s.oauthIcon}>G</Text>
+              <ExpoImage
+                source={require("../../assets/images/google-icon-logo.svg")}
+                style={s.oauthLogo}
+                contentFit="contain"
+              />
               <Text style={s.oauthLabel}>Google</Text>
             </Pressable>
             <Pressable
-              style={s.oauthBtn}
+              style={[s.oauthBtn, loading && s.oauthBtnDisabled]}
               onPress={() => handleOAuth("apple")}
               disabled={loading}
             >
-              <Text style={s.oauthIcon}>{"\uF8FF"}</Text>
+              <ExpoImage
+                source={require("../../assets/images/Apple_logo_black.svg")}
+                style={s.oauthLogo}
+                contentFit="contain"
+              />
               <Text style={s.oauthLabel}>Apple</Text>
             </Pressable>
           </View>
@@ -475,6 +484,7 @@ const s = StyleSheet.create({
     borderColor: colors.border,
     backgroundColor: colors.white,
   },
-  oauthIcon: { fontSize: 16, fontWeight: "800", color: colors.navy },
+  oauthLogo: { width: 20, height: 20 },
+  oauthBtnDisabled: { opacity: 0.45 },
   oauthLabel: { fontSize: 14, fontWeight: "600", color: colors.navy },
 });
