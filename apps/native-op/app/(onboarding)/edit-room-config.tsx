@@ -24,7 +24,7 @@ import {
   secondaryButton,
   secondaryButtonText,
   footerRow,
-} from "../../constants/theme";
+} from "@/constants/theme";
 
 /* ------------------------------------------------------------------ */
 /* Types                                                                */
@@ -141,26 +141,29 @@ export default function EditRoomConfigScreen() {
   const handleSave = useCallback(async () => {
     setSaving(true);
     try {
-      for (const opt of roomOptions) {
-        const draft = drafts[opt._id];
-        if (!draft) continue;
-        const rent = parseFloat(draft.rentAmount);
-        const features = draft.customFeatures
-          .split(",")
-          .map((f) => f.trim())
-          .filter(Boolean);
+      const updates = roomOptions
+        .map((opt) => {
+          const draft = drafts[opt._id];
+          if (!draft) return null;
+          const rent = parseFloat(draft.rentAmount);
+          const features = draft.customFeatures
+            .split(",")
+            .map((f) => f.trim())
+            .filter(Boolean);
+          return {
+            roomOptionId: opt._id,
+            typeName: draft.typeName === "" ? null : draft.typeName,
+            rentAmount: isNaN(rent) ? null : rent,
+            attachedWashroom: draft.attachedWashroom,
+            attachedBalcony: draft.attachedBalcony,
+            airConditioner: draft.airConditioner,
+            geyser: draft.geyser,
+            customFeatures: features.length === 0 ? [] : features,
+          };
+        })
+        .filter(Boolean);
 
-        await (convex as any).mutation("onboarding:updateRoomOption", {
-          roomOptionId: opt._id,
-          typeName: draft.typeName || undefined,
-          rentAmount: isNaN(rent) ? undefined : rent,
-          attachedWashroom: draft.attachedWashroom,
-          attachedBalcony: draft.attachedBalcony,
-          airConditioner: draft.airConditioner,
-          geyser: draft.geyser,
-          customFeatures: features.length > 0 ? features : undefined,
-        });
-      }
+      await (convex as any).mutation("onboarding:updateRoomOptions", { updates });
       Alert.alert("Saved", "Room configurations updated.", [
         { text: "OK", onPress: () => router.back() },
       ]);

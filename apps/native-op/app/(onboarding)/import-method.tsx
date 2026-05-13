@@ -7,7 +7,10 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Image as ExpoImage } from "expo-image";
+import briefcase3d from "@/assets/fluent-emojis/briefcase_3d.webp";
+import robot3d from "@/assets/fluent-emojis/robot_3d.webp";
 import {
   colors,
   radii,
@@ -17,6 +20,16 @@ import {
 
 export default function ImportMethodScreen() {
   const router = useRouter();
+
+  const handleManual = async () => {
+    await AsyncStorage.setItem("onboarding_method_chosen", "manual");
+    router.push("/(onboarding)" as any);
+  };
+
+  const handleImport = async () => {
+    await AsyncStorage.setItem("onboarding_method_chosen", "import");
+    router.push("/(onboarding)/bulk-import" as any);
+  };
 
   return (
     <ScrollView
@@ -33,11 +46,11 @@ export default function ImportMethodScreen() {
       <TouchableOpacity
         style={s.optionCard}
         activeOpacity={0.7}
-        onPress={() => router.push("/(onboarding)" as any)}
+        onPress={handleManual}
       >
         <View style={s.iconCircle}>
           <ExpoImage
-            source={require("../../assets/fluent-emojis/briefcase_3d.webp")}
+            source={briefcase3d}
             style={s.emojiIcon}
             contentFit="contain"
           />
@@ -57,11 +70,11 @@ export default function ImportMethodScreen() {
       <TouchableOpacity
         style={s.optionCard}
         activeOpacity={0.7}
-        onPress={() => router.push("/(onboarding)/bulk-import" as any)}
+        onPress={handleImport}
       >
         <View style={[s.iconCircle, s.iconCircleAlt]}>
           <ExpoImage
-            source={require("../../assets/fluent-emojis/robot_3d.webp")}
+            source={robot3d}
             style={s.emojiIcon}
             contentFit="contain"
           />

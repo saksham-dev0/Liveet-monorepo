@@ -42,7 +42,7 @@ async function getOperatorPropertyForUser(
   user: Doc<"users">,
 ): Promise<Doc<"properties"> | null> {
   if (user.primaryPropertyId) {
-    const primary = await ctx.db.get("properties", user.primaryPropertyId);
+    const primary = await ctx.db.get(user.primaryPropertyId);
     if (primary && primary.userId === user._id) {
       return primary;
     }
@@ -670,6 +670,39 @@ export const updateRoomOption = mutation({
         customFeatures: args.customFeatures,
       }),
     });
+  },
+});
+
+export const updateRoomOptions = mutation({
+  args: {
+    updates: v.array(
+      v.object({
+        roomOptionId: v.id("roomOptions"),
+        typeName: v.optional(v.union(v.string(), v.null())),
+        rentAmount: v.optional(v.union(v.number(), v.null())),
+        attachedWashroom: v.optional(v.boolean()),
+        attachedBalcony: v.optional(v.boolean()),
+        airConditioner: v.optional(v.boolean()),
+        geyser: v.optional(v.boolean()),
+        customFeatures: v.optional(v.union(v.array(v.string()), v.null())),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    await getCurrentUserDoc(ctx);
+    for (const update of args.updates) {
+      const existing = await ctx.db.get(update.roomOptionId);
+      if (!existing) throw new Error(`Room option ${update.roomOptionId} not found`);
+      await ctx.db.patch(update.roomOptionId, {
+        ...(update.typeName !== undefined && { typeName: update.typeName ?? undefined }),
+        ...(update.rentAmount !== undefined && { rentAmount: update.rentAmount ?? undefined }),
+        ...(update.attachedWashroom !== undefined && { attachedWashroom: update.attachedWashroom }),
+        ...(update.attachedBalcony !== undefined && { attachedBalcony: update.attachedBalcony }),
+        ...(update.airConditioner !== undefined && { airConditioner: update.airConditioner }),
+        ...(update.geyser !== undefined && { geyser: update.geyser }),
+        ...(update.customFeatures !== undefined && { customFeatures: update.customFeatures ?? undefined }),
+      });
+    }
   },
 });
 

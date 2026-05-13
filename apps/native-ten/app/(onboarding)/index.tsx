@@ -16,23 +16,23 @@ import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useConvex } from "convex/react";
 import { Ionicons } from "@expo/vector-icons";
-import { colors } from "../../constants/theme";
+import { colors } from "@/constants/theme";
 
 const EMOJIS = {
-  house: require("../../assets/fluent-emojis/house_3d.webp"),
-  waving: require("../../assets/fluent-emojis/waving_hand_3d.webp"),
-  party: require("../../assets/fluent-emojis/party_popper_3d.webp"),
-  check: require("../../assets/fluent-emojis/check_mark_button_3d.webp"),
-  alarm: require("../../assets/fluent-emojis/alarm_clock_3d.webp"),
-  receipt: require("../../assets/fluent-emojis/receipt_3d.webp"),
-  moneyWings: require("../../assets/fluent-emojis/money_with_wings_3d.webp"),
-  key: require("../../assets/fluent-emojis/key_3d.webp"),
-  card: require("../../assets/fluent-emojis/credit_card_3d.webp"),
-  calendar: require("../../assets/fluent-emojis/calendar_3d.webp"),
-  sparkles: require("../../assets/fluent-emojis/sparkles_3d.webp"),
-  magnify: require("../../assets/fluent-emojis/magnifying_glass_3d.webp"),
-  coin: require("../../assets/fluent-emojis/coin_3d.webp"),
-  people: require("../../assets/fluent-emojis/people_hugging_3d.webp"),
+  house: require("@/assets/fluent-emojis/house_3d.webp"),
+  waving: require("@/assets/fluent-emojis/waving_hand_3d.webp"),
+  party: require("@/assets/fluent-emojis/party_popper_3d.webp"),
+  check: require("@/assets/fluent-emojis/check_mark_button_3d.webp"),
+  alarm: require("@/assets/fluent-emojis/alarm_clock_3d.webp"),
+  receipt: require("@/assets/fluent-emojis/receipt_3d.webp"),
+  moneyWings: require("@/assets/fluent-emojis/money_with_wings_3d.webp"),
+  key: require("@/assets/fluent-emojis/key_3d.webp"),
+  card: require("@/assets/fluent-emojis/credit_card_3d.webp"),
+  calendar: require("@/assets/fluent-emojis/calendar_3d.webp"),
+  sparkles: require("@/assets/fluent-emojis/sparkles_3d.webp"),
+  magnify: require("@/assets/fluent-emojis/magnifying_glass_3d.webp"),
+  coin: require("@/assets/fluent-emojis/coin_3d.webp"),
+  people: require("@/assets/fluent-emojis/people_hugging_3d.webp"),
 };
 
 type MatchedTenant = {

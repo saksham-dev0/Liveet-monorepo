@@ -3,6 +3,7 @@ import { ActivityIndicator, View } from "react-native";
 import { Redirect } from "expo-router";
 import { useAuth } from "@clerk/clerk-expo";
 import { useConvex } from "convex/react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 type OnboardingRoute = "/(app)/(tabs)" | "/(onboarding)" | "/(onboarding)/import-method";
 
@@ -35,9 +36,20 @@ export default function Index() {
           !!status?.account ||
           !!status?.property;
 
-        setRedirect(hasStarted ? "/(onboarding)" : "/(onboarding)/import-method");
+        if (hasStarted) {
+          setRedirect("/(onboarding)");
+          return;
+        }
+
+        // Check if user already picked an import method (manual or bulk)
+        // so we don't send them back to the method picker after they've chosen
+        const methodChosen = await AsyncStorage.getItem("onboarding_method_chosen");
+        setRedirect(methodChosen ? "/(onboarding)" : "/(onboarding)/import-method");
       } catch {
-        if (!cancelled) setRedirect("/(onboarding)/import-method");
+        if (!cancelled) {
+          const methodChosen = await AsyncStorage.getItem("onboarding_method_chosen").catch(() => null);
+          setRedirect(methodChosen ? "/(onboarding)" : "/(onboarding)/import-method");
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }

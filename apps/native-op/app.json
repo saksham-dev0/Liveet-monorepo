@@ -4,7 +4,7 @@
     "slug": "liveet-op",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/liveet-logo.png",
+    "icon": "./assets/images/liveet-logo-ios.png",
     "scheme": "nativeop",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -20,6 +20,7 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
+      "versionCode": 1,
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "package": "com.sakksham096.nativeop"
@@ -48,6 +49,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "c3af77d9-08ec-4bec-8b2a-4f855c8bc092"
+      }
     }
   }
 }

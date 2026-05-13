@@ -9,6 +9,8 @@ import {
   TouchableOpacity,
 } from "react-native";
 import { Image } from "expo-image";
+import googleIcon from "@/assets/images/google-icon-logo.svg";
+import appleIcon from "@/assets/images/Apple_logo_black.svg";
 import { useRouter } from "expo-router";
 import { useSignIn, useSignUp, useOAuth } from "@clerk/clerk-expo";
 import { useConvex } from "convex/react";
@@ -401,7 +403,7 @@ export default function AuthScreen() {
             activeOpacity={0.75}
           >
             <Image
-              source={require("../../assets/images/google-icon-logo.svg")}
+              source={googleIcon}
               style={styles.oauthLogo}
               contentFit="contain"
             />
@@ -414,7 +416,7 @@ export default function AuthScreen() {
             activeOpacity={0.75}
           >
             <Image
-              source={require("../../assets/images/Apple_logo_black.svg")}
+              source={appleIcon}
               style={styles.oauthLogo}
               contentFit="contain"
             />

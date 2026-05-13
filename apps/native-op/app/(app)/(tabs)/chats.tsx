@@ -72,25 +72,12 @@ export default function ChatsTabScreen() {
 
   const showEmpty = !loading && (conversations ?? []).length === 0;
 
-  const handleNewMessagePress = useCallback(() => {
-    router.push("/(app)/new-message" as any);
-  }, [router]);
-
   return (
     <View style={[s.root, { paddingTop: insets.top + 8 }]}>
 
       {/* ── Header ── */}
       <View style={s.header}>
         <Text style={s.headerTitle}>Chats</Text>
-        <TouchableOpacity
-          style={s.headerBtn}
-          activeOpacity={0.7}
-          accessibilityRole="button"
-          accessibilityLabel="New message"
-          onPress={handleNewMessagePress}
-        >
-          <Ionicons name="create-outline" size={20} color={colors.navy} />
-        </TouchableOpacity>
       </View>
 
       {/* ── Search ── */}
@@ -252,16 +239,6 @@ const s = StyleSheet.create({
     fontWeight: "800",
     color: colors.navy,
     letterSpacing: -0.5,
-  },
-  headerBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.cardBg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: "center",
-    justifyContent: "center",
   },
 
   // Search

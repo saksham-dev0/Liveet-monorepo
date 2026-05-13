@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { Image as ExpoImage } from "expo-image";
+import partyPopper3d from "@/assets/fluent-emojis/party_popper_3d.webp";
 import { useRouter } from "expo-router";
 import { useConvex } from "convex/react";
 import { colors, radii, card as cardStyle } from "../../constants/theme";
@@ -39,7 +40,7 @@ export default function OnboardingSuccessScreen() {
           <>
             <View style={s.iconCircle}>
               <ExpoImage
-                source={require("../../assets/fluent-emojis/party_popper_3d.webp")}
+                source={partyPopper3d}
                 style={s.emojiIcon}
                 contentFit="contain"
               />
