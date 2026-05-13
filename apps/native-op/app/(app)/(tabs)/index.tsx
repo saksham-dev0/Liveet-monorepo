@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View,
   StyleSheet,
@@ -117,6 +117,11 @@ export default function TestScreen() {
   const [chartYear, setChartYear] = useState<number>(new Date().getUTCFullYear());
   const [monthlyChartData, setMonthlyChartData] = useState<{ months: number[]; year: number } | null>(null);
   const [curYearMonths, setCurYearMonths] = useState<number[]>([]);
+
+  useEffect(() => {
+    setCurYearMonths([]);
+  }, [activePrimaryPropertyId]);
+
   const [collectionSummary, setCollectionSummary] = useState<{
     pendingAmount: number;
     receivedLast24h: number;

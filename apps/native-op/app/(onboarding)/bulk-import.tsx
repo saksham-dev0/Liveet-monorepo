@@ -12,6 +12,9 @@ import {
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Image as ExpoImage } from "expo-image";
+import robot3d from "@/assets/fluent-emojis/robot_3d.webp";
+import partyPopper3d from "@/assets/fluent-emojis/party_popper_3d.webp";
+import faceWithTearsOfJoy3d from "@/assets/fluent-emojis/face_with_tears_of_joy_3d.webp";
 import * as DocumentPicker from "expo-document-picker";
 import { useConvex } from "convex/react";
 import {
@@ -237,7 +240,7 @@ export default function BulkImportScreen() {
           <Animated.View style={{ opacity: pulseAnim }}>
             <View style={s.aiIconCircle}>
               <ExpoImage
-                source={require("../../assets/fluent-emojis/robot_3d.webp")}
+                source={robot3d}
                 style={s.statusEmoji}
                 contentFit="contain"
               />
@@ -257,7 +260,7 @@ export default function BulkImportScreen() {
         <View style={s.statusCard}>
           <View style={s.successCircle}>
             <ExpoImage
-              source={require("../../assets/fluent-emojis/party_popper_3d.webp")}
+              source={partyPopper3d}
               style={s.statusEmoji}
               contentFit="contain"
             />
@@ -286,7 +289,7 @@ export default function BulkImportScreen() {
         <View style={s.statusCard}>
           <View style={s.errorCircle}>
             <ExpoImage
-              source={require("../../assets/fluent-emojis/face_with_tears_of_joy_3d.webp")}
+              source={faceWithTearsOfJoy3d}
               style={s.statusEmoji}
               contentFit="contain"
             />

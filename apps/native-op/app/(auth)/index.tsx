@@ -12,6 +12,8 @@ import {
   Image,
 } from "react-native";
 import { Image as ExpoImage } from "expo-image";
+import googleIcon from "@/assets/images/google-icon-logo.svg";
+import appleIcon from "@/assets/images/Apple_logo_black.svg";
 import { useRouter } from "expo-router";
 import { useSignIn, useSignUp, useOAuth } from "@clerk/clerk-expo";
 import * as Linking from "expo-linking";
@@ -337,7 +339,7 @@ export default function AuthScreen() {
               disabled={loading}
             >
               <ExpoImage
-                source={require("../../assets/images/google-icon-logo.svg")}
+                source={googleIcon}
                 style={s.oauthLogo}
                 contentFit="contain"
               />
@@ -349,7 +351,7 @@ export default function AuthScreen() {
               disabled={loading}
             >
               <ExpoImage
-                source={require("../../assets/images/Apple_logo_black.svg")}
+                source={appleIcon}
                 style={s.oauthLogo}
                 contentFit="contain"
               />
