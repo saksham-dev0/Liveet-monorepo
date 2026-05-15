@@ -14,5 +14,14 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "packageManager": "pnpm@10.30.3"
+  "packageManager": "pnpm@10.30.3",
+  "pnpm": {
+    "overrides": {
+      "expo": "~54.0.34",
+      "expo-constants": "~18.0.13",
+      "expo-crypto": "~15.0.9",
+      "expo-linking": "~8.0.12",
+      "expo-web-browser": "~15.0.11"
+    }
+  }
 }
