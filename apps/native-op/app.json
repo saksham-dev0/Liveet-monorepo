@@ -39,7 +39,7 @@
     },
     "plugins": [
       "expo-router",
-"expo-image-picker",
+      "expo-image-picker",
       "expo-document-picker",
       [
         "expo-splash-screen",

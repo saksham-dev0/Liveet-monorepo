@@ -152,6 +152,9 @@ export default function TestScreen() {
     daysOverdue: number;
   }> | null>(null);
 
+  const [showOnboardingModal, setShowOnboardingModal] = useState(false);
+  const [onboardingModalChecked, setOnboardingModalChecked] = useState(false);
+
   // More dropdown
   const [moreDropdownVisible, setMoreDropdownVisible] = useState(false);
   const moreAnim = useRef(new Animated.Value(0)).current;
@@ -389,6 +392,25 @@ export default function TestScreen() {
     ],
   );
 
+  useEffect(() => {
+    if (onboardingModalChecked) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const status = await (convex as any).query("onboarding:getOnboardingStatus", {});
+        if (cancelled) return;
+        if (status?.bulkImportCompleted && !status?.hasCompletedOnboarding) {
+          setShowOnboardingModal(true);
+        }
+      } catch {
+        // silently ignore — modal is non-critical
+      } finally {
+        if (!cancelled) setOnboardingModalChecked(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [convex, onboardingModalChecked]);
+
   useFocusEffect(
     useCallback(() => {
       if (!authLoaded || !isSignedIn) return;
@@ -423,6 +445,39 @@ export default function TestScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
+        <Modal
+          visible={showOnboardingModal}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setShowOnboardingModal(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>Finish your setup</Text>
+              <Text style={styles.modalDesc}>
+                Your property data has been imported. Complete a few more steps to go fully live and start accepting payments.
+              </Text>
+              <TouchableOpacity
+                style={styles.modalPrimaryBtn}
+                activeOpacity={0.8}
+                onPress={() => {
+                  setShowOnboardingModal(false);
+                  router.push("/(onboarding)" as any);
+                }}
+              >
+                <Text style={styles.modalPrimaryText}>Complete setup</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.modalSecondaryBtn}
+                activeOpacity={0.7}
+                onPress={() => setShowOnboardingModal(false)}
+              >
+                <Text style={styles.modalSecondaryText}>I'll do it later</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+
         {/* Header */}
         <View style={styles.greetingRow}>
           <View style={styles.greeting}>
@@ -1574,6 +1629,52 @@ const styles = StyleSheet.create({
   },
   remindWaBtn: {
     backgroundColor: "#25D366",
+  },
+  // Onboarding completion modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    justifyContent: "flex-end",
+    paddingHorizontal: 16,
+    paddingBottom: 32,
+  },
+  modalCard: {
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    padding: 24,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: "#0F172A",
+    marginBottom: 8,
+  },
+  modalDesc: {
+    fontSize: 14,
+    color: "#64748B",
+    lineHeight: 20,
+    marginBottom: 24,
+  },
+  modalPrimaryBtn: {
+    backgroundColor: "#3083FF",
+    borderRadius: 999,
+    paddingVertical: 14,
+    alignItems: "center",
+    marginBottom: 10,
+  },
+  modalPrimaryText: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#fff",
+  },
+  modalSecondaryBtn: {
+    alignItems: "center",
+    paddingVertical: 10,
+  },
+  modalSecondaryText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#64748B",
   },
   // Footer
   footer: {

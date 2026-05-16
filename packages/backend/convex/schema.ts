@@ -18,6 +18,7 @@ export default defineSchema({
     dateOfBirth: v.optional(v.string()),
     profileImageStorageId: v.optional(v.id("_storage")),
     isAlreadyInLiveet: v.optional(v.boolean()),
+    bulkImportCompleted: v.optional(v.boolean()),
   }).index("by_tokenIdentifier", ["tokenIdentifier"]),
 
   onboardingProfiles: defineTable({
