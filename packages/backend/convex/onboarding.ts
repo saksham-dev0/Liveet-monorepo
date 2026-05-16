@@ -141,6 +141,7 @@ async function getOnboardingStatusPayload(ctx: QueryCtx) {
     userId: user._id,
     user,
     hasCompletedOnboarding: !!user.hasCompletedOnboarding,
+    bulkImportCompleted: !!user.bulkImportCompleted,
     primaryPropertyId: user.primaryPropertyId ?? null,
     referralCode: user.referralCode ?? null,
     onboardingProfile,

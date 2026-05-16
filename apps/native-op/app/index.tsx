@@ -3,33 +3,43 @@ import { ActivityIndicator, View } from "react-native";
 import { Redirect } from "expo-router";
 import { useAuth } from "@clerk/clerk-expo";
 import { useConvex } from "convex/react";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 
-type OnboardingRoute = "/(app)/(tabs)" | "/(onboarding)" | "/(onboarding)/import-method";
+type AppRoute = "/(app)/(tabs)" | "/(onboarding)" | "/(onboarding)/import-method";
 
 export default function Index() {
   const { isLoaded, isSignedIn } = useAuth();
   const convex = useConvex();
   const [loading, setLoading] = useState(true);
-  const [redirect, setRedirect] = useState<OnboardingRoute | null>(null);
+  const [redirect, setRedirect] = useState<AppRoute | null>(null);
 
   useEffect(() => {
-    if (!isLoaded || !isSignedIn) {
+    if (!isLoaded) return;
+
+    if (!isSignedIn) {
       setLoading(false);
       return;
     }
+
     let cancelled = false;
     (async () => {
       try {
         const status = await (convex as any).query("onboarding:getOnboardingStatus", {});
         if (cancelled) return;
 
+        // Fully onboarded → dashboard
         if (status?.hasCompletedOnboarding) {
           setRedirect("/(app)/(tabs)");
           return;
         }
 
-        // Determine if user has started any onboarding step
+        // Bulk import finished (flag set in DB by import mutation) → dashboard
+        // They'll see a modal to complete remaining steps
+        if (status?.bulkImportCompleted) {
+          setRedirect("/(app)/(tabs)");
+          return;
+        }
+
+        // Manual onboarding started → resume at hub
         const hasStarted =
           !!status?.onboardingProfile ||
           !!status?.businessProfile ||
@@ -41,14 +51,11 @@ export default function Index() {
           return;
         }
 
-        // Check if user already picked an import method (manual or bulk)
-        // so we don't send them back to the method picker after they've chosen
-        const methodChosen = await AsyncStorage.getItem("onboarding_method_chosen");
-        setRedirect(methodChosen ? "/(onboarding)" : "/(onboarding)/import-method");
+        // Fresh user → method picker
+        setRedirect("/(onboarding)/import-method");
       } catch {
         if (!cancelled) {
-          const methodChosen = await AsyncStorage.getItem("onboarding_method_chosen").catch(() => null);
-          setRedirect(methodChosen ? "/(onboarding)" : "/(onboarding)/import-method");
+          setRedirect("/(onboarding)/import-method");
         }
       } finally {
         if (!cancelled) setLoading(false);

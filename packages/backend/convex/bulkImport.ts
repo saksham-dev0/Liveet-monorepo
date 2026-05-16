@@ -169,8 +169,8 @@ export const insertParsedData = internalMutation({
       state: parsed.state || undefined,
     });
 
-    // Set as primary property
-    await ctx.db.patch(user._id, { primaryPropertyId: propertyId });
+    // Set as primary property and mark bulk import done
+    await ctx.db.patch(user._id, { primaryPropertyId: propertyId, bulkImportCompleted: true });
 
     // 2. Create onboarding profile if not exists
     const existingProfile = await ctx.db
