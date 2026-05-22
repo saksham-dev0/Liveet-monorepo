@@ -17,7 +17,6 @@ import appleIcon from "@/assets/images/Apple_logo_black.svg";
 import { useRouter } from "expo-router";
 import { useSignIn, useSignUp, useOAuth } from "@clerk/clerk-expo";
 import * as Linking from "expo-linking";
-import { useConvex } from "convex/react";
 import { useSyncUserWithConvex } from "../hooks/useSyncUserWithConvex";
 import {
   colors,
@@ -34,8 +33,6 @@ export default function AuthScreen() {
     useSignIn();
   const { signUp, setActive: setSignUpActive, isLoaded: signUpLoaded } =
     useSignUp();
-  const convex = useConvex();
-
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [step, setStep] = useState<AuthStep>("email");
@@ -50,38 +47,8 @@ export default function AuthScreen() {
 
   const navigateAfterAuth = useCallback(async () => {
     await syncUser();
-    try {
-      // Retry query — Convex JWT may not be ready immediately after setActive
-      let status = null;
-      for (let attempt = 0; attempt < 5; attempt++) {
-        status = await (convex as any).query(
-          "onboarding:getOnboardingStatus",
-          {},
-        );
-        if (status !== null) break;
-        if (attempt < 4) {
-          await new Promise((resolve) =>
-            setTimeout(resolve, 300 + attempt * 300),
-          );
-        }
-      }
-      if (status?.hasCompletedOnboarding) {
-        router.replace("/(app)/(tabs)");
-      } else if (
-        status?.onboardingProfile ||
-        status?.businessProfile ||
-        status?.property
-      ) {
-        // User already started manual onboarding — go to hub
-        router.replace("/(onboarding)" as any);
-      } else {
-        // Fresh user — show manual vs import choice
-        router.replace("/(onboarding)/import-method" as any);
-      }
-    } catch {
-      router.replace("/(app)/(tabs)");
-    }
-  }, [convex, router, syncUser]);
+    router.replace("/(onboarding)/welcome" as any);
+  }, [router, syncUser]);
 
   const handleSendCode = useCallback(async () => {
     if (!signInLoaded || !signUpLoaded) return;

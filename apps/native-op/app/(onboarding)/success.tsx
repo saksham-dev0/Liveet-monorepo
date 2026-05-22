@@ -1,63 +1,41 @@
-import { useEffect, useState } from "react";
-import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from "react-native";
-import { Image as ExpoImage } from "expo-image";
-import partyPopper3d from "@/assets/fluent-emojis/party_popper_3d.webp";
+import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useRouter } from "expo-router";
-import { useConvex } from "convex/react";
-import { colors, radii, card as cardStyle } from "../../constants/theme";
+import { colors, radii } from "../../constants/theme";
 
-export default function OnboardingSuccessScreen() {
+export default function SuccessScreen() {
   const router = useRouter();
-  const convex = useConvex();
-  const [completing, setCompleting] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const status = await (convex as any).query(
-          "onboarding:getOnboardingStatus",
-          {},
-        );
-        const primaryPropertyId = status?.primaryPropertyId ?? status?.property?._id;
-        await (convex as any).mutation("onboarding:completeOnboarding", {
-          primaryPropertyId: primaryPropertyId ?? undefined,
-        });
-      } catch {
-      } finally {
-        if (!cancelled) setCompleting(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [convex]);
 
   return (
     <View style={s.container}>
-      <View style={[cardStyle, s.cardOverride]}>
-        {completing ? (
-          <ActivityIndicator color={colors.primary} size="large" />
-        ) : (
-          <>
-            <View style={s.iconCircle}>
-              <ExpoImage
-                source={partyPopper3d}
-                style={s.emojiIcon}
-                contentFit="contain"
-              />
+      <View style={s.content}>
+        <Text style={s.emoji}>🎉</Text>
+        <Text style={s.heading}>{"You're all set!"}</Text>
+        <Text style={s.sub}>
+          {"Your property is live on Liveet. Start adding tenants and managing rent right away."}
+        </Text>
+
+        <View style={s.highlights}>
+          {[
+            { emoji: "🏠", text: "Property created" },
+            { emoji: "📋", text: "Agreement configured" },
+            { emoji: "💸", text: "Rent tracking ready" },
+          ].map((item) => (
+            <View key={item.text} style={s.highlightRow}>
+              <View style={s.highlightDot} />
+              <Text style={s.highlightEmoji}>{item.emoji}</Text>
+              <Text style={s.highlightText}>{item.text}</Text>
             </View>
-            <Text style={s.title}>Details submitted successfully</Text>
-            <Text style={s.subtitle}>
-              Your account is all set up. Let's get started!
-            </Text>
-          </>
-        )}
-        <TouchableOpacity
-          style={s.doneBtn}
-          onPress={() => router.replace("/(app)/(tabs)")}
-        >
-          <Text style={s.doneBtnText}>Done</Text>
-        </TouchableOpacity>
+          ))}
+        </View>
       </View>
+
+      <TouchableOpacity
+        style={s.btn}
+        onPress={() => router.replace("/(app)/(tabs)" as any)}
+        activeOpacity={0.8}
+      >
+        <Text style={s.btnText}>Go to dashboard →</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -65,45 +43,63 @@ export default function OnboardingSuccessScreen() {
 const s = StyleSheet.create({
   container: {
     flex: 1,
-    alignItems: "center",
+    backgroundColor: colors.white,
+    paddingHorizontal: 28,
+    paddingBottom: 48,
+    paddingTop: 24,
+  },
+  content: {
+    flex: 1,
     justifyContent: "center",
-    paddingHorizontal: 24,
   },
-  cardOverride: {
-    width: "100%",
-    maxWidth: 420,
-    padding: 36,
-    alignItems: "center",
+  emoji: {
+    fontSize: 72,
+    marginBottom: 16,
   },
-  iconCircle: {
-    width: 88,
-    height: 88,
-    borderRadius: 24,
-    backgroundColor: "#FEF9C3",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 24,
-  },
-  emojiIcon: { width: 54, height: 54 },
-  title: {
-    fontSize: 22,
+  heading: {
+    fontSize: 42,
     fontWeight: "800",
     color: colors.navy,
-    marginBottom: 8,
-    textAlign: "center",
+    letterSpacing: -0.5,
+    marginBottom: 12,
   },
-  subtitle: {
-    fontSize: 14,
+  sub: {
+    fontSize: 16,
     color: colors.muted,
-    marginBottom: 32,
-    textAlign: "center",
-    lineHeight: 20,
+    lineHeight: 24,
+    marginBottom: 36,
   },
-  doneBtn: {
+  highlights: {
+    gap: 14,
+  },
+  highlightRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  highlightDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.navy,
+  },
+  highlightEmoji: {
+    fontSize: 20,
+  },
+  highlightText: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: colors.navy,
+  },
+  btn: {
     borderRadius: radii.pill,
-    paddingVertical: 15,
-    paddingHorizontal: 52,
-    backgroundColor: colors.primary,
+    paddingVertical: 17,
+    alignItems: "center",
+    backgroundColor: colors.navy,
   },
-  doneBtnText: { fontSize: 16, fontWeight: "700", color: colors.white },
+  btnText: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: colors.white,
+  },
 });

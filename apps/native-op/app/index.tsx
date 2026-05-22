@@ -1,70 +1,11 @@
-import { useEffect, useState } from "react";
 import { ActivityIndicator, View } from "react-native";
 import { Redirect } from "expo-router";
 import { useAuth } from "@clerk/clerk-expo";
-import { useConvex } from "convex/react";
-
-type AppRoute = "/(app)/(tabs)" | "/(onboarding)" | "/(onboarding)/import-method";
 
 export default function Index() {
   const { isLoaded, isSignedIn } = useAuth();
-  const convex = useConvex();
-  const [loading, setLoading] = useState(true);
-  const [redirect, setRedirect] = useState<AppRoute | null>(null);
 
-  useEffect(() => {
-    if (!isLoaded) return;
-
-    if (!isSignedIn) {
-      setLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    (async () => {
-      try {
-        const status = await (convex as any).query("onboarding:getOnboardingStatus", {});
-        if (cancelled) return;
-
-        // Fully onboarded → dashboard
-        if (status?.hasCompletedOnboarding) {
-          setRedirect("/(app)/(tabs)");
-          return;
-        }
-
-        // Bulk import finished (flag set in DB by import mutation) → dashboard
-        // They'll see a modal to complete remaining steps
-        if (status?.bulkImportCompleted) {
-          setRedirect("/(app)/(tabs)");
-          return;
-        }
-
-        // Manual onboarding started → resume at hub
-        const hasStarted =
-          !!status?.onboardingProfile ||
-          !!status?.businessProfile ||
-          !!status?.account ||
-          !!status?.property;
-
-        if (hasStarted) {
-          setRedirect("/(onboarding)");
-          return;
-        }
-
-        // Fresh user → method picker
-        setRedirect("/(onboarding)/import-method");
-      } catch {
-        if (!cancelled) {
-          setRedirect("/(onboarding)/import-method");
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [isLoaded, isSignedIn, convex]);
-
-  if (!isLoaded || loading) {
+  if (!isLoaded) {
     return (
       <View className="flex-1 items-center justify-center bg-brand-page-bg">
         <ActivityIndicator color="#3083FF" />
@@ -76,5 +17,5 @@ export default function Index() {
     return <Redirect href="/(auth)" />;
   }
 
-  return <Redirect href={redirect ?? "/(onboarding)/import-method"} />;
+  return <Redirect href="/(onboarding)/welcome" />;
 }

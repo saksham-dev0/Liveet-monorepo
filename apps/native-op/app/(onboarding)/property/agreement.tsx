@@ -1,6 +1,5 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
-  ActivityIndicator,
   ScrollView,
   StyleSheet,
   Text,
@@ -8,236 +7,314 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
-import { useConvex } from "convex/react";
-import {
-  colors,
-  card,
-  chip,
-  chipActive,
-  chipRow,
-  chipText,
-  chipTextActive,
-  container,
-  errorText,
-  footerRow,
-  input,
-  label,
-  loadingRow,
-  loadingText,
-  primaryButton,
-  primaryButtonDisabled,
-  primaryButtonText,
-  secondaryButton,
-  secondaryButtonText,
-  stepLabel,
-  title,
-} from "../../../constants/theme";
+import { useRouter } from "expo-router";
+import { StepHeader } from "../../../components/StepHeader";
+import { colors, radii } from "../../../constants/theme";
 
-const OPTIONS = ["3 months", "6 months", "9 months", "12 months"];
-const CUSTOM_VALUE = "custom";
+const AGREEMENT_TYPES = [
+  {
+    id: "leave_license",
+    label: "Leave & License",
+    desc: "Recommended for PGs and hostels",
+    emoji: "📄",
+  },
+  {
+    id: "rental",
+    label: "Rental Agreement",
+    desc: "Standard residential / commercial",
+    emoji: "🤝",
+  },
+];
+
+const NOTICE_PERIODS = ["15 days", "30 days", "45 days", "60 days", "90 days"];
+
+const CHARGES = [
+  { id: "electricity", label: "Electricity", emoji: "⚡" },
+  { id: "water", label: "Water", emoji: "💧" },
+  { id: "maintenance", label: "Maintenance", emoji: "🔧" },
+  { id: "food", label: "Food charges", emoji: "🍽️" },
+  { id: "cleaning", label: "Cleaning", emoji: "🧹" },
+];
 
 export default function AgreementScreen() {
   const router = useRouter();
-  const convex = useConvex();
-  const { propertyId: propertyIdParam } = useLocalSearchParams<{
-    propertyId?: string;
-  }>();
 
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [propertyId, setPropertyId] = useState<string | null>(
-    propertyIdParam ? String(propertyIdParam) : null,
-  );
+  const [agreementType, setAgreementType] = useState<string | null>(null);
+  const [rent, setRent] = useState("");
+  const [deposit, setDeposit] = useState("");
+  const [noticePeriod, setNoticePeriod] = useState<string | null>(null);
+  const [selectedCharges, setSelectedCharges] = useState<string[]>([]);
 
-  const [securityDepositDuration, setSecurityDepositDuration] = useState("");
-  const [agreementDuration, setAgreementDuration] = useState("");
-  const [lockInPeriod, setLockInPeriod] = useState("");
-  const [noticePeriod, setNoticePeriod] = useState("");
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const status = await (convex as any).query(
-          "onboarding:getOnboardingStatus",
-          {},
-        );
-        if (cancelled || !status) return;
-        if (status.property && !propertyId) setPropertyId(status.property._id);
-        if (status.agreement) {
-          const a = status.agreement;
-          setSecurityDepositDuration(a.securityDepositDuration ?? "");
-          setAgreementDuration(a.agreementDuration ?? "");
-          setLockInPeriod(a.lockInPeriod ?? "");
-          setNoticePeriod(a.noticePeriod ?? "");
-        }
-      } catch {
-        // ignore
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [convex, propertyId]);
-
-  const handleSave = async () => {
-    if (!propertyId) {
-      setError("Please complete property basics first.");
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    try {
-      await (convex as any).mutation("onboarding:upsertAgreementDetails", {
-        propertyId,
-        securityDepositDuration:
-          securityDepositDuration && securityDepositDuration !== CUSTOM_VALUE
-            ? securityDepositDuration
-            : undefined,
-        agreementDuration:
-          agreementDuration && agreementDuration !== CUSTOM_VALUE
-            ? agreementDuration
-            : undefined,
-        lockInPeriod:
-          lockInPeriod && lockInPeriod !== CUSTOM_VALUE ? lockInPeriod : undefined,
-        noticePeriod:
-          noticePeriod && noticePeriod !== CUSTOM_VALUE
-            ? noticePeriod
-            : undefined,
-      });
-      router.push({
-        pathname: "/(onboarding)/property/rent",
-        params: { propertyId },
-      } as any);
-    } catch (err: any) {
-      setError(err?.message ?? "Something went wrong. Please try again.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const isCustom = (v: string) =>
-    v.trim() !== "" && !OPTIONS.includes(v);
-
-  const renderOptionRow = (
-    labelText: string,
-    value: string,
-    setter: (v: string) => void,
-  ) => {
-    const customActive = isCustom(value);
-    const showCustomInput = customActive || value === CUSTOM_VALUE;
-    const displayValue = value === CUSTOM_VALUE ? "" : value;
-    return (
-      <View style={styles.optionGroup}>
-        <Text style={label}>{labelText}</Text>
-        <View style={chipRow}>
-          {OPTIONS.map((option) => {
-            const active = value === option;
-            return (
-              <TouchableOpacity
-                key={option}
-                style={[chip, active && chipActive]}
-                onPress={() => setter(option)}
-              >
-                <Text style={[chipText, active && chipTextActive]}>{option}</Text>
-              </TouchableOpacity>
-            );
-          })}
-          <TouchableOpacity
-            style={[chip, (customActive || value === CUSTOM_VALUE) && chipActive]}
-            onPress={() => {
-              if (!isCustom(value) && value !== CUSTOM_VALUE) setter(CUSTOM_VALUE);
-            }}
-          >
-            <Text
-              style={[
-                chipText,
-                (customActive || value === CUSTOM_VALUE) && chipTextActive,
-              ]}
-            >
-              Custom
-            </Text>
-          </TouchableOpacity>
-        </View>
-        {showCustomInput && (
-          <TextInput
-            style={[input, styles.customInput]}
-            placeholder="e.g. 2 months, 18 months, 1 year"
-            placeholderTextColor={colors.muted}
-            value={value === CUSTOM_VALUE ? "" : value}
-            onChangeText={(text) =>
-              setter(text.trim() === "" ? CUSTOM_VALUE : text)
-            }
-          />
-        )}
-      </View>
+  const toggleCharge = (id: string) => {
+    setSelectedCharges((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
     );
   };
 
+  const isValid = agreementType !== null && rent.trim().length > 0;
+
   return (
-    <ScrollView contentContainerStyle={container}>
-      <View style={card}>
-        <Text style={stepLabel}>Step 5 of 7 · Agreement details</Text>
-        <Text style={title}>Agreement details</Text>
+    <ScrollView
+      contentContainerStyle={s.container}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+    >
+      <StepHeader
+        step={5}
+        showSkip={false}
+        onBack={() => router.back()}
+      />
 
-        {loading && (
-          <View style={loadingRow}>
-            <ActivityIndicator color={colors.primary} />
-            <Text style={loadingText}>Loading agreement...</Text>
+      <Text style={s.heading}>Agreement & rent</Text>
+      <Text style={s.sub}>Last step — set up your rent and agreement terms.</Text>
+
+      <Text style={s.label}>Agreement type</Text>
+      {AGREEMENT_TYPES.map((t) => (
+        <TouchableOpacity
+          key={t.id}
+          style={[s.agreeCard, agreementType === t.id && s.agreeCardActive]}
+          onPress={() => setAgreementType(t.id)}
+          activeOpacity={0.7}
+        >
+          <Text style={s.agreeEmoji}>{t.emoji}</Text>
+          <View style={s.agreeText}>
+            <Text style={[s.agreeLabel, agreementType === t.id && s.agreeLabelActive]}>
+              {t.label}
+            </Text>
+            <Text style={[s.agreeDesc, agreementType === t.id && s.agreeDescActive]}>
+              {t.desc}
+            </Text>
           </View>
-        )}
+          {agreementType === t.id && (
+            <Text style={s.checkmark}>✓</Text>
+          )}
+        </TouchableOpacity>
+      ))}
 
-        {error ? <Text style={errorText}>{error}</Text> : null}
+      <Text style={[s.label, { marginTop: 28 }]}>Monthly rent (₹)</Text>
+      <TextInput
+        style={s.input}
+        placeholder="e.g. 8000"
+        placeholderTextColor={colors.muted}
+        keyboardType="number-pad"
+        value={rent}
+        onChangeText={setRent}
+      />
 
-        {renderOptionRow(
-          "Security deposit duration",
-          securityDepositDuration,
-          setSecurityDepositDuration,
-        )}
-        {renderOptionRow(
-          "Agreement duration",
-          agreementDuration,
-          setAgreementDuration,
-        )}
-        {renderOptionRow(
-          "Lock-in period",
-          lockInPeriod,
-          setLockInPeriod,
-        )}
-        {renderOptionRow(
-          "Notice period",
-          noticePeriod,
-          setNoticePeriod,
-        )}
+      <Text style={s.label}>Security deposit (₹)</Text>
+      <TextInput
+        style={s.input}
+        placeholder="e.g. 16000 (2 months)"
+        placeholderTextColor={colors.muted}
+        keyboardType="number-pad"
+        value={deposit}
+        onChangeText={setDeposit}
+      />
 
-        <View style={footerRow}>
-          <TouchableOpacity style={secondaryButton} onPress={handleSave}>
-            <Text style={secondaryButtonText}>Save as draft</Text>
-          </TouchableOpacity>
+      <Text style={[s.label, { marginTop: 28 }]}>Notice period</Text>
+      <View style={s.noticePills}>
+        {NOTICE_PERIODS.map((p) => (
           <TouchableOpacity
-            style={[primaryButton, saving && primaryButtonDisabled]}
-            disabled={saving}
-            onPress={handleSave}
+            key={p}
+            style={[s.noticePill, noticePeriod === p && s.noticePillActive]}
+            onPress={() => setNoticePeriod(p)}
+            activeOpacity={0.7}
           >
-            <Text style={primaryButtonText}>
-              {saving ? "Saving..." : "Next"}
+            <Text style={[s.noticePillText, noticePeriod === p && s.noticePillTextActive]}>
+              {p}
             </Text>
           </TouchableOpacity>
-        </View>
+        ))}
       </View>
+
+      <Text style={[s.label, { marginTop: 28 }]}>Additional charges</Text>
+      <Text style={s.hint}>{"What's included in or added to the rent?"}</Text>
+      <View style={s.chargeChips}>
+        {CHARGES.map((c) => {
+          const active = selectedCharges.includes(c.id);
+          return (
+            <TouchableOpacity
+              key={c.id}
+              style={[s.chargeChip, active && s.chargeChipActive]}
+              onPress={() => toggleCharge(c.id)}
+              activeOpacity={0.7}
+            >
+              <Text style={s.chargeEmoji}>{c.emoji}</Text>
+              <Text style={[s.chargeLabel, active && s.chargeLabelActive]}>
+                {c.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      <TouchableOpacity
+        style={[s.btn, !isValid && s.btnDisabled]}
+        onPress={() => router.push("/(onboarding)/success" as any)}
+        disabled={!isValid}
+        activeOpacity={0.8}
+      >
+        <Text style={s.btnText}>Finish setup</Text>
+      </TouchableOpacity>
     </ScrollView>
   );
 }
 
-const styles = StyleSheet.create({
-  optionGroup: {
-    marginTop: 4,
+const s = StyleSheet.create({
+  container: {
+    flexGrow: 1,
+    paddingHorizontal: 24,
+    paddingTop: 16,
+    paddingBottom: 40,
+    backgroundColor: colors.white,
   },
-  customInput: {
-    marginTop: 10,
+  heading: {
+    fontSize: 32,
+    fontWeight: "800",
+    color: colors.navy,
+    letterSpacing: -0.5,
+    marginBottom: 6,
+  },
+  sub: {
+    fontSize: 15,
+    color: colors.muted,
+    marginBottom: 32,
+    lineHeight: 22,
+  },
+  label: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.navy,
+    marginBottom: 10,
+    marginTop: 8,
+  },
+  hint: {
+    fontSize: 12,
+    color: colors.muted,
+    marginBottom: 12,
+    marginTop: -6,
+  },
+  agreeCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    padding: 16,
+    borderRadius: radii.card,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    backgroundColor: colors.inputBg,
+    marginBottom: 10,
+  },
+  agreeCardActive: {
+    borderColor: colors.navy,
+    backgroundColor: colors.navy,
+  },
+  agreeEmoji: {
+    fontSize: 26,
+  },
+  agreeText: {
+    flex: 1,
+  },
+  agreeLabel: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: colors.navy,
+    marginBottom: 2,
+  },
+  agreeLabelActive: {
+    color: colors.white,
+  },
+  agreeDesc: {
+    fontSize: 12,
+    color: colors.muted,
+  },
+  agreeDescActive: {
+    color: "rgba(255,255,255,0.7)",
+  },
+  checkmark: {
+    fontSize: 18,
+    color: colors.white,
+    fontWeight: "700",
+  },
+  input: {
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    borderRadius: radii.input,
+    paddingHorizontal: 16,
+    paddingVertical: 15,
+    fontSize: 16,
+    backgroundColor: colors.inputBg,
+    color: colors.navy,
+  },
+  noticePills: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  noticePill: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: radii.pill,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    backgroundColor: colors.inputBg,
+  },
+  noticePillActive: {
+    borderColor: colors.navy,
+    backgroundColor: colors.navy,
+  },
+  noticePillText: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: colors.navy,
+  },
+  noticePillTextActive: {
+    color: colors.white,
+  },
+  chargeChips: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  chargeChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: radii.pill,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    backgroundColor: colors.inputBg,
+  },
+  chargeChipActive: {
+    borderColor: colors.navy,
+    backgroundColor: colors.navy,
+  },
+  chargeEmoji: {
+    fontSize: 14,
+  },
+  chargeLabel: {
+    fontSize: 13,
+    fontWeight: "500",
+    color: colors.navy,
+  },
+  chargeLabelActive: {
+    color: colors.white,
+  },
+  btn: {
+    borderRadius: radii.pill,
+    paddingVertical: 17,
+    alignItems: "center",
+    backgroundColor: colors.navy,
+    marginTop: 40,
+  },
+  btnDisabled: {
+    backgroundColor: colors.primaryLight,
+  },
+  btnText: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: colors.white,
   },
 });

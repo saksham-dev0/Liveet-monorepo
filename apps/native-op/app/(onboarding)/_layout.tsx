@@ -5,7 +5,7 @@ import { colors } from "../../constants/theme";
 
 export default function OnboardingLayout() {
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: colors.pageBg }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.white }}>
       <StatusBar barStyle="dark-content" />
       <KeyboardAvoidingView
         style={{ flex: 1 }}
