@@ -12,4 +12,88 @@ export default defineSchema({
     hasCompletedOnboarding: v.optional(v.boolean()),
     phone: v.optional(v.string()),
   }).index("by_tokenIdentifier", ["tokenIdentifier"]),
+
+  floors: defineTable({
+    propertyId: v.id("properties"),
+    operatorId: v.id("users"),
+    label: v.string(),
+    short: v.string(),
+    order: v.number(),
+  })
+    .index("by_propertyId", ["propertyId"])
+    .index("by_operatorId", ["operatorId"]),
+
+  rooms: defineTable({
+    propertyId: v.id("properties"),
+    floorId: v.id("floors"),
+    operatorId: v.id("users"),
+    roomNumber: v.string(),
+    type: v.string(),
+    capacity: v.number(),
+    rent: v.optional(v.number()),
+    deposit: v.optional(v.number()),
+  })
+    .index("by_propertyId", ["propertyId"])
+    .index("by_floorId", ["floorId"])
+    .index("by_operatorId", ["operatorId"]),
+
+  propertyMembers: defineTable({
+    propertyId: v.id("properties"),
+    userId: v.id("users"),
+    role: v.union(v.literal("owner"), v.literal("manager")),
+    invitedBy: v.optional(v.id("users")),
+    joinedAt: v.number(),
+  })
+    .index("by_propertyId", ["propertyId"])
+    .index("by_userId", ["userId"])
+    .index("by_propertyId_userId", ["propertyId", "userId"]),
+
+  propertyInvites: defineTable({
+    propertyId: v.id("properties"),
+    email: v.string(),
+    token: v.string(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("accepted"),
+      v.literal("revoked")
+    ),
+    invitedBy: v.id("users"),
+    expiresAt: v.number(),
+  })
+    .index("by_propertyId", ["propertyId"])
+    .index("by_token", ["token"])
+    .index("by_email", ["email"]),
+
+  properties: defineTable({
+    operatorId: v.id("users"),
+    propertyType: v.string(),
+    name: v.string(),
+    addressLine1: v.optional(v.string()),
+    city: v.optional(v.string()),
+    state: v.optional(v.string()),
+    pincode: v.optional(v.string()),
+    totalUnits: v.optional(v.string()),
+    roomTypes: v.optional(v.array(v.string())),
+    amenities: v.optional(v.array(v.string())),
+    description: v.optional(v.string()),
+    occupancyType: v.optional(v.string()),
+    images: v.optional(v.array(v.string())),
+    tenantGender: v.optional(v.string()),
+    tenantFood: v.optional(v.string()),
+    tenantOccupation: v.optional(v.string()),
+    agreementDuration: v.optional(v.string()),
+    noticePeriod: v.optional(v.string()),
+    roomPricings: v.optional(
+      v.array(
+        v.object({
+          roomType: v.string(),
+          rent: v.string(),
+          deposit: v.string(),
+        })
+      )
+    ),
+    additionalCharges: v.optional(
+      v.array(v.object({ id: v.string(), amount: v.string() }))
+    ),
+  }).index("by_operatorId", ["operatorId"]),
 });

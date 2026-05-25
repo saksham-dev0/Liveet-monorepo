@@ -1,5 +1,6 @@
 import { Stack } from "expo-router";
 import { colors } from "../../constants/theme";
+import { PropertyRoleProvider } from "../../context/PropertyRoleContext";
 
 /** Keep tab shell as default when opening /(app). */
 export const unstable_settings = {
@@ -8,6 +9,7 @@ export const unstable_settings = {
 
 export default function AppStackLayout() {
   return (
+    <PropertyRoleProvider>
     <Stack
       screenOptions={{
         headerShown: false,
@@ -119,6 +121,11 @@ export default function AppStackLayout() {
         name="privacy-policy"
         options={{ gestureEnabled: true, fullScreenGestureEnabled: true }}
       />
+      <Stack.Screen
+        name="team"
+        options={{ gestureEnabled: true, fullScreenGestureEnabled: true }}
+      />
     </Stack>
+    </PropertyRoleProvider>
   );
 }

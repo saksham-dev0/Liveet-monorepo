@@ -3,12 +3,14 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { StepHeader } from "../../../components/StepHeader";
 import { colors, radii } from "../../../constants/theme";
+import { useOnboarding } from "../../../context/OnboardingContext";
 
 const ROOM_TYPES = [
   { id: "single", label: "Single", emoji: "🛏️" },
@@ -25,6 +27,7 @@ const AMENITIES = [
   { id: "attached_bath", label: "Attached Bath" },
   { id: "parking", label: "Parking" },
   { id: "laundry", label: "Laundry" },
+  { id: "balcony", label: "Balcony" },
   { id: "meals", label: "Meals" },
   { id: "security", label: "24/7 Security" },
   { id: "gym", label: "Gym" },
@@ -32,7 +35,8 @@ const AMENITIES = [
 
 export default function RoomsScreen() {
   const router = useRouter();
-  const [totalUnits, setTotalUnits] = useState(1);
+  const { update } = useOnboarding();
+  const [totalUnits, setTotalUnits] = useState("");
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
   const [selectedAmenities, setSelectedAmenities] = useState<string[]>([]);
 
@@ -59,30 +63,22 @@ export default function RoomsScreen() {
       <StepHeader
         step={3}
         onBack={() => router.back()}
-        onSkip={() => router.push("/(onboarding)/property/tenant" as any)}
+        onSkip={() => { update({ totalUnits, roomTypes: selectedTypes, amenities: selectedAmenities }); router.push("/(onboarding)/property/tenant" as any); }}
       />
 
       <Text style={s.heading}>Room setup</Text>
       <Text style={s.sub}>How many units and what types do you offer?</Text>
 
       <Text style={s.label}>Total units</Text>
-      <View style={s.stepper}>
-        <TouchableOpacity
-          style={s.stepperBtn}
-          onPress={() => setTotalUnits((v) => Math.max(1, v - 1))}
-          activeOpacity={0.7}
-        >
-          <Text style={s.stepperBtnText}>−</Text>
-        </TouchableOpacity>
-        <Text style={s.stepperValue}>{totalUnits}</Text>
-        <TouchableOpacity
-          style={s.stepperBtn}
-          onPress={() => setTotalUnits((v) => v + 1)}
-          activeOpacity={0.7}
-        >
-          <Text style={s.stepperBtnText}>+</Text>
-        </TouchableOpacity>
-      </View>
+      <TextInput
+        style={s.input}
+        value={totalUnits}
+        onChangeText={(t) => setTotalUnits(t.replace(/[^0-9]/g, ""))}
+        keyboardType="number-pad"
+        placeholder="e.g. 10"
+        placeholderTextColor={colors.muted}
+        maxLength={4}
+      />
 
       <Text style={s.label}>Room types offered</Text>
       <Text style={s.hint}>Pick all that apply</Text>
@@ -127,7 +123,10 @@ export default function RoomsScreen() {
 
       <TouchableOpacity
         style={[s.btn, !isValid && s.btnDisabled]}
-        onPress={() => router.push("/(onboarding)/property/tenant" as any)}
+        onPress={() => {
+          update({ totalUnits, roomTypes: selectedTypes, amenities: selectedAmenities });
+          router.push("/(onboarding)/property/tenant" as any);
+        }}
         disabled={!isValid}
         activeOpacity={0.8}
       >
@@ -170,32 +169,16 @@ const s = StyleSheet.create({
     color: colors.muted,
     marginBottom: 12,
   },
-  stepper: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 20,
-  },
-  stepperBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+  input: {
     borderWidth: 1.5,
     borderColor: colors.border,
+    borderRadius: 12,
     backgroundColor: colors.inputBg,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  stepperBtnText: {
-    fontSize: 22,
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+    fontSize: 16,
     color: colors.navy,
-    lineHeight: 26,
-  },
-  stepperValue: {
-    fontSize: 22,
-    fontWeight: "700",
-    color: colors.navy,
-    minWidth: 32,
-    textAlign: "center",
+    fontWeight: "600",
   },
   chips: {
     flexDirection: "row",

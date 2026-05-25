@@ -8,9 +8,10 @@ import {
 import { useRouter } from "expo-router";
 import { StepHeader } from "../../../components/StepHeader";
 import { colors, radii } from "../../../constants/theme";
+import { useOnboarding } from "../../../context/OnboardingContext";
 
 const GENDER_OPTIONS = [
-  { id: "any", label: "Any gender", emoji: "👥", desc: "Open to everyone" },
+  { id: "any", label: "Co-living", emoji: "👥", desc: "Open to everyone" },
   { id: "male", label: "Male only", emoji: "👨", desc: "Male tenants only" },
   { id: "female", label: "Female only", emoji: "👩", desc: "Female tenants only" },
 ];
@@ -59,6 +60,7 @@ function OptionCard({
 
 export default function TenantScreen() {
   const router = useRouter();
+  const { update } = useOnboarding();
   const [gender, setGender] = useState<string | null>(null);
   const [food, setFood] = useState<string | null>(null);
   const [occupation, setOccupation] = useState<string | null>(null);
@@ -74,7 +76,7 @@ export default function TenantScreen() {
       <StepHeader
         step={4}
         onBack={() => router.back()}
-        onSkip={() => router.push("/(onboarding)/property/agreement" as any)}
+        onSkip={() => { update({ tenantGender: gender, tenantFood: food, tenantOccupation: occupation }); router.push("/(onboarding)/property/agreement" as any); }}
       />
 
       <Text style={s.heading}>Tenant preferences</Text>
@@ -124,7 +126,10 @@ export default function TenantScreen() {
 
       <TouchableOpacity
         style={[s.btn, !isValid && s.btnDisabled]}
-        onPress={() => router.push("/(onboarding)/property/agreement" as any)}
+        onPress={() => {
+          update({ tenantGender: gender, tenantFood: food, tenantOccupation: occupation });
+          router.push("/(onboarding)/property/agreement" as any);
+        }}
         disabled={!isValid}
         activeOpacity={0.8}
       >
