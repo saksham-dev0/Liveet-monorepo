@@ -10,6 +10,7 @@ import {
 import { useRouter } from "expo-router";
 import { StepHeader } from "../../../components/StepHeader";
 import { colors, radii } from "../../../constants/theme";
+import { useOnboarding } from "../../../context/OnboardingContext";
 
 const INDIAN_STATES = [
   "Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar", "Chhattisgarh",
@@ -29,6 +30,7 @@ const PROPERTY_TYPES = [
 
 export default function PropertyBasicScreen() {
   const router = useRouter();
+  const { update } = useOnboarding();
 
   const [propertyType, setPropertyType] = useState<string | null>(null);
   const [name, setName] = useState("");
@@ -141,7 +143,17 @@ export default function PropertyBasicScreen() {
 
       <TouchableOpacity
         style={[s.btn, !isValid && s.btnDisabled]}
-        onPress={() => router.push("/(onboarding)/property/rooms" as any)}
+        onPress={() => {
+          update({
+            propertyType: propertyType ?? "",
+            propertyName: name,
+            addressLine1: line1,
+            city,
+            state,
+            pincode,
+          });
+          router.push("/(onboarding)/property/rooms" as any);
+        }}
         disabled={!isValid}
         activeOpacity={0.8}
       >

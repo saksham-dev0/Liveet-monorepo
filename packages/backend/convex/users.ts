@@ -50,6 +50,63 @@ export const ensureCurrentUser = mutation({
   },
 });
 
+export const completeOnboarding = mutation({
+  args: {
+    name: v.string(),
+    property: v.object({
+      propertyType: v.string(),
+      name: v.string(),
+      addressLine1: v.optional(v.string()),
+      city: v.optional(v.string()),
+      state: v.optional(v.string()),
+      pincode: v.optional(v.string()),
+      totalUnits: v.optional(v.string()),
+      roomTypes: v.optional(v.array(v.string())),
+      amenities: v.optional(v.array(v.string())),
+      tenantGender: v.optional(v.string()),
+      tenantFood: v.optional(v.string()),
+      tenantOccupation: v.optional(v.string()),
+      agreementDuration: v.optional(v.string()),
+      noticePeriod: v.optional(v.string()),
+      roomPricings: v.optional(
+        v.array(v.object({ roomType: v.string(), rent: v.string(), deposit: v.string() }))
+      ),
+      additionalCharges: v.optional(
+        v.array(v.object({ id: v.string(), amount: v.string() }))
+      ),
+    }),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier)
+      )
+      .unique();
+    if (!user) throw new Error("User not found");
+
+    await ctx.db.patch(user._id, {
+      name: args.name,
+      hasCompletedOnboarding: true,
+    });
+
+    const propertyId = await ctx.db.insert("properties", {
+      operatorId: user._id,
+      ...args.property,
+    });
+
+    await ctx.db.insert("propertyMembers", {
+      propertyId,
+      userId: user._id,
+      role: "owner",
+      joinedAt: Date.now(),
+    });
+  },
+});
+
 export const getCurrentUser = query({
   args: {},
   handler: async (ctx) => {
@@ -62,5 +119,78 @@ export const getCurrentUser = query({
         q.eq("tokenIdentifier", identity.tokenIdentifier),
       )
       .unique();
+  },
+});
+
+export const updateMyProperty = mutation({
+  args: {
+    name: v.optional(v.string()),
+    description: v.optional(v.string()),
+    occupancyType: v.optional(v.string()),
+    images: v.optional(v.array(v.string())),
+    propertyType: v.optional(v.string()),
+    addressLine1: v.optional(v.string()),
+    city: v.optional(v.string()),
+    state: v.optional(v.string()),
+    pincode: v.optional(v.string()),
+    totalUnits: v.optional(v.string()),
+    roomTypes: v.optional(v.array(v.string())),
+    amenities: v.optional(v.array(v.string())),
+    tenantGender: v.optional(v.string()),
+    tenantFood: v.optional(v.string()),
+    tenantOccupation: v.optional(v.string()),
+    agreementDuration: v.optional(v.string()),
+    noticePeriod: v.optional(v.string()),
+    roomPricings: v.optional(
+      v.array(v.object({ roomType: v.string(), rent: v.string(), deposit: v.string() }))
+    ),
+    additionalCharges: v.optional(
+      v.array(v.object({ id: v.string(), amount: v.string() }))
+    ),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier)
+      )
+      .unique();
+    if (!user) throw new Error("User not found");
+
+    const property = await ctx.db
+      .query("properties")
+      .withIndex("by_operatorId", (q) => q.eq("operatorId", user._id))
+      .first();
+    if (!property) throw new Error("Property not found");
+
+    const patch: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(args)) {
+      if (value !== undefined) patch[key] = value;
+    }
+    await ctx.db.patch(property._id, patch);
+  },
+});
+
+export const getMyProperty = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier)
+      )
+      .unique();
+    if (!user) return null;
+
+    return await ctx.db
+      .query("properties")
+      .withIndex("by_operatorId", (q) => q.eq("operatorId", user._id))
+      .first();
   },
 });

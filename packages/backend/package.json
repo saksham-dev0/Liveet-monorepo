@@ -16,6 +16,7 @@
     "@google/generative-ai": "^0.24.1",
     "convex": "^1.29.3",
     "openai": "^6.9.1",
+    "resend": "^6.12.3",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

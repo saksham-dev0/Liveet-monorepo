@@ -10,9 +10,11 @@ import {
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { StepHeader } from "../../components/StepHeader";
 import { colors, radii } from "../../constants/theme";
+import { useOnboarding } from "../../context/OnboardingContext";
 
 export default function PersonalDetailsScreen() {
   const router = useRouter();
+  const { update } = useOnboarding();
   const { name: paramName } = useLocalSearchParams<{ name?: string }>();
 
   const [fullName, setFullName] = useState(paramName ?? "");
@@ -23,6 +25,7 @@ export default function PersonalDetailsScreen() {
 
   const handleContinue = () => {
     if (!isValid) return;
+    update({ fullName, brandName });
     router.push("/(onboarding)/property/basic" as any);
   };
 
