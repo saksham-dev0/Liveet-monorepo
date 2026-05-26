@@ -4,10 +4,24 @@ import { v } from "convex/values";
 export const get = query({
   args: { propertyId: v.id("properties") },
   handler: async (ctx, { propertyId }) => {
-    return ctx.db
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier)
+      )
+      .first();
+    if (!user) throw new Error("User not found");
+
+    const details = await ctx.db
       .query("paymentDetails")
       .withIndex("by_propertyId", (q) => q.eq("propertyId", propertyId))
       .first();
+
+    if (details && details.operatorId !== user._id) throw new Error("Unauthorized");
+    return details;
   },
 });
 
@@ -32,6 +46,9 @@ export const upsert = mutation({
       .first();
     if (!user) throw new Error("User not found");
 
+    const property = await ctx.db.get(args.propertyId);
+    if (!property || property.operatorId !== user._id) throw new Error("Unauthorized");
+
     const existing = await ctx.db
       .query("paymentDetails")
       .withIndex("by_propertyId", (q) => q.eq("propertyId", args.propertyId))
@@ -54,6 +71,8 @@ export const upsert = mutation({
 
 export const generateUploadUrl = mutation({
   handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
     return ctx.storage.generateUploadUrl();
   },
 });

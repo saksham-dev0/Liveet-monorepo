@@ -488,6 +488,14 @@ export default function AddTenantScreen() {
           .filter((c) => c.label && c.amount)
           .map((c) => ({ id: c.id, label: c.label, amount: Number(c.amount) })),
         moveInAmount: Number(form.moveIn) || undefined,
+        bookingItemLabels: BOOKING_LINES
+          .filter((l) => form.bookingItems[l.key] && (Number(charges[l.key]) || 0) > 0)
+          .map((l) => l.label)
+          .concat(
+            form.customCharges
+              .filter((c) => form.bookingItems[`custom_${c.id}`] && Number(c.amount) > 0)
+              .map((c) => c.label || "Custom charge")
+          ),
         paymentStatus: form.paymentStatus,
       });
       router.back();
@@ -724,7 +732,7 @@ export default function AddTenantScreen() {
 
             {/* Move-in amount */}
             <View style={{ gap: 6 }}>
-              <Text style={styles.fieldLabel}>Move-in amount collected</Text>
+              <Text style={styles.fieldLabel}>Amount to be collected</Text>
               <View style={[styles.moneyInputWrap]}>
                 <Text style={styles.moneyPrefix}>₹</Text>
                 <TextInput

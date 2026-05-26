@@ -47,10 +47,11 @@ export const updateAgreement = mutation({
     agreementPdfId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthenticated");
-    const { propertyId, ...fields } = args;
-    await ctx.db.patch(propertyId, fields);
+    const property = await getOperatorProperty(ctx);
+    if (!property) throw new Error("Property not found");
+    if (property._id !== args.propertyId) throw new Error("Unauthorized");
+    const { propertyId: _, ...fields } = args;
+    await ctx.db.patch(property._id, fields);
   },
 });
 
