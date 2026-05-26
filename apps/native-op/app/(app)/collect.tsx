@@ -53,6 +53,8 @@ export default function CollectScreen() {
   const [uploadingQr, setUploadingQr] = useState(false);
   const [qrUrl, setQrUrl] = useState<string | null>(null);
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   const [form, setForm] = useState<Details>({
     accountName: "",
     accountNumber: "",
@@ -88,7 +90,10 @@ export default function CollectScreen() {
       } else {
         setEditing(true);
       }
-    } catch (_) {}
+    } catch (err: any) {
+      console.error("Failed to load payment details:", err);
+      setLoadError(err?.message ?? "Failed to load payment details");
+    }
   }, [convex]);
 
   useEffect(() => {
@@ -115,7 +120,13 @@ export default function CollectScreen() {
         headers: { "Content-Type": blob.type || "image/jpeg" },
         body: blob,
       });
-      const { storageId } = await uploadRes.json();
+      if (!uploadRes.ok) {
+        const errText = await uploadRes.text();
+        throw new Error(`Upload failed (${uploadRes.status}): ${errText}`);
+      }
+      const body = await uploadRes.json();
+      const { storageId } = body;
+      if (!storageId) throw new Error("Upload response missing storageId");
       setForm((f) => ({ ...f, qrImageId: storageId }));
 
       const url = await (convex as any).query("paymentDetails:getQrUrl", {
@@ -175,6 +186,11 @@ export default function CollectScreen() {
           )}
         </View>
 
+        {loadError && (
+          <Text style={{ color: C.error, paddingHorizontal: 20, paddingVertical: 8 }}>
+            {loadError}
+          </Text>
+        )}
         <ScrollView
           contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 40 }]}
           showsVerticalScrollIndicator={false}

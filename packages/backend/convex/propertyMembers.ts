@@ -92,13 +92,25 @@ export const getMyProperties = query({
       .withIndex("by_userId", (q) => q.eq("userId", user._id))
       .collect();
 
-    const properties = await Promise.all(
+    const membershipPropertyIds = new Set(memberships.map((m) => m.propertyId));
+
+    const memberProperties = await Promise.all(
       memberships.map(async (m) => {
         const property = await ctx.db.get(m.propertyId);
         return property ? { ...property, myRole: m.role } : null;
       })
     );
-    return properties.filter(Boolean);
+
+    // Backfill: include properties where user is operatorId but has no membership row yet
+    const ownedProperties = await ctx.db
+      .query("properties")
+      .withIndex("by_operatorId", (q) => q.eq("operatorId", user._id))
+      .collect();
+    const legacyProperties = ownedProperties
+      .filter((p) => !membershipPropertyIds.has(p._id))
+      .map((p) => ({ ...p, myRole: "owner" as const }));
+
+    return [...memberProperties.filter(Boolean), ...legacyProperties];
   },
 });
 

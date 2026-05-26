@@ -94,31 +94,35 @@ export default function AgreementScreen() {
         "agreement:getAgreement",
         {}
       );
-      if (!data) return;
 
-      setPropertyId(data.propertyId);
-      setAgreementDuration(data.agreementDuration);
-      setNoticePeriod(data.noticePeriod);
-      setRoomPricings(
-        data.roomPricings.length
-          ? data.roomPricings.map((r, i) => ({ ...r, id: String(i + 1) }))
-          : [{ id: "1", roomType: "", rent: "", deposit: "" }]
-      );
-      const amounts: Record<string, string> = {};
-      data.additionalCharges.forEach(({ id, amount }) => {
-        amounts[id] = amount;
-      });
-      setChargeAmounts(amounts);
-      setPdfId(data.agreementPdfId);
-
-      if (data.agreementPdfId) {
-        const url = await (convex as any).query("agreement:getPdfUrl", {
-          storageId: data.agreementPdfId,
+      if (data) {
+        setPropertyId(data.propertyId);
+        setAgreementDuration(data.agreementDuration);
+        setNoticePeriod(data.noticePeriod);
+        setRoomPricings(
+          data.roomPricings.length
+            ? data.roomPricings.map((r, i) => ({ ...r, id: String(i + 1) }))
+            : [{ id: "1", roomType: "", rent: "", deposit: "" }]
+        );
+        const amounts: Record<string, string> = {};
+        data.additionalCharges.forEach(({ id, amount }) => {
+          amounts[id] = amount;
         });
-        setPdfUrl(url);
+        setChargeAmounts(amounts);
+        setPdfId(data.agreementPdfId);
+
+        if (data.agreementPdfId) {
+          const url = await (convex as any).query("agreement:getPdfUrl", {
+            storageId: data.agreementPdfId,
+          });
+          setPdfUrl(url);
+        }
       }
-    } catch (_) {}
-    setLoading(false);
+    } catch (e) {
+      console.error("Failed to load agreement data:", e);
+    } finally {
+      setLoading(false);
+    }
   }, [convex]);
 
   useEffect(() => {
@@ -173,7 +177,13 @@ export default function AgreementScreen() {
         headers: { "Content-Type": "application/pdf" },
         body: blob,
       });
-      const { storageId } = await uploadRes.json();
+      if (!uploadRes.ok) {
+        const errText = await uploadRes.text();
+        throw new Error(`Upload failed (${uploadRes.status}): ${errText}`);
+      }
+      const body = await uploadRes.json();
+      const { storageId } = body;
+      if (!storageId) throw new Error("Upload response missing storageId");
       setPdfId(storageId);
       const url = await (convex as any).query("agreement:getPdfUrl", {
         storageId,

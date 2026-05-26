@@ -89,6 +89,18 @@ export default defineSchema({
       v.literal("partial"),
       v.literal("pending")
     ),
+    paymentHistory: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          amount: v.number(),
+          status: v.union(v.literal("paid"), v.literal("partial"), v.literal("pending")),
+          note: v.optional(v.string()),
+          items: v.optional(v.array(v.string())),
+          createdAt: v.number(),
+        })
+      )
+    ),
     createdAt: v.number(),
   })
     .index("by_propertyId", ["propertyId"])
