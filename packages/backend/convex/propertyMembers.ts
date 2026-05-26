@@ -31,20 +31,41 @@ async function getCallerRole(
   if (member) return member.role;
 
   // Fallback for users who onboarded before propertyMembers feature:
-  // if they are the operatorId on the property, treat as owner and backfill the row.
+  // if they are the operatorId on the property, treat as owner (read-only, no DB write).
   const property = await ctx.db.get(propertyId);
   if (property && property.operatorId === user._id) {
-    await ctx.db.insert("propertyMembers", {
-      propertyId,
-      userId: user._id,
-      role: "owner",
-      joinedAt: Date.now(),
-    });
     return "owner";
   }
 
   return null;
 }
+
+export const ensurePropertyMember = mutation({
+  args: { propertyId: v.id("properties") },
+  handler: async (ctx, args) => {
+    const user = await getAuthUser(ctx);
+
+    const existing = await ctx.db
+      .query("propertyMembers")
+      .withIndex("by_propertyId_userId", (q: any) =>
+        q.eq("propertyId", args.propertyId).eq("userId", user._id)
+      )
+      .unique();
+    if (existing) return;
+
+    const property = await ctx.db.get(args.propertyId);
+    if (!property || property.operatorId !== user._id) {
+      throw new Error("Not the property owner");
+    }
+
+    await ctx.db.insert("propertyMembers", {
+      propertyId: args.propertyId,
+      userId: user._id,
+      role: "owner",
+      joinedAt: Date.now(),
+    });
+  },
+});
 
 export const getMyRoleForProperty = query({
   args: { propertyId: v.id("properties") },
@@ -151,8 +172,7 @@ export const inviteManager = mutation({
       if (alreadyMember) throw new Error("User is already a team member");
     }
 
-    const token =
-      Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+    const token = crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "");
 
     const property = await ctx.db.get(args.propertyId);
     if (!property) throw new Error("Property not found");

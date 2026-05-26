@@ -163,9 +163,12 @@ function QuickActions() {
   const router = useRouter();
 
   const ACTION_ROUTES: Record<string, string> = {
+    "Add tenant": "/(app)/add-tenant",
     "List property": "/(app)/list-property",
     "Rooms": "/(app)/rooms",
     "Team": "/(app)/team",
+    "Collect": "/(app)/collect",
+    "Agreement": "/(app)/agreement",
   };
 
   return (

@@ -64,6 +64,48 @@ export default defineSchema({
     .index("by_token", ["token"])
     .index("by_email", ["email"]),
 
+  tenants: defineTable({
+    propertyId: v.id("properties"),
+    operatorId: v.id("users"),
+    roomId: v.optional(v.id("rooms")),
+    studentName: v.string(),
+    studentPhone: v.string(),
+    studentEmail: v.optional(v.string()),
+    course: v.optional(v.string()),
+    parentName: v.optional(v.string()),
+    parentPhone: v.optional(v.string()),
+    parentEmail: v.optional(v.string()),
+    rent: v.optional(v.number()),
+    advance: v.optional(v.number()),
+    security: v.optional(v.number()),
+    booking: v.optional(v.number()),
+    maintenance: v.optional(v.number()),
+    customCharges: v.optional(
+      v.array(v.object({ id: v.string(), label: v.string(), amount: v.number() }))
+    ),
+    moveInAmount: v.optional(v.number()),
+    paymentStatus: v.union(
+      v.literal("paid"),
+      v.literal("partial"),
+      v.literal("pending")
+    ),
+    createdAt: v.number(),
+  })
+    .index("by_propertyId", ["propertyId"])
+    .index("by_operatorId", ["operatorId"]),
+
+  paymentDetails: defineTable({
+    propertyId: v.id("properties"),
+    operatorId: v.id("users"),
+    accountName: v.optional(v.string()),
+    accountNumber: v.optional(v.string()),
+    ifscCode: v.optional(v.string()),
+    upiId: v.optional(v.string()),
+    qrImageId: v.optional(v.string()),
+  })
+    .index("by_propertyId", ["propertyId"])
+    .index("by_operatorId", ["operatorId"]),
+
   properties: defineTable({
     operatorId: v.id("users"),
     propertyType: v.string(),
@@ -95,5 +137,6 @@ export default defineSchema({
     additionalCharges: v.optional(
       v.array(v.object({ id: v.string(), amount: v.string() }))
     ),
+    agreementPdfId: v.optional(v.string()),
   }).index("by_operatorId", ["operatorId"]),
 });
