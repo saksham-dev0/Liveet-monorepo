@@ -24,27 +24,30 @@ export const ensureCurrentUser = mutation({
       )
       .unique();
 
-    const baseFields = {
-      tokenIdentifier,
-      clerkUserId: identity.subject,
-      email: identity.email,
-      name: identity.name,
-      imageUrl: identity.pictureUrl,
-    };
-
     if (!existing) {
       const userId = await ctx.db.insert("users", {
-        ...baseFields,
+        tokenIdentifier,
+        clerkUserId: identity.subject,
+        email: identity.email,
+        name: identity.name,
+        imageUrl: identity.pictureUrl,
         role: args.role,
         hasCompletedOnboarding: false,
       });
       return { userId };
     }
 
-    const patchFields: Record<string, unknown> = { ...baseFields };
-    if (args.role && !existing.role) {
-      patchFields.role = args.role;
-    }
+    // Only update fields that haven't been set by the user during onboarding.
+    // name and imageUrl are set during onboarding and must not be overwritten by Clerk.
+    const patchFields: Record<string, unknown> = {
+      tokenIdentifier,
+      clerkUserId: identity.subject,
+      email: identity.email,
+    };
+    if (!existing.name && identity.name) patchFields.name = identity.name;
+    if (!existing.imageUrl && identity.pictureUrl) patchFields.imageUrl = identity.pictureUrl;
+    if (args.role && !existing.role) patchFields.role = args.role;
+
     await ctx.db.patch(existing._id, patchFields);
     return { userId: existing._id };
   },
@@ -192,5 +195,57 @@ export const getMyProperty = query({
       .query("properties")
       .withIndex("by_operatorId", (q) => q.eq("operatorId", user._id))
       .first();
+  },
+});
+
+export const completeTenantOnboarding = mutation({
+  args: {
+    name: v.string(),
+    phone: v.string(),
+    isAlreadyInLiveet: v.boolean(),
+    importedTenantId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier)
+      )
+      .unique();
+    if (!user) throw new Error("User not found");
+
+    await ctx.db.patch(user._id, {
+      name: args.name,
+      phone: args.phone,
+      hasCompletedOnboarding: true,
+    });
+  },
+});
+
+export const lookupImportedTenantByPhone = query({
+  args: { phone: v.string() },
+  handler: async (ctx, args) => {
+    const tenants = await ctx.db.query("tenants").collect();
+    const match = tenants.find((t) => t.studentPhone === args.phone);
+    if (!match) return null;
+
+    const property = await ctx.db.get(match.propertyId);
+    const room = match.roomId ? await ctx.db.get(match.roomId) : null;
+
+    return {
+      importedTenantId: match._id,
+      tenantName: match.studentName,
+      propertyName: property?.name ?? null,
+      propertyCity: property?.city ?? null,
+      propertyState: property?.state ?? null,
+      propertyLine1: property?.addressLine1 ?? null,
+      roomNumber: room?.roomNumber ?? null,
+      roomType: room?.type ?? null,
+      rent: match.rent ?? null,
+      moveInDate: null,
+    };
   },
 });

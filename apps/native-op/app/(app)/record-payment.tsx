@@ -194,36 +194,53 @@ export default function RecordPaymentScreen() {
   const convex = useConvex();
 
   const [tenant, setTenant] = useState<TenantDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [items, setItems] = useState<Record<string, boolean>>({});
   const [collected, setCollected] = useState("");
   const [status, setStatus] = useState<PaymentStatus>("paid");
 
   useEffect(() => {
-    if (!tenantId) return;
-    (convex as any).query("tenants:getTenantById", { tenantId }).then((t: TenantDetail | null) => {
-      if (!t) return;
-      setTenant(t);
-      // Default: only uncollected items checked
-      const alreadyPaidLabels = new Set(
-        (t.paymentHistory ?? []).flatMap((e) => e.items ?? [])
-      );
-      const allLines = [
-        { label: "Rent (monthly)", amount: t.rent ?? 0 },
-        { label: "Advance", amount: t.advance ?? 0 },
-        { label: "Security deposit", amount: t.security ?? 0 },
-        { label: "Booking amount", amount: t.booking ?? 0 },
-        { label: "Maintenance", amount: t.maintenance ?? 0 },
-        ...(t.customCharges ?? []).map((c) => ({ label: c.label || "Custom charge", amount: c.amount })),
-      ];
-      const defaults: Record<string, boolean> = {};
-      allLines.forEach((l) => {
-        if (!alreadyPaidLabels.has(l.label) && l.amount > 0) {
-          defaults[l.label] = true;
+    if (!tenantId) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setLoadError(null);
+    (convex as any).query("tenants:getTenantById", { tenantId })
+      .then((t: TenantDetail | null) => {
+        if (!t) {
+          setLoadError("Tenant not found.");
+          return;
         }
+        setTenant(t);
+        // Default: only uncollected items checked
+        const alreadyPaidKeys = new Set(
+          (t.paymentHistory ?? []).flatMap((e) => e.items ?? [])
+        );
+        const allLines = [
+          { key: "Rent (monthly)", amount: t.rent ?? 0 },
+          { key: "Advance", amount: t.advance ?? 0 },
+          { key: "Security deposit", amount: t.security ?? 0 },
+          { key: "Booking amount", amount: t.booking ?? 0 },
+          { key: "Maintenance", amount: t.maintenance ?? 0 },
+          ...(t.customCharges ?? []).map((c) => ({ key: `custom-${c.id}`, amount: c.amount })),
+        ];
+        const defaults: Record<string, boolean> = {};
+        allLines.forEach((l) => {
+          if (!alreadyPaidKeys.has(l.key) && l.amount > 0) {
+            defaults[l.key] = true;
+          }
+        });
+        setItems(defaults);
+      })
+      .catch((e: any) => {
+        setLoadError(e?.message ?? "Failed to load tenant.");
+      })
+      .finally(() => {
+        setLoading(false);
       });
-      setItems(defaults);
-    });
   }, [convex, tenantId]);
 
   // Items already collected (from history)
@@ -241,22 +258,22 @@ export default function RecordPaymentScreen() {
   const ALL_LINES = useMemo(() => {
     if (!tenant) return [];
     return [
-      { label: "Rent (monthly)", amount: tenant.rent ?? 0 },
-      { label: "Advance", amount: tenant.advance ?? 0 },
-      { label: "Security deposit", amount: tenant.security ?? 0 },
-      { label: "Booking amount", amount: tenant.booking ?? 0 },
-      { label: "Maintenance", amount: tenant.maintenance ?? 0 },
+      { key: "Rent (monthly)", label: "Rent (monthly)", amount: tenant.rent ?? 0 },
+      { key: "Advance", label: "Advance", amount: tenant.advance ?? 0 },
+      { key: "Security deposit", label: "Security deposit", amount: tenant.security ?? 0 },
+      { key: "Booking amount", label: "Booking amount", amount: tenant.booking ?? 0 },
+      { key: "Maintenance", label: "Maintenance", amount: tenant.maintenance ?? 0 },
       ...(tenant.customCharges ?? []).map((c) => ({
-        label: c.label || "Custom charge", amount: c.amount, isCustom: true,
+        key: `custom-${c.id}`, label: c.label || "Custom charge", amount: c.amount, isCustom: true,
       })),
-    ].filter((l) => l.amount > 0 || alreadyPaidLabels.has(l.label));
+    ].filter((l) => l.amount > 0 || alreadyPaidLabels.has(l.key));
   }, [tenant, alreadyPaidLabels]);
 
-  const collectedLines = useMemo(() => ALL_LINES.filter((l) => alreadyPaidLabels.has(l.label)), [ALL_LINES, alreadyPaidLabels]);
-  const newLines = useMemo(() => ALL_LINES.filter((l) => !alreadyPaidLabels.has(l.label)), [ALL_LINES, alreadyPaidLabels]);
+  const collectedLines = useMemo(() => ALL_LINES.filter((l) => alreadyPaidLabels.has(l.key)), [ALL_LINES, alreadyPaidLabels]);
+  const newLines = useMemo(() => ALL_LINES.filter((l) => !alreadyPaidLabels.has(l.key)), [ALL_LINES, alreadyPaidLabels]);
 
   const total = useMemo(
-    () => newLines.reduce((s, l) => s + (items[l.label] ? l.amount : 0), 0),
+    () => newLines.reduce((s, l) => s + (items[l.key] ? l.amount : 0), 0),
     [newLines, items]
   );
 
@@ -269,7 +286,7 @@ export default function RecordPaymentScreen() {
     }
     setSaving(true);
     try {
-      const selectedLabels = newLines.filter((l) => items[l.label]).map((l) => l.label);
+      const selectedLabels = newLines.filter((l) => items[l.key]).map((l) => l.key);
       await (convex as any).mutation("tenants:recordPayment", {
         tenantId,
         amountCollected: amt,
@@ -284,10 +301,21 @@ export default function RecordPaymentScreen() {
     }
   }, [tenantId, collected, status, saving, convex, newLines, items]);
 
-  if (!tenant) {
+  if (loading) {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: C.pageBg }}>
         <ActivityIndicator color={C.navy} />
+      </View>
+    );
+  }
+
+  if (loadError || !tenant) {
+    return (
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: C.pageBg }}>
+        <Text style={{ color: C.navy, marginBottom: 16 }}>{loadError ?? "Tenant not found."}</Text>
+        <TouchableOpacity onPress={() => router.back()}>
+          <Text style={{ color: C.navy, textDecorationLine: "underline" }}>Go back</Text>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -396,8 +424,8 @@ export default function RecordPaymentScreen() {
                     key={line.label}
                     label={line.label}
                     amount={line.amount}
-                    isOn={!!items[line.label]}
-                    onToggle={() => setItems((prev) => ({ ...prev, [line.label]: !prev[line.label] }))}
+                    isOn={!!items[line.key]}
+                    onToggle={() => setItems((prev) => ({ ...prev, [line.key]: !prev[line.key] }))}
                     isFirst={i === 0}
                     isCustom={"isCustom" in line ? (line as any).isCustom : false}
                   />

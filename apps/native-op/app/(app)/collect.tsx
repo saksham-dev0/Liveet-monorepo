@@ -64,6 +64,7 @@ export default function CollectScreen() {
   });
 
   const load = useCallback(async () => {
+    setLoadError(null);
     try {
       const prop = await (convex as any).query("users:getMyProperty", {});
       if (!prop?._id) return;

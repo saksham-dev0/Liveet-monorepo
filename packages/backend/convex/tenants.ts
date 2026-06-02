@@ -142,6 +142,14 @@ export const getTenantById = query({
     const tenant = await ctx.db.get(args.tenantId);
     if (!tenant) return null;
 
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier)
+      )
+      .unique();
+    if (!user || user._id !== tenant.operatorId) return null;
+
     const room = tenant.roomId ? await ctx.db.get(tenant.roomId) : null;
     let floorLabel: string | null = null;
     if (room?.floorId) {
@@ -172,6 +180,14 @@ export const recordPayment = mutation({
 
     const tenant = await ctx.db.get(args.tenantId);
     if (!tenant) throw new Error("Tenant not found");
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier)
+      )
+      .unique();
+    if (!user || user._id !== tenant.operatorId) throw new Error("Unauthorized");
 
     const now = Date.now();
     const newEntry = {
