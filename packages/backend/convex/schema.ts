@@ -151,4 +151,53 @@ export default defineSchema({
     ),
     agreementPdfId: v.optional(v.string()),
   }).index("by_operatorId", ["operatorId"]),
+
+  propertyLikes: defineTable({
+    userId: v.id("users"),
+    propertyId: v.id("properties"),
+    liked: v.boolean(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_userId_propertyId", ["userId", "propertyId"]),
+
+  bookingRequests: defineTable({
+    propertyId: v.id("properties"),
+    userId: v.id("users"),
+    studentName: v.string(),
+    studentPhone: v.string(),
+    studentEmail: v.optional(v.string()),
+    course: v.optional(v.string()),
+    yearOfStudy: v.optional(v.string()),
+    parentName: v.optional(v.string()),
+    parentPhone: v.optional(v.string()),
+    parentEmail: v.optional(v.string()),
+    moveInDate: v.string(),
+    foodPreference: v.optional(v.string()),
+    paymentProofId: v.optional(v.string()),
+    status: v.union(v.literal("pending"), v.literal("accepted"), v.literal("rejected")),
+    createdAt: v.number(),
+  })
+    .index("by_propertyId", ["propertyId"])
+    .index("by_userId", ["userId"]),
+
+  tasks: defineTable({
+    operatorId: v.id("users"),
+    propertyId: v.optional(v.id("properties")),
+    title: v.string(),
+    kind: v.string(),
+    priority: v.union(v.literal("High"), v.literal("Med"), v.literal("Low")),
+    status: v.union(v.literal("todo"), v.literal("doing"), v.literal("done")),
+    bucket: v.union(v.literal("overdue"), v.literal("today"), v.literal("week"), v.literal("later")),
+    due: v.optional(v.string()),
+    linkedType: v.optional(v.string()),
+    linkedLabel: v.optional(v.string()),
+    linkedSub: v.optional(v.string()),
+    assigneeName: v.optional(v.string()),
+    assigneeRole: v.optional(v.string()),
+    desc: v.optional(v.string()),
+    subtasks: v.optional(v.array(v.object({ t: v.string(), done: v.boolean() }))),
+    createdAt: v.number(),
+  })
+    .index("by_operatorId", ["operatorId"])
+    .index("by_operatorId_status", ["operatorId", "status"]),
 });

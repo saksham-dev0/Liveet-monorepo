@@ -617,10 +617,19 @@ export default function ManageScreen() {
   const router = useRouter();
   const convex = useConvex();
   const [tenants, setTenants] = useState<Tenant[]>([]);
+  const [tenantsError, setTenantsError] = useState<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
-      (convex as any).query("tenants:getTenants", {}).then(setTenants).catch(() => {});
+      setTenantsError(null);
+      (convex as any).query("tenants:getTenants", {})
+        .then((data: Tenant[]) => {
+          setTenants(data);
+        })
+        .catch((e: any) => {
+          console.error("tenants:getTenants failed", e);
+          setTenantsError(e?.message ?? "Failed to load tenants.");
+        });
     }, [convex])
   );
 
@@ -722,7 +731,20 @@ export default function ManageScreen() {
       )}
 
       {/* List */}
-      {tenants.length === 0 ? (
+      {tenantsError ? (
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 24 }}>
+          <Text style={{ color: C.navy, textAlign: "center", marginBottom: 8 }}>{tenantsError}</Text>
+          <TouchableOpacity onPress={() => {
+            setTenantsError(null);
+            (convex as any).query("tenants:getTenants", {}).then(setTenants).catch((e: any) => {
+              console.error("tenants:getTenants failed", e);
+              setTenantsError(e?.message ?? "Failed to load tenants.");
+            });
+          }}>
+            <Text style={{ color: C.accent, textDecorationLine: "underline" }}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      ) : tenants.length === 0 ? (
         <EmptyState onAdd={() => router.push("/(app)/add-tenant")} />
       ) : (
         <>

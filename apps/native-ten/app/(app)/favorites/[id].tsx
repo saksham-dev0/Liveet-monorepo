@@ -1,95 +1,38 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
   View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  ActivityIndicator,
+  Linking,
+  Alert,
+  Dimensions,
+  Modal,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
 import { Image } from "expo-image";
+import * as ImagePicker from "expo-image-picker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Ionicons } from "@expo/vector-icons";
-import { useConvex } from "convex/react";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { colors, radii } from "../../../constants/theme";
-
+import { useConvex } from "convex/react";
+import { Ionicons } from "@expo/vector-icons";
+import { colors, radii, cardShadow } from "../../../constants/theme";
 import LiveetTenantHero from "../../../assets/images/Liveet-tenant.png";
 
-type RoomOptionRow = {
-  rentAmount?: number | null;
-  category?: string;
-  numberOfRooms?: number | null;
-  typeName?: string | null;
-  attachedWashroom?: boolean | null;
-  attachedBalcony?: boolean | null;
-  airConditioner?: boolean | null;
-  geyser?: boolean | null;
-  customFeatures?: string[] | null;
-};
-
-type PropertyAgreement = {
-  securityDepositDuration?: string | null;
-  agreementDuration?: string | null;
-  lockInPeriod?: string | null;
-  noticePeriod?: string | null;
-};
-
-type HeroSlide = { uri: string } | number;
-
-type LikedProperty = {
-  _id: string;
-  name?: string;
-  city?: string;
-  state?: string;
-  vacantUnits?: number | null;
-  ownerName?: string | null;
-  description?: string | null;
-  coverImageUrl?: string | null;
-  galleryImageUrls?: (string | null)[] | null;
-  utilities?: string[] | null;
-  amenities?: string[] | null;
-  roomOptions?: RoomOptionRow[];
-  tenantDetails?: {
-    canStayMale?: boolean | null;
-    canStayFemale?: boolean | null;
-    canStayOthers?: boolean | null;
-  } | null;
-  agreement?: PropertyAgreement | null;
-};
-
-const AGREEMENT_FIELDS: { key: keyof PropertyAgreement; label: string }[] = [
-  { key: "agreementDuration", label: "Agreement duration" },
-  { key: "securityDepositDuration", label: "Security deposit" },
-  { key: "lockInPeriod", label: "Lock-in period" },
-  { key: "noticePeriod", label: "Notice period" },
-];
-
-function getAgreementRows(agreement: PropertyAgreement | null | undefined) {
-  if (!agreement) return [];
-  const rows: { key: string; label: string; value: string }[] = [];
-  for (const { key, label } of AGREEMENT_FIELDS) {
-    const v = agreement[key];
-    if (typeof v === "string" && v.trim()) {
-      rows.push({ key, label, value: v.trim() });
-    }
-  }
-  return rows;
-}
-
-const AGREEMENT_ROW_ICONS: Partial<
-  Record<keyof PropertyAgreement, keyof typeof Ionicons.glyphMap>
-> = {
-  agreementDuration: "calendar-outline",
-  securityDepositDuration: "wallet-outline",
-  lockInPeriod: "lock-closed-outline",
-  noticePeriod: "notifications-outline",
-};
-
-function agreementRowIcon(key: string): keyof typeof Ionicons.glyphMap {
-  return AGREEMENT_ROW_ICONS[key as keyof PropertyAgreement] ?? "document-text-outline";
-}
+const { width: SW } = Dimensions.get("window");
+const HERO_H = SW * 0.75;
+const ACCENT = "#D4F542";
+const ACCENT_TEXT = "#1A1A1A";
+const NAVY = colors.navy;
+const MUTED = colors.muted;
+const BORDER = colors.border;
+const SURFACE = colors.surfaceGray;
+const PAGE_BG = colors.pageBg;
+const WHITE = colors.white;
 
 const CATEGORY_LABELS: Record<string, string> = {
   single: "Single",
@@ -98,918 +41,1191 @@ const CATEGORY_LABELS: Record<string, string> = {
   "3plus": "3+ Bed",
 };
 
-function getPlacementPill(
-  d: LikedProperty["tenantDetails"],
-): { label: string; icon: keyof typeof Ionicons.glyphMap } | null {
-  if (!d) return null;
-  const m = !!d.canStayMale;
-  const f = !!d.canStayFemale;
-  const o = !!d.canStayOthers;
-  if (!m && !f && !o) return null;
-  if (f && !m && !o) return { label: "Female only", icon: "woman-outline" };
-  if (m && !f && !o) return { label: "Male only", icon: "man-outline" };
-  return { label: "Coliving", icon: "people-outline" };
-}
+type RoomOption = {
+  _id: string;
+  category: string;
+  typeName?: string;
+  rentAmount?: number;
+  attachedWashroom?: boolean;
+  attachedBalcony?: boolean;
+  airConditioner?: boolean;
+  geyser?: boolean;
+  customFeatures?: string[];
+};
 
-function collectFacilityLabels(roomOptions: RoomOptionRow[] | undefined): string[] {
-  const seen = new Set<string>();
-  const labels: string[] = [];
-  const push = (raw: string) => {
-    const t = raw.trim();
-    if (!t || seen.has(t)) return;
-    seen.add(t);
-    labels.push(t);
-  };
+type PaymentDetails = {
+  accountName: string | null;
+  accountNumber: string | null;
+  ifscCode: string | null;
+  upiId: string | null;
+  qrImageUrl: string | null;
+};
 
-  for (const r of roomOptions ?? []) {
-    if (r.airConditioner) push("Air conditioning");
-    if (r.geyser) push("Geyser");
-    if (r.attachedWashroom) push("Attached washroom");
-    if (r.attachedBalcony) push("Balcony");
-    const tn = r.typeName?.trim();
-    if (tn) push(tn);
-    else if (r.category) {
-      const cat = CATEGORY_LABELS[r.category] ?? r.category;
-      push(`${cat} room`);
-    }
-    if (typeof r.numberOfRooms === "number" && r.numberOfRooms > 0) {
-      push(
-        `${r.numberOfRooms} bedroom${r.numberOfRooms === 1 ? "" : "s"}`,
-      );
-    }
-    for (const f of r.customFeatures ?? []) {
-      if (typeof f === "string" && f.trim()) push(f.trim());
-    }
+type BookingForm = {
+  studentName: string;
+  studentPhone: string;
+  studentEmail: string;
+  course: string;
+  yearOfStudy: string;
+  parentName: string;
+  parentPhone: string;
+  parentEmail: string;
+  moveInDate: string;
+  foodPreference: string;
+};
+
+type PropertyDetail = {
+  _id: string;
+  name?: string;
+  coverImageUrl?: string | null;
+  imageUrls?: string[];
+  pincode?: string;
+  city?: string;
+  state?: string;
+  line1?: string;
+  description?: string;
+  propertyType?: string;
+  contactPhone?: string | null;
+  contactEmail?: string | null;
+  roomOptions: RoomOption[];
+  tenantDetails: {
+    canStayMale?: boolean;
+    canStayFemale?: boolean;
+    canStayOthers?: boolean;
+    bestForStudent?: boolean;
+    bestForWorkingProfessional?: boolean;
+  } | null;
+  agreement: {
+    agreementDuration?: string | null;
+    noticePeriod?: string | null;
+    securityDepositDuration?: string | null;
+    lockInPeriod?: string | null;
+  } | null;
+};
+
+function formatAmount(n: number): string {
+  if (n >= 1000) {
+    const k = n / 1000;
+    const r = Math.round(k * 10) / 10;
+    return `${r.toFixed(1).replace(/\.0$/, "")}K`;
   }
-  return labels;
+  return n.toLocaleString("en-IN");
 }
 
-function facilityIcon(label: string): keyof typeof Ionicons.glyphMap {
-  const l = label.toLowerCase();
-  if (l.includes("geyser") || l.includes("washroom") || l.includes("bath"))
-    return "water-outline";
-  if (l.includes("balcony")) return "sunny-outline";
-  if (l.includes("air") || l.endsWith(" ac") || l === "ac")
-    return "snow-outline";
-  if (l.includes("bedroom") || l.includes("room")) return "bed-outline";
-  return "checkmark-circle-outline";
-}
-
-function normalizeTagList(arr: string[] | null | undefined): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const s of arr ?? []) {
-    if (typeof s !== "string") continue;
-    const t = s.trim();
-    if (!t) continue;
-    const k = t.toLowerCase();
-    if (seen.has(k)) continue;
-    seen.add(k);
-    out.push(t);
-  }
-  return out;
-}
-
-function getRentRange(roomOptions: LikedProperty["roomOptions"]): {
-  min: number;
-  max: number;
-} | null {
-  const amounts = (roomOptions ?? [])
-    .map((r) => r?.rentAmount)
-    .filter((a): a is number => typeof a === "number" && a > 0);
-
+function getRentRange(opts: RoomOption[]) {
+  const amounts = opts.map((r) => r.rentAmount).filter((a): a is number => a != null && a > 0);
   if (!amounts.length) return null;
   return { min: Math.min(...amounts), max: Math.max(...amounts) };
 }
 
-function formatRentRupees(n: number): string {
-  return Math.round(n).toLocaleString("en-IN");
-}
-
-function buildHeroSlides(property: LikedProperty | null): HeroSlide[] {
-  if (!property) return [LiveetTenantHero];
-  const out: HeroSlide[] = [];
+function getAmenities(opts: RoomOption[]) {
+  const list: { label: string; icon: keyof typeof Ionicons.glyphMap }[] = [];
   const seen = new Set<string>();
-  const addUri = (raw: string) => {
-    const u = raw.trim();
-    if (!u || seen.has(u)) return;
-    seen.add(u);
-    out.push({ uri: u });
+  const add = (label: string, icon: keyof typeof Ionicons.glyphMap) => {
+    if (!seen.has(label)) { seen.add(label); list.push({ label, icon }); }
   };
-  if (property.coverImageUrl) addUri(property.coverImageUrl);
-  for (const u of property.galleryImageUrls ?? []) {
-    if (typeof u === "string" && u.trim()) addUri(u);
+  for (const r of opts) {
+    if (r.airConditioner) add("Air Conditioning", "snow-outline");
+    if (r.geyser) add("Geyser", "water-outline");
+    if (r.attachedWashroom) add("Attached Washroom", "man-outline");
+    if (r.attachedBalcony) add("Balcony", "sunny-outline");
+    r.customFeatures?.forEach((f) => add(f, "checkmark-circle-outline"));
   }
-  if (out.length === 0) return [LiveetTenantHero];
-  return out;
+  return list;
 }
 
-export default function FavoritesDetailScreen() {
+function SectionHeader({ icon, title }: { icon: keyof typeof Ionicons.glyphMap; title: string }) {
+  return (
+    <View style={s.sectionHeader}>
+      <Ionicons name={icon} size={17} color={NAVY} />
+      <Text style={s.sectionTitle}>{title}</Text>
+    </View>
+  );
+}
+
+function AgreementRow({
+  icon,
+  label,
+  value,
+  last,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  value: string;
+  last?: boolean;
+}) {
+  return (
+    <View style={[s.agRow, !last && s.agRowBorder]}>
+      <View style={s.agIconWrap}>
+        <Ionicons name={icon} size={16} color={NAVY} />
+      </View>
+      <Text style={s.agLabel}>{label}</Text>
+      <Text style={s.agValue}>{value}</Text>
+    </View>
+  );
+}
+
+export default function PropertyDetailScreen() {
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const router = useRouter();
   const convex = useConvex();
   const insets = useSafeAreaInsets();
-  const router = useRouter();
-  const params = useLocalSearchParams();
 
-  const propertyId = useMemo(() => {
-    const raw = params.id;
-    return Array.isArray(raw) ? raw[0] : raw;
-  }, [params.id]);
-
+  const [property, setProperty] = useState<PropertyDetail | null>(null);
   const [loading, setLoading] = useState(true);
-  const [property, setProperty] = useState<LikedProperty | null>(null);
-  const [heroImageIndex, setHeroImageIndex] = useState(0);
-  const [hasMoveInRequest, setHasMoveInRequest] = useState(false);
+  const [activeImage, setActiveImage] = useState(0);
+
+  const [bookingStep, setBookingStep] = useState<0 | 1 | 2>(0); // 0=closed, 1=bank details, 2=form
+  const [paymentDetails, setPaymentDetails] = useState<PaymentDetails | null>(null);
+  const [paymentLoading, setPaymentLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [paymentProofId, setPaymentProofId] = useState<string | null>(null);
+  const [paymentProofUri, setPaymentProofUri] = useState<string | null>(null);
+  const [uploadingProof, setUploadingProof] = useState(false);
+  const [form, setForm] = useState<BookingForm>({
+    studentName: "",
+    studentPhone: "",
+    studentEmail: "",
+    course: "",
+    yearOfStudy: "",
+    parentName: "",
+    parentPhone: "",
+    parentEmail: "",
+    moveInDate: "",
+    foodPreference: "",
+  });
 
   useEffect(() => {
+    if (!id) return;
     let cancelled = false;
-
     (async () => {
-      setLoading(true);
       try {
-        const [result, moveInStatus] = await Promise.all([
-          (convex as any).query("properties:listLikedForTenants", {}),
-          propertyId
-            ? (convex as any).query("moveIn:getTenantMoveInForProperty", { propertyId })
-            : Promise.resolve({ hasApplication: false }),
-        ]);
-        if (cancelled) return;
-
-        const found =
-          (result ?? []).find((p: LikedProperty) => p?._id === propertyId) ?? null;
-        setProperty(found);
-        setHasMoveInRequest(!!moveInStatus?.hasApplication);
-      } catch (e) {
-        // UI-only: keep the screen usable even if the query fails.
-        console.warn("Failed to load favorite details:", e);
-        if (!cancelled) {
-          setProperty(null);
-          setHasMoveInRequest(false);
-        }
+        const result = await (convex as any).query("properties:getById", { propertyId: id });
+        if (!cancelled) setProperty(result ?? null);
+      } catch (err) {
+        console.warn("Failed to fetch property:", err);
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
+    return () => { cancelled = true; };
+  }, [id, convex]);
 
-    return () => {
-      cancelled = true;
-    };
-  }, [convex, propertyId]);
+  const handleBookNow = useCallback(async () => {
+    if (!id) return;
+    setPaymentLoading(true);
+    setBookingStep(1);
+    try {
+      const result = await (convex as any).query("properties:getPaymentDetails", { propertyId: id });
+      setPaymentDetails(result ?? null);
+    } catch (err) {
+      console.warn("Failed to fetch payment details:", err);
+    } finally {
+      setPaymentLoading(false);
+    }
+  }, [id, convex]);
 
-  const heroSlides = useMemo(() => buildHeroSlides(property), [property]);
-
-  useEffect(() => {
-    setHeroImageIndex(0);
-  }, [property?._id]);
-
-  const heroSlideCount = heroSlides.length;
-  const heroSlideIndex =
-    heroSlideCount > 0 ? Math.min(heroImageIndex, heroSlideCount - 1) : 0;
-  const currentHeroSlide = heroSlides[heroSlideIndex] ?? LiveetTenantHero;
-  const canBrowseHero = heroSlideCount > 1;
-
-  const goHeroPrev = () => {
-    setHeroImageIndex((i) => {
-      if (heroSlideCount <= 1) return 0;
-      return i <= 0 ? heroSlideCount - 1 : i - 1;
+  const pickPaymentProof = useCallback(async () => {
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.85,
     });
-  };
+    if (res.canceled || !res.assets[0]) return;
 
-  const goHeroNext = () => {
-    setHeroImageIndex((i) => {
-      if (heroSlideCount <= 1) return 0;
-      return i >= heroSlideCount - 1 ? 0 : i + 1;
-    });
-  };
+    setUploadingProof(true);
+    try {
+      const uploadUrl = await (convex as any).mutation("properties:generateUploadUrl", {});
+      const asset = res.assets[0];
+      const blob = await fetch(asset.uri).then((r) => r.blob());
+      const uploadRes = await fetch(uploadUrl, {
+        method: "POST",
+        headers: { "Content-Type": blob.type || "image/jpeg" },
+        body: blob,
+      });
+      if (!uploadRes.ok) throw new Error(`Upload failed (${uploadRes.status})`);
+      const { storageId } = await uploadRes.json();
+      if (!storageId) throw new Error("Missing storageId");
+      setPaymentProofId(storageId);
+      setPaymentProofUri(asset.uri);
+    } catch {
+      Alert.alert("Upload failed", "Could not upload payment proof. Try again.");
+    } finally {
+      setUploadingProof(false);
+    }
+  }, [convex]);
 
-  const title = property?.name ?? "Premium House A24";
-  const location =
-    [property?.city, property?.state].filter(Boolean).join(", ") ||
-    "Maplewood, New Jersey";
+  const handleSubmitBooking = useCallback(async () => {
+    if (!id) return;
+    if (!form.studentName.trim()) {
+      Alert.alert("Required", "Please enter student name.");
+      return;
+    }
+    if (!form.studentPhone.trim()) {
+      Alert.alert("Required", "Please enter student phone number.");
+      return;
+    }
+    if (!form.moveInDate.trim()) {
+      Alert.alert("Required", "Please enter move-in date.");
+      return;
+    }
+    if (!paymentProofId) {
+      Alert.alert("Required", "Please upload payment proof (screenshot or receipt).");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await (convex as any).mutation("properties:submitBookingRequest", {
+        propertyId: id,
+        studentName: form.studentName.trim(),
+        studentPhone: form.studentPhone.trim(),
+        studentEmail: form.studentEmail.trim() || undefined,
+        course: form.course.trim() || undefined,
+        yearOfStudy: form.yearOfStudy.trim() || undefined,
+        parentName: form.parentName.trim() || undefined,
+        parentPhone: form.parentPhone.trim() || undefined,
+        parentEmail: form.parentEmail.trim() || undefined,
+        moveInDate: form.moveInDate.trim(),
+        foodPreference: form.foodPreference.trim() || undefined,
+        paymentProofId: paymentProofId ?? undefined,
+      });
+      setBookingStep(0);
+      setForm({
+        studentName: "", studentPhone: "", studentEmail: "",
+        course: "", yearOfStudy: "", parentName: "", parentPhone: "",
+        parentEmail: "", moveInDate: "", foodPreference: "",
+      });
+      setPaymentProofId(null);
+      setPaymentProofUri(null);
+      Alert.alert("Booking Submitted!", "Your booking request has been sent to the operator. They will reach out to you shortly.", [{ text: "OK" }]);
+    } catch (err) {
+      Alert.alert("Error", "Failed to submit booking. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  }, [id, convex, form, paymentProofId]);
 
-  const rentRangeForPrice = useMemo(
-    () => getRentRange(property?.roomOptions),
-    [property?.roomOptions],
-  );
+  const handleVisit = useCallback(() => {
+    if (property?.contactPhone) {
+      Linking.openURL(`tel:${property.contactPhone}`);
+    } else if (property?.contactEmail) {
+      Linking.openURL(`mailto:${property.contactEmail}`);
+    } else {
+      Alert.alert("Schedule Visit", "Contact info not available yet.", [{ text: "OK" }]);
+    }
+  }, [property]);
 
-  const placementPill = useMemo(
-    () => getPlacementPill(property?.tenantDetails ?? null),
-    [property?.tenantDetails],
-  );
-  const facilityLabels = useMemo(
-    () => collectFacilityLabels(property?.roomOptions),
-    [property?.roomOptions],
-  );
-  const agreementRows = useMemo(
-    () => getAgreementRows(property?.agreement ?? null),
-    [property?.agreement],
-  );
-  const utilitiesList = useMemo(
-    () => normalizeTagList(property?.utilities),
-    [property?.utilities],
-  );
-  const amenitiesList = useMemo(
-    () => normalizeTagList(property?.amenities),
-    [property?.amenities],
-  );
-  const operatorDescription = (property?.description ?? "").trim();
-  const ownerDisplayName = (property?.ownerName ?? "").trim();
-
-  if (loading && !property) {
+  if (loading) {
     return (
       <View style={[s.root, { paddingTop: insets.top }]}>
-        <ActivityIndicator size="large" color={colors.primary} />
+        <View style={s.center}><ActivityIndicator size="large" color={NAVY} /></View>
       </View>
     );
   }
 
+  if (!property) {
+    return (
+      <View style={[s.root, { paddingTop: insets.top }]}>
+        <TouchableOpacity style={[s.backBtn, { top: insets.top + 8 }]} onPress={() => router.back()}>
+          <Ionicons name="chevron-back" size={22} color={NAVY} />
+        </TouchableOpacity>
+        <View style={s.center}><Text style={s.errorText}>Property not found</Text></View>
+      </View>
+    );
+  }
+
+  const rentRange = getRentRange(property.roomOptions);
+  const amenities = getAmenities(property.roomOptions);
+  const images = property.imageUrls?.length
+    ? property.imageUrls
+    : property.coverImageUrl
+    ? [property.coverImageUrl]
+    : [];
+  const locationLine = [property.line1, property.city, property.state, property.pincode]
+    .filter(Boolean).join(", ");
+
+  const tenantTags: string[] = [];
+  if (property.tenantDetails?.canStayMale) tenantTags.push("Males");
+  if (property.tenantDetails?.canStayFemale) tenantTags.push("Females");
+  if (property.tenantDetails?.canStayOthers) tenantTags.push("Others");
+
+  const suitedFor: string[] = [];
+  if (property.tenantDetails?.bestForStudent) suitedFor.push("Students");
+  if (property.tenantDetails?.bestForWorkingProfessional) suitedFor.push("Professionals");
+
+  const agRows: { icon: keyof typeof Ionicons.glyphMap; label: string; value: string }[] = [];
+  if (property.agreement?.securityDepositDuration)
+    agRows.push({ icon: "cash-outline", label: "Security deposit", value: property.agreement.securityDepositDuration });
+  if (property.agreement?.lockInPeriod)
+    agRows.push({ icon: "lock-closed-outline", label: "Lock-in period", value: property.agreement.lockInPeriod });
+  if (property.agreement?.noticePeriod)
+    agRows.push({ icon: "time-outline", label: "Notice period", value: property.agreement.noticePeriod });
+  if (property.agreement?.agreementDuration)
+    agRows.push({ icon: "calendar-outline", label: "Agreement", value: property.agreement.agreementDuration });
+
   return (
-    <View style={[s.root, { paddingTop: insets.top }]}>
+    <View style={s.root}>
       <ScrollView
         style={s.scroll}
+        contentContainerStyle={{ paddingBottom: insets.bottom + 110 }}
         showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-        contentContainerStyle={{ paddingBottom: 4 }}
       >
-        <View style={s.card}>
-          {/* Hero */}
-          <View style={s.hero}>
-            <Image
-              key={
-                typeof currentHeroSlide === "object" &&
-                currentHeroSlide !== null &&
-                "uri" in currentHeroSlide
-                  ? currentHeroSlide.uri
-                  : `asset-${heroSlideIndex}`
-              }
-              source={currentHeroSlide as any}
-              style={s.heroImage}
-              contentFit="cover"
-            />
+        {/* Hero */}
+        <View style={s.hero}>
+          <ScrollView
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            onMomentumScrollEnd={(e) => {
+              setActiveImage(Math.round(e.nativeEvent.contentOffset.x / SW));
+            }}
+          >
+            {images.length > 0 ? (
+              images.map((uri, i) => (
+                <Image key={i} source={{ uri }} style={s.heroImage} contentFit="cover" transition={200} />
+              ))
+            ) : (
+              <Image source={LiveetTenantHero} style={s.heroImage} contentFit="cover" />
+            )}
+          </ScrollView>
+          {/* Simulated bottom gradient via stacked layers */}
+          <View style={s.heroScrim0} pointerEvents="none" />
+          <View style={s.heroScrim1} pointerEvents="none" />
+          <View style={s.heroScrim2} pointerEvents="none" />
+          <View style={s.heroScrim3} pointerEvents="none" />
 
-            {canBrowseHero ? (
-              <View style={s.heroTapStrip} pointerEvents="box-none">
-                <Pressable
-                  style={s.heroTapHalf}
-                  onPress={goHeroPrev}
-                  accessibilityRole="button"
-                  accessibilityLabel="Previous photo"
-                >
-                  <View style={s.heroTapHalfFill} collapsable={false} />
-                </Pressable>
-                <Pressable
-                  style={s.heroTapHalf}
-                  onPress={goHeroNext}
-                  accessibilityRole="button"
-                  accessibilityLabel="Next photo"
-                >
-                  <View style={s.heroTapHalfFill} collapsable={false} />
-                </Pressable>
+          {/* Top controls */}
+          <View style={[s.heroControls, { top: insets.top + 10 }]}>
+            <TouchableOpacity style={s.heroBtn} onPress={() => router.back()} activeOpacity={0.85}>
+              <Ionicons name="chevron-back" size={22} color={NAVY} />
+            </TouchableOpacity>
+            <TouchableOpacity style={s.heroBtn} onPress={handleVisit} activeOpacity={0.85}>
+              <Ionicons name="share-outline" size={18} color={NAVY} />
+            </TouchableOpacity>
+          </View>
+
+          {/* Hero bottom text */}
+          <View style={s.heroBottom}>
+            <Text style={s.heroName} numberOfLines={2}>{property.name || "Unnamed Property"}</Text>
+            {locationLine ? (
+              <View style={s.heroLoc}>
+                <Ionicons name="location-sharp" size={14} color="rgba(255,255,255,0.85)" />
+                <Text style={s.heroLocText}>{locationLine}</Text>
               </View>
             ) : null}
+          </View>
 
-            {/* Header actions */}
-            <View style={s.heroHeaderRow} pointerEvents="box-none">
-              <TouchableOpacity
-                style={s.roundBtn}
-                onPress={() => router.back()}
-                activeOpacity={0.85}
-                accessibilityRole="button"
-                accessibilityLabel="Back"
-              >
-                <Ionicons name="chevron-back" size={18} color={colors.navy} />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={s.roundBtn}
-                activeOpacity={0.85}
-                accessibilityRole="button"
-                accessibilityLabel="Liked"
-              >
-                <Ionicons name="heart" size={18} color={colors.navy} />
-              </TouchableOpacity>
+          {images.length > 1 && (
+            <View style={s.dots}>
+              {images.map((_, i) => (
+                <View key={i} style={[s.dot, i === activeImage && s.dotActive]} />
+              ))}
             </View>
+          )}
+        </View>
 
-            {canBrowseHero ? (
-              <View style={s.heroDotsWrap} pointerEvents="none">
-                {heroSlides.map((_, i) => (
-                  <View
-                    key={`hero-dot-${i}`}
-                    style={[s.heroDot, i === heroSlideIndex && s.heroDotActive]}
+        {/* Price + type bar */}
+        <View style={s.priceBar}>
+          <View>
+            {rentRange ? (
+              <View style={s.priceRow}>
+                <Text style={s.priceText}>
+                  ₹{formatAmount(rentRange.min)}
+                  {rentRange.max !== rentRange.min ? `–₹${formatAmount(rentRange.max)}` : ""}
+                </Text>
+                <Text style={s.priceUnit}>/month</Text>
+              </View>
+            ) : (
+              <Text style={s.priceNA}>Price on request</Text>
+            )}
+            {locationLine ? <Text style={s.priceSubText} numberOfLines={1}>{locationLine}</Text> : null}
+          </View>
+          {property.propertyType ? (
+            <View style={s.typeChip}>
+              <Ionicons name="bed-outline" size={16} color={NAVY} />
+              <Text style={s.typeChipText}>{property.propertyType}</Text>
+            </View>
+          ) : null}
+        </View>
+
+        <View style={s.sections}>
+          {/* About */}
+          {property.description ? (
+            <View style={s.section}>
+              <SectionHeader icon="information-circle-outline" title="About" />
+              <Text style={s.description}>{property.description}</Text>
+            </View>
+          ) : null}
+
+          {/* Room Types */}
+          {property.roomOptions.length > 0 && (
+            <View style={s.section}>
+              <SectionHeader icon="grid-outline" title="Room Types" />
+              <View style={s.chipWrap}>
+                {property.roomOptions.map((r) => (
+                  <View key={r._id} style={s.roomChip}>
+                    <Text style={s.roomChipCat}>
+                      {r.typeName?.trim() || CATEGORY_LABELS[r.category] || r.category}
+                    </Text>
+                    {r.rentAmount != null && r.rentAmount > 0 ? (
+                      <Text style={s.roomChipRent}>₹{formatAmount(r.rentAmount)}/mo</Text>
+                    ) : null}
+                  </View>
+                ))}
+              </View>
+            </View>
+          )}
+
+          {/* Amenities */}
+          {amenities.length > 0 && (
+            <View style={s.section}>
+              <SectionHeader icon="options-outline" title="Amenities" />
+              <View style={s.amenGrid}>
+                {amenities.map((a) => (
+                  <View key={a.label} style={s.amenItem}>
+                    <View style={s.amenIconWrap}>
+                      <Ionicons name={a.icon} size={16} color={NAVY} />
+                    </View>
+                    <Text style={s.amenLabel}>{a.label}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          )}
+
+          {/* Who can stay */}
+          {tenantTags.length > 0 && (
+            <View style={s.section}>
+              <SectionHeader icon="people-outline" title="Who Can Stay" />
+              <View style={s.whoCard}>
+                <View style={s.chipWrap}>
+                  {tenantTags.map((t) => (
+                    <View key={t} style={s.whoChip}>
+                      <Ionicons name="checkmark" size={13} color={NAVY} />
+                      <Text style={s.whoChipText}>{t}</Text>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            </View>
+          )}
+
+          {/* Best suited for */}
+          {suitedFor.length > 0 && (
+            <View style={s.section}>
+              <SectionHeader icon="star-outline" title="Best Suited For" />
+              <View style={s.suitedCard}>
+                <View style={s.suitedOrb} />
+                <View style={s.chipWrap}>
+                  {suitedFor.map((t) => (
+                    <View key={t} style={s.suitedChip}>
+                      <Text style={s.suitedChipText}>{t}</Text>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            </View>
+          )}
+
+          {/* Agreement */}
+          {agRows.length > 0 && (
+            <View style={s.section}>
+              <SectionHeader icon="document-text-outline" title="Agreement Details" />
+              <View style={s.agCard}>
+                {agRows.map((row, i) => (
+                  <AgreementRow
+                    key={row.label}
+                    icon={row.icon}
+                    label={row.label}
+                    value={row.value}
+                    last={i === agRows.length - 1}
                   />
                 ))}
               </View>
-            ) : null}
-          </View>
-
-          {/* Body */}
-          <View style={s.body}>
-            {placementPill ? (
-              <View style={s.pillsRow}>
-                <View style={s.smallPill}>
-                  <Ionicons
-                    name={placementPill.icon}
-                    size={16}
-                    color={colors.navy}
-                  />
-                  <Text style={s.smallPillText}>{placementPill.label}</Text>
-                </View>
-              </View>
-            ) : null}
-
-            <Text style={s.title}>{title}</Text>
-
-            <View style={s.locationRow}>
-              <Ionicons name="location-sharp" size={16} color={colors.muted} />
-              <Text style={s.locationText}>{location}</Text>
             </View>
+          )}
 
-            {operatorDescription ? (
-              <>
-                <Text style={[s.sectionHeader, { marginTop: 18 }]}>Description</Text>
-                <Text style={s.description}>{operatorDescription}</Text>
-              </>
-            ) : null}
-
-            {facilityLabels.length > 0 ? (
-              <>
-                <View style={s.facilitiesHeaderRow}>
-                  <Text style={s.sectionHeader}>Facilities</Text>
-                </View>
-                <View style={s.facilitiesWrap}>
-                  {facilityLabels.map((label) => (
-                    <View key={label} style={s.facilityChipWrap}>
-                      <Ionicons
-                        name={facilityIcon(label)}
-                        size={22}
-                        color={colors.navy}
-                      />
-                      <Text style={s.facilityChipText}>{label}</Text>
-                    </View>
-                  ))}
-                </View>
-              </>
-            ) : null}
-
-            {utilitiesList.length > 0 || amenitiesList.length > 0 ? (
-              <View style={s.utilAmenCard}>
-                <View style={s.utilAmenCardHeader}>
-                  <View style={s.utilAmenLeadIcon}>
-                    <Ionicons name="sparkles-outline" size={22} color={colors.navy} />
-                  </View>
-                  <View style={s.agreementHeaderCopy}>
-                    <Text style={s.agreementCardTitle}>Utilities & amenities</Text>
-                    <Text style={s.agreementCardSubtitle}>
-                      {"What's included with this listing"}
-                    </Text>
-                  </View>
-                </View>
-
-                {utilitiesList.length > 0 ? (
-                  <View style={s.utilAmenBlock}>
-                    <View style={s.utilAmenBlockTitleRow}>
-                      <Ionicons name="flash-outline" size={16} color={colors.primary} />
-                      <Text style={s.utilAmenBlockTitle}>Utilities</Text>
-                    </View>
-                    <View style={s.utilAmenChipWrap}>
-                      {utilitiesList.map((label) => (
-                        <View key={`u:${label}`} style={s.utilAmenChip}>
-                          <Text style={s.utilAmenChipText}>{label}</Text>
-                        </View>
-                      ))}
-                    </View>
-                  </View>
-                ) : null}
-
-                {amenitiesList.length > 0 ? (
-                  <View
-                    style={[
-                      s.utilAmenBlock,
-                      utilitiesList.length > 0 && s.utilAmenBlockSpaced,
-                    ]}
-                  >
-                    <View style={s.utilAmenBlockTitleRow}>
-                      <Ionicons name="leaf-outline" size={16} color={colors.primary} />
-                      <Text style={s.utilAmenBlockTitle}>Amenities</Text>
-                    </View>
-                    <View style={s.utilAmenChipWrap}>
-                      {amenitiesList.map((label) => (
-                        <View key={`a:${label}`} style={s.utilAmenChip}>
-                          <Text style={s.utilAmenChipText}>{label}</Text>
-                        </View>
-                      ))}
-                    </View>
-                  </View>
-                ) : null}
-              </View>
-            ) : null}
-
-            {agreementRows.length > 0 ? (
-              <View style={s.agreementCard}>
-                <View style={s.agreementCardHeader}>
-                  <View style={s.agreementLeadIcon}>
-                    <Ionicons
-                      name="document-text-outline"
-                      size={22}
-                      color={colors.navy}
-                    />
-                  </View>
-                  <View style={s.agreementHeaderCopy}>
-                    <Text style={s.agreementCardTitle}>Agreement</Text>
-                    <Text style={s.agreementCardSubtitle}>
-                      Key terms for this listing
-                    </Text>
-                  </View>
-                </View>
-                <View style={s.agreementItems}>
-                  {agreementRows.map((row, index) => (
-                    <View
-                      key={row.key}
-                      style={[
-                        s.agreementItem,
-                        index < agreementRows.length - 1 && s.agreementItemWithRule,
-                      ]}
-                    >
-                      <View style={s.agreementItemGlyph}>
-                        <Ionicons
-                          name={agreementRowIcon(row.key)}
-                          size={17}
-                          color={colors.primary}
-                        />
-                      </View>
-                      <View style={s.agreementItemMain}>
-                        <Text style={s.agreementItemLabel}>{row.label}</Text>
-                        <Text style={s.agreementItemValue}>{row.value}</Text>
-                      </View>
-                    </View>
-                  ))}
-                </View>
-              </View>
-            ) : null}
-
-            {/* Agent */}
-            <View style={s.agentRow}>
-              <View style={s.agentLeft}>
-                <View style={s.avatarCircle} accessibilityIgnoresInvertColors>
-                  <Ionicons name="person" size={18} color={colors.muted} />
-                </View>
-                <View style={s.agentText}>
-                  <View style={s.agentNameRow}>
-                    <Text style={s.agentName}>
-                      {ownerDisplayName || "Property owner"}
-                    </Text>
-                    {ownerDisplayName ? (
-                      <Ionicons
-                        name="checkmark-circle"
-                        size={14}
-                        color={colors.primary}
-                        style={{ marginLeft: 6, marginTop: 1 }}
-                      />
-                    ) : null}
-                  </View>
-                  {ownerDisplayName ? (
-                    <Text style={s.agentRole}>Property owner</Text>
-                  ) : null}
-                </View>
-              </View>
-
-              <View style={s.agentActions}>
-                <TouchableOpacity
-                  style={s.agentCircle}
-                  activeOpacity={0.85}
-                  onPress={() =>
-                    propertyId
-                      ? router.push({
-                          pathname: "/(app)/chats/[propertyId]",
-                          params: { propertyId, title: property?.name ?? "Property host" },
-                        } as any)
-                      : undefined
-                  }
-                  accessibilityRole="button"
-                  accessibilityLabel="Chat with owner"
-                >
-                  <Ionicons name="chatbubble-ellipses" size={18} color={colors.white} />
-                </TouchableOpacity>
-                <TouchableOpacity style={s.agentCircle} activeOpacity={0.85}>
-                  <Ionicons name="call" size={18} color={colors.white} />
-                </TouchableOpacity>
+          {/* Contact */}
+          {(property.contactPhone || property.contactEmail) && (
+            <View style={s.section}>
+              <SectionHeader icon="call-outline" title="Contact" />
+              <View style={s.agCard}>
+                {property.contactPhone && (
+                  <AgreementRow icon="call-outline" label="Phone" value={property.contactPhone} />
+                )}
+                {property.contactEmail && (
+                  <AgreementRow icon="mail-outline" label="Email" value={property.contactEmail} last />
+                )}
               </View>
             </View>
-          </View>
+          )}
         </View>
       </ScrollView>
 
-      <View style={[s.stickyCtaBar, { paddingBottom: Math.max(insets.bottom, 10) }]}>
-        <View style={s.bottomFooter}>
-          <View style={s.priceBlock}>
-            <Text style={s.priceCaption}>Rent per month</Text>
-            {!rentRangeForPrice ? (
-              <Text style={s.priceAmount}>—</Text>
-            ) : rentRangeForPrice.max === rentRangeForPrice.min ? (
-              <Text style={s.priceAmount} selectable>
-                {"\u20B9"}
-                {formatRentRupees(rentRangeForPrice.min)}
+      {/* Booking Modal */}
+      <Modal
+        visible={bookingStep > 0}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setBookingStep(0)}
+      >
+        <KeyboardAvoidingView
+          style={s.modalOverlay}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+        >
+          <View style={s.modalSheet}>
+            {/* Modal Header */}
+            <View style={s.modalHeader}>
+              <Text style={s.modalTitle}>
+                {bookingStep === 1 ? "Payment Details" : "Booking Request"}
               </Text>
+              <TouchableOpacity onPress={() => setBookingStep(0)} style={s.modalClose}>
+                <Ionicons name="close" size={22} color={NAVY} />
+              </TouchableOpacity>
+            </View>
+
+            {bookingStep === 1 ? (
+              /* Step 1: Bank Details */
+              <ScrollView contentContainerStyle={s.modalContent} showsVerticalScrollIndicator={false}>
+                <Text style={s.modalSubtitle}>
+                  Transfer the booking amount to the operator's account below, then proceed to fill your details.
+                </Text>
+
+                {paymentLoading ? (
+                  <ActivityIndicator size="large" color={NAVY} style={{ marginVertical: 32 }} />
+                ) : paymentDetails ? (
+                  <View style={s.bankCard}>
+                    {paymentDetails.accountName && (
+                      <View style={s.bankRow}>
+                        <View style={s.bankIconWrap}>
+                          <Ionicons name="person-outline" size={16} color={NAVY} />
+                        </View>
+                        <View style={s.bankInfo}>
+                          <Text style={s.bankLabel}>Account Name</Text>
+                          <Text style={s.bankValue}>{paymentDetails.accountName}</Text>
+                        </View>
+                      </View>
+                    )}
+                    {paymentDetails.accountNumber && (
+                      <View style={[s.bankRow, s.bankRowBorder]}>
+                        <View style={s.bankIconWrap}>
+                          <Ionicons name="card-outline" size={16} color={NAVY} />
+                        </View>
+                        <View style={s.bankInfo}>
+                          <Text style={s.bankLabel}>Account Number</Text>
+                          <Text style={s.bankValue}>{paymentDetails.accountNumber}</Text>
+                        </View>
+                      </View>
+                    )}
+                    {paymentDetails.ifscCode && (
+                      <View style={[s.bankRow, s.bankRowBorder]}>
+                        <View style={s.bankIconWrap}>
+                          <Ionicons name="business-outline" size={16} color={NAVY} />
+                        </View>
+                        <View style={s.bankInfo}>
+                          <Text style={s.bankLabel}>IFSC Code</Text>
+                          <Text style={s.bankValue}>{paymentDetails.ifscCode}</Text>
+                        </View>
+                      </View>
+                    )}
+                    {paymentDetails.upiId && (
+                      <View style={[s.bankRow, s.bankRowBorder]}>
+                        <View style={s.bankIconWrap}>
+                          <Ionicons name="qr-code-outline" size={16} color={NAVY} />
+                        </View>
+                        <View style={s.bankInfo}>
+                          <Text style={s.bankLabel}>UPI ID</Text>
+                          <Text style={s.bankValue}>{paymentDetails.upiId}</Text>
+                        </View>
+                      </View>
+                    )}
+                    {paymentDetails.qrImageUrl && (
+                      <View style={[s.bankRow, s.bankRowBorder, { flexDirection: "column", alignItems: "center", paddingVertical: 16 }]}>
+                        <Text style={[s.bankLabel, { marginBottom: 10 }]}>Scan QR to Pay</Text>
+                        <Image
+                          source={{ uri: paymentDetails.qrImageUrl }}
+                          style={{ width: 180, height: 180, borderRadius: 12 }}
+                          contentFit="contain"
+                        />
+                      </View>
+                    )}
+                    {!paymentDetails.accountName && !paymentDetails.accountNumber && !paymentDetails.upiId && !paymentDetails.qrImageUrl && (
+                      <Text style={s.noPaymentText}>No payment details added by the operator yet. Proceed to submit your request.</Text>
+                    )}
+                  </View>
+                ) : (
+                  <Text style={s.noPaymentText}>No payment details available for this property.</Text>
+                )}
+
+                <TouchableOpacity
+                  style={s.proceedBtn}
+                  onPress={() => setBookingStep(2)}
+                  activeOpacity={0.85}
+                >
+                  <Text style={s.proceedBtnText}>Proceed to Fill Details</Text>
+                  <Ionicons name="arrow-forward" size={18} color={ACCENT_TEXT} />
+                </TouchableOpacity>
+              </ScrollView>
             ) : (
-              <Text style={s.priceAmount} selectable>
-                {"\u20B9"}
-                {formatRentRupees(rentRangeForPrice.min)}
-                <Text style={s.priceRangeSep}>{" \u2013 "}</Text>
-                {"\u20B9"}
-                {formatRentRupees(rentRangeForPrice.max)}
-              </Text>
+              /* Step 2: Student Form */
+              <ScrollView contentContainerStyle={s.modalContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                <Text style={s.formSection}>Student Details</Text>
+                <TextInput
+                  style={s.input}
+                  placeholder="Student Name *"
+                  placeholderTextColor={MUTED}
+                  value={form.studentName}
+                  onChangeText={(v) => setForm((f) => ({ ...f, studentName: v }))}
+                />
+                <TextInput
+                  style={s.input}
+                  placeholder="Student Phone Number *"
+                  placeholderTextColor={MUTED}
+                  keyboardType="phone-pad"
+                  value={form.studentPhone}
+                  onChangeText={(v) => setForm((f) => ({ ...f, studentPhone: v }))}
+                />
+                <TextInput
+                  style={s.input}
+                  placeholder="Student Email"
+                  placeholderTextColor={MUTED}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  value={form.studentEmail}
+                  onChangeText={(v) => setForm((f) => ({ ...f, studentEmail: v }))}
+                />
+                <TextInput
+                  style={s.input}
+                  placeholder="Course"
+                  placeholderTextColor={MUTED}
+                  value={form.course}
+                  onChangeText={(v) => setForm((f) => ({ ...f, course: v }))}
+                />
+                <TextInput
+                  style={s.input}
+                  placeholder="Year of Study (e.g. 1st, 2nd)"
+                  placeholderTextColor={MUTED}
+                  value={form.yearOfStudy}
+                  onChangeText={(v) => setForm((f) => ({ ...f, yearOfStudy: v }))}
+                />
+
+                <Text style={[s.formSection, { marginTop: 8 }]}>Parent Details</Text>
+                <TextInput
+                  style={s.input}
+                  placeholder="Parent Name"
+                  placeholderTextColor={MUTED}
+                  value={form.parentName}
+                  onChangeText={(v) => setForm((f) => ({ ...f, parentName: v }))}
+                />
+                <TextInput
+                  style={s.input}
+                  placeholder="Parent Phone Number"
+                  placeholderTextColor={MUTED}
+                  keyboardType="phone-pad"
+                  value={form.parentPhone}
+                  onChangeText={(v) => setForm((f) => ({ ...f, parentPhone: v }))}
+                />
+                <TextInput
+                  style={s.input}
+                  placeholder="Parent Email"
+                  placeholderTextColor={MUTED}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  value={form.parentEmail}
+                  onChangeText={(v) => setForm((f) => ({ ...f, parentEmail: v }))}
+                />
+
+                <Text style={[s.formSection, { marginTop: 8 }]}>Move-in Preferences</Text>
+                <TextInput
+                  style={s.input}
+                  placeholder="Move-in Date * (e.g. 15 July 2025)"
+                  placeholderTextColor={MUTED}
+                  value={form.moveInDate}
+                  onChangeText={(v) => setForm((f) => ({ ...f, moveInDate: v }))}
+                />
+
+                <Text style={s.prefLabel}>Food Preference</Text>
+                <View style={s.prefRow}>
+                  {["Veg", "Non-Veg"].map((opt) => (
+                    <TouchableOpacity
+                      key={opt}
+                      style={[s.prefChip, form.foodPreference === opt && s.prefChipActive]}
+                      onPress={() => setForm((f) => ({ ...f, foodPreference: f.foodPreference === opt ? "" : opt }))}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[s.prefChipText, form.foodPreference === opt && s.prefChipTextActive]}>
+                        {opt}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                <Text style={[s.formSection, { marginTop: 8 }]}>Payment Proof *</Text>
+                <Text style={[s.bankLabel, { marginBottom: 10 }]}>
+                  Upload a screenshot or photo of your payment receipt.
+                </Text>
+                <TouchableOpacity
+                  style={s.proofUploadBtn}
+                  onPress={pickPaymentProof}
+                  disabled={uploadingProof}
+                  activeOpacity={0.8}
+                >
+                  {uploadingProof ? (
+                    <ActivityIndicator size="small" color={NAVY} />
+                  ) : paymentProofUri ? (
+                    <Image
+                      source={{ uri: paymentProofUri }}
+                      style={s.proofPreview}
+                      contentFit="cover"
+                    />
+                  ) : (
+                    <>
+                      <Ionicons name="cloud-upload-outline" size={24} color={NAVY} />
+                      <Text style={s.proofUploadText}>Tap to upload payment proof</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+                {paymentProofUri && (
+                  <TouchableOpacity
+                    style={s.proofChangeBtn}
+                    onPress={pickPaymentProof}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="refresh-outline" size={14} color={MUTED} />
+                    <Text style={s.backStepText}>Change image</Text>
+                  </TouchableOpacity>
+                )}
+
+                <TouchableOpacity
+                  style={[s.proceedBtn, { marginTop: 20 }]}
+                  onPress={handleSubmitBooking}
+                  disabled={submitting}
+                  activeOpacity={0.85}
+                >
+                  {submitting ? (
+                    <ActivityIndicator size="small" color={ACCENT_TEXT} />
+                  ) : (
+                    <>
+                      <Text style={s.proceedBtnText}>Submit Booking Request</Text>
+                      <Ionicons name="checkmark-circle-outline" size={18} color={ACCENT_TEXT} />
+                    </>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={s.backStepBtn}
+                  onPress={() => setBookingStep(1)}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="arrow-back" size={16} color={MUTED} />
+                  <Text style={s.backStepText}>Back to Payment Details</Text>
+                </TouchableOpacity>
+              </ScrollView>
             )}
           </View>
-          <TouchableOpacity
-            style={s.ctaBtn}
-            activeOpacity={0.85}
-            onPress={() =>
-              propertyId
-                ? router.push(`/(app)/favorites/move-in/${propertyId}`)
-                : undefined
-            }
-          >
-            <Text style={s.ctaText}>{hasMoveInRequest ? "Edit request" : "Ready to move-in"}</Text>
-          </TouchableOpacity>
-        </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Sticky CTA */}
+      <View style={[s.stickyBar, { paddingBottom: insets.bottom + 12 }]}>
+        <TouchableOpacity style={s.visitBtn} onPress={handleVisit} activeOpacity={0.85}>
+          <Ionicons name="calendar-outline" size={18} color={NAVY} />
+          <Text style={s.visitBtnText}>Visit Now</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={s.bookBtn} onPress={handleBookNow} activeOpacity={0.85}>
+          <Ionicons name="home-outline" size={18} color={ACCENT_TEXT} />
+          <Text style={s.bookBtnText}>Book Now</Text>
+        </TouchableOpacity>
       </View>
     </View>
   );
 }
 
 const s = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: colors.pageBg,
-    paddingHorizontal: 16,
-  },
-  scroll: {
-    flex: 1,
-  },
-  stickyCtaBar: {
-    marginHorizontal: -16,
-    paddingHorizontal: 16,
-    backgroundColor: colors.white,
-    paddingTop: 10,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
-    shadowColor: "#000",
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: -2 },
-    elevation: 8,
-  },
-  card: {
-    backgroundColor: colors.white,
-    borderRadius: 28,
-    overflow: "hidden",
-  },
-  hero: {
-    height: 315,
-    backgroundColor: colors.surfaceGray,
-    position: "relative",
-  },
-  heroImage: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  heroTapStrip: {
+  root: { flex: 1, backgroundColor: PAGE_BG },
+  center: { flex: 1, alignItems: "center", justifyContent: "center" },
+  errorText: { fontSize: 16, color: MUTED },
+  scroll: { flex: 1 },
+  backBtn: {
     position: "absolute",
-    top: 56,
-    left: 0,
-    right: 0,
-    bottom: 36,
-    flexDirection: "row",
-    zIndex: 2,
+    left: 16,
+    zIndex: 20,
+    width: 40,
+    height: 40,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.92)",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    elevation: 6,
   },
-  heroTapHalf: {
-    flex: 1,
-  },
-  heroTapHalfFill: {
-    flex: 1,
-    width: "100%",
-    minHeight: 48,
-  },
-  heroHeaderRow: {
+  hero: { height: HERO_H, backgroundColor: SURFACE, position: "relative" },
+  heroImage: { width: SW, height: HERO_H },
+  heroScrim0: { position: "absolute", bottom: 0, left: 0, right: 0, height: 160, backgroundColor: "rgba(15,23,42,0.05)" },
+  heroScrim1: { position: "absolute", bottom: 0, left: 0, right: 0, height: 110, backgroundColor: "rgba(15,23,42,0.12)" },
+  heroScrim2: { position: "absolute", bottom: 0, left: 0, right: 0, height: 70,  backgroundColor: "rgba(15,23,42,0.22)" },
+  heroScrim3: { position: "absolute", bottom: 0, left: 0, right: 0, height: 40,  backgroundColor: "rgba(15,23,42,0.30)" },
+  heroControls: {
     position: "absolute",
-    top: 16,
     left: 16,
     right: 16,
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
-    zIndex: 10,
   },
-  heroDotsWrap: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 16,
-    flexDirection: "row",
-    justifyContent: "center",
-    alignItems: "center",
-    gap: 6,
-    zIndex: 8,
-  },
-  heroDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: "rgba(255,255,255,0.45)",
-  },
-  heroDotActive: {
-    width: 18,
-    backgroundColor: colors.white,
-  },
-  roundBtn: {
-    width: 42,
-    height: 42,
+  heroBtn: {
+    width: 40,
+    height: 40,
     borderRadius: 999,
-    backgroundColor: colors.white,
+    backgroundColor: "rgba(255,255,255,0.92)",
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: "#000",
-    shadowOpacity: 0.12,
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
     shadowRadius: 10,
-    shadowOffset: { width: 0, height: 2 },
     elevation: 6,
   },
-  body: {
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 22,
+  heroBottom: {
+    position: "absolute",
+    left: 20,
+    right: 20,
+    bottom: 16,
   },
-  pillsRow: {
+  heroName: {
+    fontSize: 24,
+    fontWeight: "800",
+    color: WHITE,
+    letterSpacing: -0.5,
+    lineHeight: 28,
+    marginBottom: 6,
+  },
+  heroLoc: { flexDirection: "row", alignItems: "center", gap: 5 },
+  heroLocText: { fontSize: 13, fontWeight: "500", color: "rgba(255,255,255,0.9)", flex: 1 },
+  dots: {
+    position: "absolute",
+    bottom: 56,
+    left: 0,
+    right: 0,
     flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  smallPill: {
-    height: 34,
-    borderRadius: 14,
-    backgroundColor: colors.surfaceGray,
-    borderWidth: 0,
-    paddingHorizontal: 16,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  smallPillText: { fontSize: 13, fontWeight: "800", color: colors.navy },
-
-  title: { fontSize: 26, fontWeight: "900", color: colors.navy, marginBottom: 6 },
-
-  locationRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  locationText: { fontSize: 14, fontWeight: "600", color: colors.muted },
-
-  facilitiesHeaderRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: 18,
-    marginBottom: 10,
-  },
-  utilAmenCard: {
-    marginTop: 20,
-    backgroundColor: colors.surfaceGray,
-    borderRadius: radii.card,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  utilAmenCardHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 14,
-    marginBottom: 14,
-  },
-  utilAmenLeadIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 16,
-    backgroundColor: colors.white,
-    alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
-    borderColor: colors.border,
+    gap: 6,
   },
-  utilAmenBlock: {},
-  utilAmenBlockSpaced: {
-    marginTop: 16,
-    paddingTop: 16,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
-  },
-  utilAmenBlockTitleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 10,
-  },
-  utilAmenBlockTitle: {
-    fontSize: 13,
-    fontWeight: "900",
-    color: colors.navy,
-    letterSpacing: -0.2,
-  },
-  utilAmenChipWrap: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  utilAmenChip: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  utilAmenChipText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: colors.navy,
-  },
-  agreementCard: {
-    marginTop: 20,
-    backgroundColor: colors.surfaceGray,
-    borderRadius: radii.card,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  agreementCardHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 14,
+  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.45)" },
+  dotActive: { backgroundColor: WHITE, width: 16 },
+  priceBar: {
+    margin: 16,
     marginBottom: 4,
+    padding: 16,
+    backgroundColor: WHITE,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: BORDER,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
   },
-  agreementLeadIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 16,
-    backgroundColor: colors.white,
+  priceRow: { flexDirection: "row", alignItems: "baseline", gap: 3 },
+  priceText: { fontSize: 24, fontWeight: "800", color: NAVY, letterSpacing: -0.6 },
+  priceUnit: { fontSize: 13, fontWeight: "600", color: MUTED },
+  priceNA: { fontSize: 16, fontWeight: "600", color: MUTED },
+  priceSubText: { fontSize: 12, color: MUTED, marginTop: 3, maxWidth: SW * 0.55 },
+  typeChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    backgroundColor: SURFACE,
+    paddingHorizontal: 13,
+    paddingVertical: 9,
+    borderRadius: 13,
+  },
+  typeChipText: { fontSize: 13, fontWeight: "700", color: NAVY },
+  sections: { paddingHorizontal: 20, paddingTop: 14 },
+  section: { marginBottom: 24 },
+  sectionHeader: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12 },
+  sectionTitle: { fontSize: 15.5, fontWeight: "700", color: NAVY, letterSpacing: -0.3 },
+  description: { fontSize: 14, color: NAVY, lineHeight: 22 },
+  chipWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  roomChip: {
+    backgroundColor: SURFACE,
+    borderRadius: radii.input,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  roomChipCat: { fontSize: 13, fontWeight: "600", color: NAVY },
+  roomChipRent: { fontSize: 12, fontWeight: "500", color: colors.positiveAmount, marginTop: 2 },
+  amenGrid: { flexDirection: "row", flexWrap: "wrap", gap: 9 },
+  amenItem: {
+    width: (SW - 40 - 9) / 2,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: WHITE,
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 13,
+    paddingVertical: 11,
+    paddingHorizontal: 12,
+  },
+  amenIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 9,
+    backgroundColor: SURFACE,
     alignItems: "center",
     justifyContent: "center",
+  },
+  amenLabel: { flex: 1, fontSize: 12.5, fontWeight: "600", color: NAVY, lineHeight: 16 },
+  whoCard: {
+    backgroundColor: WHITE,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: BORDER,
+    borderRadius: 16,
+    padding: 15,
   },
-  agreementHeaderCopy: {
-    flex: 1,
-    minWidth: 0,
+  whoChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: SURFACE,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
   },
-  agreementCardTitle: {
-    fontSize: 17,
-    fontWeight: "900",
-    color: colors.navy,
-    letterSpacing: -0.3,
-  },
-  agreementCardSubtitle: {
-    marginTop: 3,
-    fontSize: 12,
-    fontWeight: "600",
-    color: colors.muted,
-    lineHeight: 16,
-  },
-  agreementItems: {
-    marginTop: 14,
-    backgroundColor: colors.white,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: colors.border,
+  whoChipText: { fontSize: 12.5, fontWeight: "700", color: NAVY },
+  suitedCard: {
+    backgroundColor: NAVY,
+    borderRadius: 16,
+    padding: 16,
     overflow: "hidden",
   },
-  agreementItem: {
+  suitedOrb: {
+    position: "absolute",
+    top: -30,
+    right: -30,
+    width: 120,
+    height: 120,
+    borderRadius: 999,
+    backgroundColor: "rgba(212,245,66,0.07)",
+  },
+  suitedChip: {
+    backgroundColor: "rgba(212,245,66,0.16)",
+    paddingHorizontal: 11,
+    paddingVertical: 5,
+    borderRadius: 999,
+  },
+  suitedChipText: { fontSize: 11.5, fontWeight: "700", color: ACCENT },
+  agCard: {
+    backgroundColor: WHITE,
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 16,
+    overflow: "hidden",
+  },
+  agRow: {
     flexDirection: "row",
-    alignItems: "flex-start",
+    alignItems: "center",
     gap: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 14,
+    paddingHorizontal: 15,
+    paddingVertical: 13,
   },
-  agreementItemWithRule: {
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
+  agRowBorder: { borderBottomWidth: 1, borderBottomColor: BORDER },
+  agIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 9,
+    backgroundColor: SURFACE,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  agreementItemGlyph: {
+  agLabel: { flex: 1, fontSize: 13, fontWeight: "600", color: MUTED },
+  agValue: { fontSize: 13.5, fontWeight: "700", color: NAVY, textAlign: "right", maxWidth: SW * 0.4 },
+  stickyBar: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    backgroundColor: "transparent",
+    flexDirection: "row",
+    gap: 10,
+  },
+  visitBtn: {
+    flex: 1,
+    height: 56,
+    borderRadius: 16,
+    backgroundColor: WHITE,
+    borderWidth: 1,
+    borderColor: BORDER,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 4,
+  },
+  visitBtnText: { fontSize: 15, fontWeight: "700", color: NAVY },
+  bookBtn: {
+    flex: 1,
+    height: 56,
+    borderRadius: 16,
+    backgroundColor: ACCENT,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 9,
+    shadowColor: "#1E293B",
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.4,
+    shadowRadius: 24,
+    elevation: 10,
+  },
+  bookBtnText: { fontSize: 15.5, fontWeight: "800", color: ACCENT_TEXT, letterSpacing: 0.1 },
+
+  // Modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(15,23,42,0.55)",
+    justifyContent: "flex-end",
+  },
+  modalSheet: {
+    backgroundColor: WHITE,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: "88%",
+  },
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: BORDER,
+  },
+  modalTitle: { fontSize: 18, fontWeight: "800", color: NAVY },
+  modalClose: {
     width: 36,
     height: 36,
-    borderRadius: 11,
-    backgroundColor: colors.surfaceGray,
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 1,
-  },
-  agreementItemMain: {
-    flex: 1,
-    minWidth: 0,
-  },
-  agreementItemLabel: {
-    fontSize: 11,
-    fontWeight: "800",
-    color: colors.muted,
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
-    marginBottom: 5,
-  },
-  agreementItemValue: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: colors.navy,
-    lineHeight: 21,
-  },
-  sectionHeader: { fontSize: 15, fontWeight: "900", color: colors.navy },
-
-  facilitiesWrap: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "space-between",
-    marginBottom: 4,
-  },
-  facilityChipWrap: {
-    width: "31%",
-    marginBottom: 12,
-    backgroundColor: colors.surfaceGray,
-    borderRadius: 14,
-    paddingVertical: 14,
-    paddingHorizontal: 6,
-    alignItems: "center",
-  },
-  facilityChipText: {
-    marginTop: 6,
-    fontSize: 12,
-    fontWeight: "800",
-    color: colors.navy,
-    textAlign: "center",
-  },
-
-  description: {
-    marginTop: 8,
-    fontSize: 13,
-    lineHeight: 20,
-    fontWeight: "500",
-    color: colors.muted,
-  },
-  agentRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: 16,
-    marginBottom: 18,
-  },
-  agentLeft: { flexDirection: "row", alignItems: "center", gap: 12 },
-  avatarCircle: {
-    width: 46,
-    height: 46,
     borderRadius: 999,
-    backgroundColor: colors.surfaceGray,
+    backgroundColor: SURFACE,
     alignItems: "center",
     justifyContent: "center",
   },
-  agentText: {},
-  agentNameRow: { flexDirection: "row", alignItems: "center" },
-  agentName: { fontSize: 14, fontWeight: "900", color: colors.navy },
-  agentRole: { marginTop: 3, fontSize: 12, fontWeight: "700", color: colors.muted },
+  modalContent: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 40 },
+  modalSubtitle: { fontSize: 13.5, color: MUTED, lineHeight: 20, marginBottom: 18 },
 
-  agentActions: { flexDirection: "row", alignItems: "center", gap: 14 },
-  agentCircle: {
-    width: 42,
-    height: 42,
-    borderRadius: 999,
-    backgroundColor: colors.primary,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  bottomFooter: {
-    gap: 12,
-  },
-  priceBlock: {
-    width: "100%",
-  },
-  priceCaption: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: colors.muted,
-    marginBottom: 8,
-  },
-  priceAmount: {
-    fontSize: 20,
-    fontWeight: "900",
-    color: colors.navy,
-    lineHeight: 28,
-    letterSpacing: -0.3,
-  },
-  priceRangeSep: {
-    fontWeight: "700",
-    color: colors.muted,
-  },
-  ctaBtn: {
-    alignSelf: "stretch",
-    backgroundColor: colors.primary,
+  // Bank card
+  bankCard: {
+    backgroundColor: WHITE,
+    borderWidth: 1,
+    borderColor: BORDER,
     borderRadius: 16,
-    paddingVertical: 16,
-    paddingHorizontal: 20,
+    overflow: "hidden",
+    marginBottom: 20,
+  },
+  bankRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 15,
+    paddingVertical: 14,
+  },
+  bankRowBorder: { borderTopWidth: 1, borderTopColor: BORDER },
+  bankIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: SURFACE,
     alignItems: "center",
     justifyContent: "center",
   },
-  ctaText: { fontSize: 14, fontWeight: "900", color: colors.white },
-});
+  bankInfo: { flex: 1 },
+  bankLabel: { fontSize: 12, fontWeight: "600", color: MUTED, marginBottom: 2 },
+  bankValue: { fontSize: 14.5, fontWeight: "700", color: NAVY },
+  noPaymentText: { fontSize: 14, color: MUTED, lineHeight: 20, marginBottom: 20, textAlign: "center" },
 
+  // Proceed button
+  proceedBtn: {
+    height: 54,
+    borderRadius: 16,
+    backgroundColor: ACCENT,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  proceedBtnText: { fontSize: 15, fontWeight: "800", color: ACCENT_TEXT },
+
+  // Form
+  formSection: { fontSize: 14, fontWeight: "700", color: NAVY, marginBottom: 10 },
+  input: {
+    height: 50,
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 13,
+    paddingHorizontal: 14,
+    fontSize: 14,
+    color: NAVY,
+    backgroundColor: WHITE,
+    marginBottom: 10,
+  },
+  prefLabel: { fontSize: 13, fontWeight: "600", color: MUTED, marginBottom: 8 },
+  prefRow: { flexDirection: "row", gap: 10, marginBottom: 8 },
+  prefChip: {
+    flex: 1,
+    height: 46,
+    borderRadius: 13,
+    borderWidth: 1.5,
+    borderColor: BORDER,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: SURFACE,
+  },
+  prefChipActive: { borderColor: NAVY, backgroundColor: NAVY },
+  prefChipText: { fontSize: 14, fontWeight: "700", color: MUTED },
+  prefChipTextActive: { color: WHITE },
+
+  // Back step
+  backStepBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginTop: 14,
+    paddingVertical: 10,
+  },
+  backStepText: { fontSize: 13, fontWeight: "600", color: MUTED },
+
+  // Payment proof upload
+  proofUploadBtn: {
+    height: 120,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: BORDER,
+    borderStyle: "dashed",
+    backgroundColor: SURFACE,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginBottom: 8,
+    overflow: "hidden",
+  },
+  proofUploadText: { fontSize: 13.5, fontWeight: "600", color: MUTED },
+  proofPreview: { width: "100%", height: "100%" },
+  proofChangeBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    marginBottom: 8,
+    paddingVertical: 4,
+  },
+});

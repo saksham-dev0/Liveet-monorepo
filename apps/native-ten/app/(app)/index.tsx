@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState, useRef } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -6,17 +6,13 @@ import {
   Dimensions,
   ActivityIndicator,
   TouchableOpacity,
-  FlatList,
   Alert,
-  TextInput,
+  ScrollView,
 } from "react-native";
-import { BottomSheet } from "../../components/BottomSheet";
 import { Image } from "expo-image";
-import { ScrollView as NativeScrollView } from "react-native";
-import { ScrollView } from "react-native-gesture-handler";
-import { useSafeAreaInsets, EdgeInsets } from "react-native-safe-area-context";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useConvex } from "convex/react";
-import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import { GestureDetector, Gesture } from "react-native-gesture-handler";
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -29,15 +25,16 @@ import Animated, {
   Extrapolation,
 } from "react-native-reanimated";
 import { Ionicons } from "@expo/vector-icons";
+import { useAuth } from "@clerk/clerk-expo";
 import { useRouter } from "expo-router";
-import { discoverEvents } from "../../constants/discoverEvents";
 import { colors, radii, cardShadow } from "../../constants/theme";
 import LiveetTenantHero from "../../assets/images/Liveet-tenant.png";
+import { ScrollView as GHScrollView } from "react-native-gesture-handler";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.25;
 const CARD_WIDTH = SCREEN_WIDTH - 40;
-const TAB_BAR_CLEARANCE = 80;
+const TAB_BAR_CLEARANCE = 90;
 const CARD_SIDE_INSET = (SCREEN_WIDTH - CARD_WIDTH) / 2;
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -47,7 +44,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   "3plus": "3+ Bed",
 };
 
-const AnimatedScrollView = Animated.createAnimatedComponent(ScrollView);
+const AnimatedScrollView = Animated.createAnimatedComponent(GHScrollView);
 
 type RoomOption = {
   _id: string;
@@ -92,13 +89,24 @@ type Property = {
   } | null;
 };
 
+type BookingRequest = {
+  _id: string;
+  propertyId: string;
+  studentName: string;
+  moveInDate: string;
+  status: "pending" | "accepted" | "rejected";
+  createdAt: number;
+  propertyName: string | null;
+  propertyCity: string | null;
+  propertyState: string | null;
+  coverImageUrl: string | null;
+};
+
 function formatAmount(n: number): string {
-  // Display thousands in a compact way (e.g. 35000 -> "35K").
   if (n >= 1000) {
     const k = n / 1000;
     const wholeK = Math.round(k);
     if (Math.abs(k - wholeK) < 1e-9) return `${wholeK}K`;
-
     const oneDecimalK = Math.round(k * 10) / 10;
     const formatted = oneDecimalK.toFixed(1).replace(/\.0$/, "");
     return `${formatted}K`;
@@ -126,7 +134,6 @@ function getAmenities(opts: RoomOption[]): string[] {
   return [...set].slice(0, 6);
 }
 
-/** Gender mix shown as top hero badge (not repeated in chips). */
 function getOccupancyBadge(d: Property["tenantDetails"]): {
   label: string;
   icon: keyof typeof Ionicons.glyphMap;
@@ -150,1041 +157,6 @@ function getBestSuited(d: Property["tenantDetails"]): string[] {
   return t;
 }
 
-// --------------- Tenant Dashboard ---------------
-
-const QUICK_ACTIONS = [
-  {
-    key: "complaint",
-    icon: "alert-circle-outline" as const,
-    title: "Add Complaint",
-    sub: "Report an issue",
-    accent: "#EF4444",
-  },
-  {
-    key: "shift",
-    icon: "swap-horizontal-outline" as const,
-    title: "Shift Request",
-    sub: "Change your room",
-    accent: "#3B82F6",
-  },
-  {
-    key: "moveout",
-    icon: "exit-outline" as const,
-    title: "Move Out",
-    sub: "End your stay",
-    accent: "#F59E0B",
-  },
-  {
-    key: "extend",
-    icon: "document-text-outline" as const,
-    title: "Extend Stay",
-    sub: "Renew agreement",
-    accent: "#10B981",
-  },
-  {
-    key: "lateentry",
-    icon: "time-outline" as const,
-    title: "Late Entry Request",
-    sub: "Request after-hours access",
-    accent: "#8B5CF6",
-  },
-];
-
-const NOTICES = [
-  {
-    icon: "megaphone-outline" as const,
-    title: "Maintenance scheduled",
-    sub: "Water supply off on Apr 3, 10am–1pm",
-  },
-  {
-    icon: "information-circle-outline" as const,
-    title: "Society meeting",
-    sub: "April 5 at 7pm in the common hall",
-  },
-];
-
-type NotificationItem = {
-  id: string;
-  type: string;
-  title: string;
-  body: string;
-  read: boolean;
-  refId: string | null;
-  createdAt: number;
-};
-
-type DashboardInfo = {
-  propertyName: string;
-  propertyCity: string | null;
-  assignedRoomNumber: string | null;
-  moveInDate: string | null;
-  rentAmount: number | null;
-  rentDue: { dueDate: string; daysLeft: number } | null;
-  agreementLabel: string | null;
-  lockInPeriod: string | null;
-  noticePeriod: string | null;
-} | null;
-
-function TenantDashboard({ insets }: { insets: EdgeInsets }) {
-  const router = useRouter();
-  const convex = useConvex();
-
-  const [dashboardInfo, setDashboardInfo] = useState<DashboardInfo | undefined>(undefined);
-
-  useEffect(() => {
-    void (async () => {
-      try {
-        const info = await (convex as any).query("rentTransactions:getTenantDashboardInfo", {});
-        setDashboardInfo(info ?? null);
-      } catch {
-        setDashboardInfo(null);
-      }
-    })();
-  }, [convex]);
-
-  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [showNotifications, setShowNotifications] = useState(false);
-  const [confirmedComplaintIds, setConfirmedComplaintIds] = useState<Set<string>>(new Set());
-
-  const [showShiftRequest, setShowShiftRequest] = useState(false);
-  const [shiftCurrentRoom, setShiftCurrentRoom] = useState("");
-  const [shiftReason, setShiftReason] = useState("");
-  const [shiftSubmitting, setShiftSubmitting] = useState(false);
-  const [shiftSuccess, setShiftSuccess] = useState(false);
-
-  const [showMoveOut, setShowMoveOut] = useState(false);
-  const [moveOutDate, setMoveOutDate] = useState("");
-  const [moveOutAgreementInfo, setMoveOutAgreementInfo] = useState<{
-    applicationId: string;
-    propertyId: string;
-    agreementEndsAt: number | null;
-    agreementDuration: string | null;
-  } | null | undefined>(null);
-  const [moveOutSubmitting, setMoveOutSubmitting] = useState(false);
-  const [moveOutSuccess, setMoveOutSuccess] = useState(false);
-
-  const [showExtendStay, setShowExtendStay] = useState(false);
-  const [extendOption, setExtendOption] = useState<"monthly" | "quarterly" | "renewal" | null>(null);
-  const [extendRentInfo, setExtendRentInfo] = useState<{
-    applicationId: string;
-    propertyId: string;
-    rentAmount: number | null;
-    renewalMonths: number | null;
-    agreementDuration: string | null;
-  } | null | undefined>(null);
-  const [extendPaying, setExtendPaying] = useState(false);
-  const [extendResult, setExtendResult] = useState<{ amount: number; description: string } | null>(null);
-
-  const [showPendingExtendSheet, setShowPendingExtendSheet] = useState(false);
-  const [pendingExtendTxId, setPendingExtendTxId] = useState<string | null>(null);
-  const [pendingExtendBody, setPendingExtendBody] = useState("");
-  const [pendingExtendPaying, setPendingExtendPaying] = useState(false);
-  const [pendingExtendDone, setPendingExtendDone] = useState(false);
-
-  const [showLateEntry, setShowLateEntry] = useState(false);
-  const [lateEntryTime, setLateEntryTime] = useState("");
-  const [lateEntryReason, setLateEntryReason] = useState("");
-  const [lateEntryContactIdx, setLateEntryContactIdx] = useState<number | null>(null);
-  const [lateEntryContacts, setLateEntryContacts] = useState<{ name: string; phone: string; relation: string }[]>([]);
-  const [lateEntryContactsLoading, setLateEntryContactsLoading] = useState(false);
-  const [lateEntrySubmitting, setLateEntrySubmitting] = useState(false);
-  const [lateEntrySuccess, setLateEntrySuccess] = useState(false);
-
-  const fetchNotifications = useCallback(async () => {
-    try {
-      const res = await (convex as any).query("complaints:getTenantNotifications", {});
-      if (res) {
-        setNotifications(res.items ?? []);
-        setUnreadCount(res.unreadCount ?? 0);
-      }
-    } catch {}
-  }, [convex]);
-
-  useEffect(() => {
-    void fetchNotifications();
-  }, [fetchNotifications]);
-
-  async function handleOpenNotifications() {
-    setShowNotifications(true);
-    try {
-      await (convex as any).mutation("complaints:markAllNotificationsRead", {});
-      setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
-      setUnreadCount(0);
-    } catch {}
-  }
-
-  async function handleConfirmResolved(complaintId: string) {
-    try {
-      await (convex as any).mutation("complaints:confirmComplaintResolved", {
-        complaintId,
-      });
-      setConfirmedComplaintIds((prev) => new Set([...prev, complaintId]));
-      await fetchNotifications();
-    } catch (e) {
-      Alert.alert("Error", "Could not confirm resolution. Please try again.");
-    }
-  }
-
-  async function handleSubmitShiftRequest() {
-    if (!shiftCurrentRoom.trim() || !shiftReason.trim()) {
-      Alert.alert("Missing fields", "Please fill in both fields.");
-      return;
-    }
-    setShiftSubmitting(true);
-    try {
-      const activeApp = await (convex as any).query("complaints:getTenantActiveApplication", {});
-      if (!activeApp?.propertyId) {
-        Alert.alert("Error", "Could not find your active property. Please try again.");
-        return;
-      }
-      await (convex as any).mutation("shiftRequests:submitShiftRequest", {
-        propertyId: activeApp.propertyId,
-        applicationId: activeApp.applicationId,
-        currentRoomNumber: shiftCurrentRoom.trim(),
-        reason: shiftReason.trim(),
-      });
-      setShiftSuccess(true);
-    } catch (e) {
-      Alert.alert("Error", e instanceof Error ? e.message : "Could not submit shift request.");
-    } finally {
-      setShiftSubmitting(false);
-    }
-  }
-
-  async function handleSubmitLateEntryRequest() {
-    const selectedContact = lateEntryContactIdx !== null ? lateEntryContacts[lateEntryContactIdx] : null;
-    if (!lateEntryTime.trim() || !lateEntryReason.trim() || !selectedContact) {
-      Alert.alert("Missing fields", "Please fill in all fields and select an emergency contact.");
-      return;
-    }
-    setLateEntrySubmitting(true);
-    try {
-      const activeApp = await (convex as any).query("complaints:getTenantActiveApplication", {});
-      if (!activeApp?.propertyId) {
-        Alert.alert("Error", "Could not find your active property. Please try again.");
-        return;
-      }
-      await (convex as any).mutation("lateEntryRequests:submitLateEntryRequest", {
-        propertyId: activeApp.propertyId,
-        applicationId: activeApp.applicationId,
-        entryTime: lateEntryTime.trim(),
-        reason: lateEntryReason.trim(),
-        emergencyContact: `${selectedContact.name} (${selectedContact.relation}) · ${selectedContact.phone}`,
-      });
-      setLateEntrySuccess(true);
-    } catch (e) {
-      Alert.alert("Error", e instanceof Error ? e.message : "Could not submit late entry request.");
-    } finally {
-      setLateEntrySubmitting(false);
-    }
-  }
-
-  function handleQuickAction(key: string) {
-    if (key === "complaint") {
-      router.push("/(app)/complaint" as any);
-    } else if (key === "shift") {
-      setShiftCurrentRoom("");
-      setShiftReason("");
-      setShiftSuccess(false);
-      setShowShiftRequest(true);
-    } else if (key === "extend") {
-      setExtendOption(null);
-      setExtendResult(null);
-      setExtendRentInfo(undefined);
-      setShowExtendStay(true);
-      void (async () => {
-        try {
-          const info = await (convex as any).query("rentTransactions:getTenantRentInfo", {});
-          setExtendRentInfo(info ?? null);
-        } catch {
-          setExtendRentInfo(null);
-        }
-      })();
-    } else if (key === "lateentry") {
-      setLateEntryTime("");
-      setLateEntryReason("");
-      setLateEntryContactIdx(null);
-      setLateEntrySuccess(false);
-      setShowLateEntry(true);
-      setLateEntryContactsLoading(true);
-      void (async () => {
-        try {
-          const contacts = await (convex as any).query("complaints:getTenantEmergencyContacts", {});
-          setLateEntryContacts(contacts ?? []);
-          setLateEntryContactsLoading(false);
-        } catch {
-          setLateEntryContacts([]);
-          setLateEntryContactsLoading(false);
-        }
-      })();
-    } else if (key === "moveout") {
-      setMoveOutDate("");
-      setMoveOutSuccess(false);
-      setMoveOutAgreementInfo(undefined);
-      setShowMoveOut(true);
-      // Load agreement info in background
-      void (async () => {
-        try {
-          const info = await (convex as any).query("moveOutRequests:getTenantAgreementInfo", {});
-          setMoveOutAgreementInfo(info ?? null);
-        } catch {
-          setMoveOutAgreementInfo(null);
-        }
-      })();
-    }
-  }
-
-  function openExtendStayPaymentFlow(txId: string, body: string) {
-    setPendingExtendTxId(txId);
-    setPendingExtendBody(body);
-    setPendingExtendPaying(false);
-    setPendingExtendDone(false);
-    setShowPendingExtendSheet(true);
-  }
-
-  async function handlePayPendingExtend() {
-    if (!pendingExtendTxId) return;
-    setPendingExtendPaying(true);
-    try {
-      await (convex as any).mutation("rentTransactions:payPendingExtendStayTransaction", {
-        transactionId: pendingExtendTxId,
-      });
-      setPendingExtendDone(true);
-    } catch (e) {
-      Alert.alert("Error", e instanceof Error ? e.message : "Could not process payment.");
-    } finally {
-      setPendingExtendPaying(false);
-    }
-  }
-
-  /** Parse DD/MM/YYYY → timestamp, or null if invalid. */
-  function parseDDMMYYYY(dateStr: string): number | null {
-    const parts = dateStr.trim().split("/");
-    if (parts.length !== 3) return null;
-    const [dd, mm, yyyy] = parts;
-    const d = new Date(parseInt(yyyy, 10), parseInt(mm, 10) - 1, parseInt(dd, 10));
-    if (isNaN(d.getTime())) return null;
-    return d.getTime();
-  }
-
-  /** Returns validation state for the entered move-out date. */
-  function getMoveOutValidation(): { ok: boolean; message: string } | null {
-    if (!moveOutDate.trim()) return null;
-    const ts = parseDDMMYYYY(moveOutDate);
-    if (ts === null) return { ok: false, message: "Enter a valid date in DD/MM/YYYY format." };
-    if (moveOutAgreementInfo === undefined) return null; // still loading — block submission
-    if (!moveOutAgreementInfo?.agreementEndsAt) return { ok: true, message: "Date looks good." }; // no agreement info — allow, server will validate
-    if (ts < moveOutAgreementInfo.agreementEndsAt) {
-      const endDateStr = new Date(moveOutAgreementInfo.agreementEndsAt).toLocaleDateString("en-IN", {
-        day: "2-digit", month: "short", year: "numeric",
-      });
-      return {
-        ok: false,
-        message: `Not applicable — your agreement hasn't expired yet. It ends on ${endDateStr}.`,
-      };
-    }
-    return { ok: true, message: "Valid move-out date." };
-  }
-
-  async function handleExtendPay() {
-    if (!extendOption || !extendRentInfo) return;
-    setExtendPaying(true);
-    try {
-      const res = await (convex as any).mutation("rentTransactions:submitExtendStayPayment", {
-        applicationId: extendRentInfo.applicationId,
-        propertyId: extendRentInfo.propertyId,
-        type: extendOption,
-      });
-      setExtendResult({ amount: res.amount, description: res.description });
-    } catch (e) {
-      Alert.alert("Error", e instanceof Error ? e.message : "Could not process payment.");
-    } finally {
-      setExtendPaying(false);
-    }
-  }
-
-  async function handleSubmitMoveOutRequest() {
-    const validation = getMoveOutValidation();
-    if (!validation?.ok) return;
-    setMoveOutSubmitting(true);
-    try {
-      const info = moveOutAgreementInfo ?? await (convex as any).query("moveOutRequests:getTenantAgreementInfo", {});
-      if (!info?.propertyId) {
-        Alert.alert("Error", "Could not find your active property.");
-        return;
-      }
-      await (convex as any).mutation("moveOutRequests:submitMoveOutRequest", {
-        propertyId: info.propertyId,
-        applicationId: info.applicationId,
-        requestedMoveOutDate: moveOutDate.trim(),
-      });
-      setMoveOutSuccess(true);
-    } catch (e) {
-      Alert.alert("Error", e instanceof Error ? e.message : "Could not submit move-out request.");
-    } finally {
-      setMoveOutSubmitting(false);
-    }
-  }
-
-  return (
-    <View style={[s.root, { paddingTop: insets.top }]}>
-      {/* Notifications panel */}
-      <BottomSheet
-        visible={showNotifications}
-        onClose={() => setShowNotifications(false)}
-        title="Notifications"
-        showCloseButton
-        maxHeight="75%"
-      >
-        {notifications.length === 0 ? (
-          <View style={s.notifEmpty}>
-            <Ionicons name="notifications-off-outline" size={36} color={colors.muted} />
-            <Text style={s.notifEmptyText}>No notifications yet</Text>
-          </View>
-        ) : (
-          <FlatList
-            data={notifications}
-            keyExtractor={(item) => item.id}
-            ItemSeparatorComponent={() => <View style={s.notifDivider} />}
-            renderItem={({ item }) => (
-              <View style={[s.notifItem, !item.read && s.notifItemUnread]}>
-                <View style={s.notifIconWrap}>
-                  <Ionicons
-                    name={
-                      item.type === "complaint_resolved" ? "checkmark-circle" :
-                      item.type === "shift_request_approved" ? "swap-horizontal" :
-                      item.type === "shift_request_rejected" ? "close-circle" :
-                      item.type === "move_out_approved" ? "exit" :
-                      item.type === "move_out_rejected" ? "close-circle" :
-                      item.type === "extend_stay_payment" ? "cash-outline" :
-                      "notifications"
-                    }
-                    size={20}
-                    color={
-                      item.type === "complaint_resolved" ? "#16A34A" :
-                      item.type === "shift_request_approved" ? "#3B82F6" :
-                      item.type === "shift_request_rejected" ? "#DC2626" :
-                      item.type === "move_out_approved" ? "#F59E0B" :
-                      item.type === "move_out_rejected" ? "#DC2626" :
-                      item.type === "extend_stay_payment" ? "#16A34A" :
-                      colors.primary
-                    }
-                  />
-                </View>
-                <View style={s.notifTextWrap}>
-                  <Text style={s.notifItemTitle}>{item.title}</Text>
-                  <Text style={s.notifItemBody}>{item.body}</Text>
-                  <Text style={s.notifItemTime}>
-                    {new Date(item.createdAt).toLocaleDateString("en-IN", {
-                      day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
-                    })}
-                  </Text>
-                  {item.type === "complaint_resolved" && item.refId && !confirmedComplaintIds.has(item.refId) ? (
-                    <TouchableOpacity
-                      style={s.confirmBtn}
-                      activeOpacity={0.7}
-                      onPress={() => void handleConfirmResolved(item.refId!)}
-                    >
-                      <Text style={s.confirmBtnText}>Yes, issue is fixed</Text>
-                    </TouchableOpacity>
-                  ) : item.type === "complaint_resolved" && item.refId ? (
-                    <View style={[s.confirmBtn, { backgroundColor: "#6B7280" }]}>
-                      <Text style={s.confirmBtnText}>Confirmed ✓</Text>
-                    </View>
-                  ) : item.type === "extend_stay_payment" && item.refId ? (
-                    <TouchableOpacity
-                      style={[s.confirmBtn, { backgroundColor: "#16A34A" }]}
-                      activeOpacity={0.7}
-                      onPress={() => openExtendStayPaymentFlow(item.refId!, item.body)}
-                    >
-                      <Text style={s.confirmBtnText}>Pay</Text>
-                    </TouchableOpacity>
-                  ) : null}
-                </View>
-                {!item.read && <View style={s.notifDot} />}
-              </View>
-            )}
-          />
-        )}
-      </BottomSheet>
-
-      {/* Shift Request BottomSheet */}
-      <BottomSheet
-        visible={showShiftRequest}
-        onClose={() => setShowShiftRequest(false)}
-        title="Shift Request"
-        showCloseButton
-        maxHeight="60%"
-        keyboardAvoiding
-      >
-        {shiftSuccess ? (
-          <View style={s.shiftSuccessWrap}>
-            <Ionicons name="checkmark-circle" size={48} color="#16A34A" />
-            <Text style={s.shiftSuccessTitle}>Request Submitted</Text>
-            <Text style={s.shiftSuccessBody}>
-              Your shift request has been sent to your property manager. You'll be notified once it's reviewed.
-            </Text>
-            <TouchableOpacity
-              style={s.shiftSubmitBtn}
-              activeOpacity={0.8}
-              onPress={() => setShowShiftRequest(false)}
-            >
-              <Text style={s.shiftSubmitBtnText}>Done</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <View style={s.shiftFormWrap}>
-            <Text style={s.shiftFieldLabel}>Current Room Number</Text>
-            <TextInput
-              style={s.shiftInput}
-              placeholder="e.g. 203"
-              placeholderTextColor={colors.muted}
-              value={shiftCurrentRoom}
-              onChangeText={setShiftCurrentRoom}
-              editable={!shiftSubmitting}
-            />
-            <Text style={[s.shiftFieldLabel, { marginTop: 14 }]}>Reason for Shift</Text>
-            <TextInput
-              style={[s.shiftInput, s.shiftInputMultiline]}
-              placeholder="Describe why you'd like to shift rooms..."
-              placeholderTextColor={colors.muted}
-              value={shiftReason}
-              onChangeText={setShiftReason}
-              multiline
-              numberOfLines={3}
-              editable={!shiftSubmitting}
-            />
-            <TouchableOpacity
-              style={[s.shiftSubmitBtn, shiftSubmitting && { opacity: 0.6 }]}
-              activeOpacity={0.8}
-              disabled={shiftSubmitting}
-              onPress={() => void handleSubmitShiftRequest()}
-            >
-              {shiftSubmitting ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <Text style={s.shiftSubmitBtnText}>Submit Request</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-        )}
-      </BottomSheet>
-
-      {/* Move-out Request BottomSheet */}
-      <BottomSheet
-        visible={showMoveOut}
-        onClose={() => setShowMoveOut(false)}
-        title="Move-out Request"
-        showCloseButton
-        maxHeight="60%"
-        keyboardAvoiding
-      >
-        {moveOutSuccess ? (
-          <View style={s.shiftSuccessWrap}>
-            <Ionicons name="checkmark-circle" size={48} color="#16A34A" />
-            <Text style={s.shiftSuccessTitle}>Request Submitted</Text>
-            <Text style={s.shiftSuccessBody}>
-              Your move-out request has been sent to your property manager. You'll be notified once it's reviewed.
-            </Text>
-            <TouchableOpacity
-              style={s.shiftSubmitBtn}
-              activeOpacity={0.8}
-              onPress={() => setShowMoveOut(false)}
-            >
-              <Text style={s.shiftSubmitBtnText}>Done</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <View style={s.shiftFormWrap}>
-            <Text style={s.shiftFieldLabel}>Requested Move-out Date</Text>
-            <TextInput
-              style={s.shiftInput}
-              placeholder="DD/MM/YYYY"
-              placeholderTextColor={colors.muted}
-              value={moveOutDate}
-              onChangeText={setMoveOutDate}
-              keyboardType="numbers-and-punctuation"
-              editable={!moveOutSubmitting}
-            />
-
-            {(() => {
-              const v = getMoveOutValidation();
-              if (!v) return null;
-              return (
-                <View style={[s.moveOutValidationRow, { backgroundColor: v.ok ? "#DCFCE7" : "#FEF3C7" }]}>
-                  <Ionicons
-                    name={v.ok ? "checkmark-circle-outline" : "alert-circle-outline"}
-                    size={16}
-                    color={v.ok ? "#16A34A" : "#D97706"}
-                  />
-                  <Text style={[s.moveOutValidationText, { color: v.ok ? "#166534" : "#92400E" }]}>
-                    {v.message}
-                  </Text>
-                </View>
-              );
-            })()}
-
-            <TouchableOpacity
-              style={[
-                s.shiftSubmitBtn,
-                (!getMoveOutValidation()?.ok || moveOutSubmitting) && { opacity: 0.5 },
-              ]}
-              activeOpacity={0.8}
-              disabled={!getMoveOutValidation()?.ok || moveOutSubmitting}
-              onPress={() => void handleSubmitMoveOutRequest()}
-            >
-              {moveOutSubmitting ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <Text style={s.shiftSubmitBtnText}>Submit Request</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-        )}
-      </BottomSheet>
-
-      {/* Extend Stay BottomSheet */}
-      <BottomSheet
-        visible={showExtendStay}
-        onClose={() => setShowExtendStay(false)}
-        title="Extend Stay"
-        showCloseButton
-        maxHeight="65%"
-      >
-        {extendResult ? (
-          <View style={s.shiftSuccessWrap}>
-            <Ionicons name="checkmark-circle" size={48} color="#16A34A" />
-            <Text style={s.shiftSuccessTitle}>Payment Successful</Text>
-            <Text style={s.shiftSuccessBody}>
-              ₹{extendResult.amount.toLocaleString("en-IN")} paid · {extendResult.description}
-            </Text>
-            <TouchableOpacity
-              style={s.shiftSubmitBtn}
-              activeOpacity={0.8}
-              onPress={() => setShowExtendStay(false)}
-            >
-              <Text style={s.shiftSubmitBtnText}>Done</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <View style={s.shiftFormWrap}>
-            {extendRentInfo === undefined ? (
-              <View style={{ alignItems: "center", paddingVertical: 24 }}>
-                <ActivityIndicator size="small" color={colors.primary} />
-              </View>
-            ) : extendRentInfo === null ? (
-              <View style={{ alignItems: "center", paddingVertical: 24 }}>
-                <Text style={{ color: colors.muted, fontSize: 14 }}>
-                  Rent information is not available. Please try again later.
-                </Text>
-              </View>
-            ) : (
-              <>
-                <Text style={s.shiftFieldLabel}>Choose extension type</Text>
-                {(
-                  [
-                    {
-                      key: "monthly" as const,
-                      label: "Monthly",
-                      sub: "1 month",
-                      amount: extendRentInfo.rentAmount,
-                    },
-                    {
-                      key: "quarterly" as const,
-                      label: "Quarterly",
-                      sub: "3 months",
-                      amount: extendRentInfo.rentAmount != null ? extendRentInfo.rentAmount * 3 : null,
-                    },
-                    {
-                      key: "renewal" as const,
-                      label: "Renew Agreement",
-                      sub: extendRentInfo.agreementDuration ?? "Previous duration",
-                      amount:
-                        extendRentInfo.rentAmount != null && extendRentInfo.renewalMonths != null
-                          ? extendRentInfo.rentAmount * extendRentInfo.renewalMonths
-                          : null,
-                    },
-                  ] as const
-                ).map((opt) => (
-                  <TouchableOpacity
-                    key={opt.key}
-                    style={[s.extendOptionRow, extendOption === opt.key && s.extendOptionRowSelected]}
-                    activeOpacity={0.7}
-                    onPress={() => setExtendOption(opt.key)}
-                  >
-                    <View style={s.extendOptionLeft}>
-                      <Text style={[s.extendOptionLabel, extendOption === opt.key && { color: "#1D4ED8" }]}>
-                        {opt.label}
-                      </Text>
-                      <Text style={s.extendOptionSub}>{opt.sub}</Text>
-                    </View>
-                    <Text style={[s.extendOptionAmount, extendOption === opt.key && { color: "#1D4ED8" }]}>
-                      {opt.amount != null
-                        ? `₹${opt.amount.toLocaleString("en-IN")}`
-                        : "—"}
-                    </Text>
-                    {extendOption === opt.key && (
-                      <Ionicons name="checkmark-circle" size={20} color="#1D4ED8" style={{ marginLeft: 8 }} />
-                    )}
-                  </TouchableOpacity>
-                ))}
-
-                <TouchableOpacity
-                  style={[s.shiftSubmitBtn, { marginTop: 18 }, (!extendOption || extendPaying) && { opacity: 0.5 }]}
-                  activeOpacity={0.8}
-                  disabled={!extendOption || extendPaying}
-                  onPress={() => void handleExtendPay()}
-                >
-                  {extendPaying ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <Text style={s.shiftSubmitBtnText}>
-                      {extendOption
-                        ? `Pay ₹${(
-                            extendOption === "monthly"
-                              ? extendRentInfo.rentAmount
-                              : extendOption === "quarterly"
-                              ? (extendRentInfo.rentAmount ?? 0) * 3
-                              : (extendRentInfo.rentAmount ?? 0) * (extendRentInfo.renewalMonths ?? 1)
-                          )?.toLocaleString("en-IN") ?? "—"}`
-                        : "Select an option"}
-                    </Text>
-                  )}
-                </TouchableOpacity>
-              </>
-            )}
-          </View>
-        )}
-      </BottomSheet>
-
-      {/* Pending Extend Stay Payment BottomSheet */}
-      <BottomSheet
-        visible={showPendingExtendSheet}
-        onClose={() => setShowPendingExtendSheet(false)}
-        title="Complete Payment"
-        showCloseButton
-        maxHeight="50%"
-      >
-        {pendingExtendDone ? (
-          <View style={s.shiftSuccessWrap}>
-            <Ionicons name="checkmark-circle" size={48} color="#16A34A" />
-            <Text style={s.shiftSuccessTitle}>Payment Successful</Text>
-            <Text style={s.shiftSuccessBody}>Your stay extension has been confirmed.</Text>
-            <TouchableOpacity
-              style={s.shiftSubmitBtn}
-              activeOpacity={0.8}
-              onPress={() => setShowPendingExtendSheet(false)}
-            >
-              <Text style={s.shiftSubmitBtnText}>Done</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <View style={s.shiftFormWrap}>
-            <Text style={[s.shiftFieldLabel, { marginBottom: 8 }]}>Payment details</Text>
-            <Text style={{ fontSize: 14, color: colors.muted, lineHeight: 20, marginBottom: 20 }}>
-              {pendingExtendBody}
-            </Text>
-            <TouchableOpacity
-              style={[s.shiftSubmitBtn, pendingExtendPaying && { opacity: 0.5 }]}
-              activeOpacity={0.8}
-              disabled={pendingExtendPaying}
-              onPress={() => void handlePayPendingExtend()}
-            >
-              {pendingExtendPaying ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <Text style={s.shiftSubmitBtnText}>Pay</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-        )}
-      </BottomSheet>
-
-      {/* Late Entry Request BottomSheet */}
-      <BottomSheet
-        visible={showLateEntry}
-        onClose={() => setShowLateEntry(false)}
-        title="Late Entry Request"
-        showCloseButton
-        maxHeight="65%"
-        keyboardAvoiding
-      >
-        {lateEntrySuccess ? (
-          <View style={s.shiftSuccessWrap}>
-            <Ionicons name="checkmark-circle" size={48} color="#16A34A" />
-            <Text style={s.shiftSuccessTitle}>Request Submitted</Text>
-            <Text style={s.shiftSuccessBody}>
-              Your late entry request has been sent to your property manager. You'll be notified once it's reviewed.
-            </Text>
-            <TouchableOpacity
-              style={s.shiftSubmitBtn}
-              activeOpacity={0.8}
-              onPress={() => setShowLateEntry(false)}
-            >
-              <Text style={s.shiftSubmitBtnText}>Done</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <ScrollView
-            style={{ flex: 1 }}
-            contentContainerStyle={[s.shiftFormWrap, { paddingBottom: 8 }]}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-          >
-            <Text style={s.shiftFieldLabel}>Entry Time</Text>
-            <TextInput
-              style={s.shiftInput}
-              placeholder="e.g. 11:30 PM"
-              placeholderTextColor={colors.muted}
-              value={lateEntryTime}
-              onChangeText={setLateEntryTime}
-              editable={!lateEntrySubmitting}
-            />
-            <Text style={[s.shiftFieldLabel, { marginTop: 14 }]}>Reason for Late Entry</Text>
-            <TextInput
-              style={[s.shiftInput, s.shiftInputMultiline]}
-              placeholder="Describe the reason for your late entry..."
-              placeholderTextColor={colors.muted}
-              value={lateEntryReason}
-              onChangeText={setLateEntryReason}
-              multiline
-              numberOfLines={3}
-              editable={!lateEntrySubmitting}
-            />
-            <Text style={[s.shiftFieldLabel, { marginTop: 14 }]}>Emergency Contact</Text>
-            {lateEntryContactsLoading ? (
-              <View style={[s.shiftInput, { justifyContent: "center" }]}>
-                <ActivityIndicator size="small" color={colors.primary} />
-              </View>
-            ) : lateEntryContacts.length === 0 ? (
-              <View style={[s.shiftInput, { justifyContent: "center" }]}>
-                <Text style={{ color: colors.muted, fontSize: 14 }}>No emergency contacts found</Text>
-              </View>
-            ) : (
-              lateEntryContacts.map((contact, idx) => (
-                <TouchableOpacity
-                  key={idx}
-                  style={[
-                    s.extendOptionRow,
-                    lateEntryContactIdx === idx && s.extendOptionRowSelected,
-                    { marginBottom: 8 },
-                  ]}
-                  activeOpacity={0.7}
-                  disabled={lateEntrySubmitting}
-                  onPress={() => setLateEntryContactIdx(idx)}
-                >
-                  <View style={s.extendOptionLeft}>
-                    <Text style={[s.extendOptionLabel, lateEntryContactIdx === idx && { color: "#1D4ED8" }]}>
-                      {contact.name}
-                    </Text>
-                    <Text style={s.extendOptionSub}>{contact.relation} · {contact.phone}</Text>
-                  </View>
-                  {lateEntryContactIdx === idx && (
-                    <Ionicons name="checkmark-circle" size={20} color="#1D4ED8" />
-                  )}
-                </TouchableOpacity>
-              ))
-            )}
-            <TouchableOpacity
-              style={[s.shiftSubmitBtn, lateEntrySubmitting && { opacity: 0.6 }]}
-              activeOpacity={0.8}
-              disabled={lateEntrySubmitting}
-              onPress={() => void handleSubmitLateEntryRequest()}
-            >
-              {lateEntrySubmitting ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <Text style={s.shiftSubmitBtnText}>Submit Request</Text>
-              )}
-            </TouchableOpacity>
-          </ScrollView>
-        )}
-      </BottomSheet>
-
-      {/* Header */}
-      <View style={s.header}>
-        <TouchableOpacity style={s.filterBtn} activeOpacity={0.7}>
-          <Ionicons name="home-outline" size={20} color={colors.navy} />
-        </TouchableOpacity>
-        <View style={s.hCenter}>
-          <Text style={s.hTitle}>My Home</Text>
-          <Text style={s.hSub}>
-            {dashboardInfo
-              ? dashboardInfo.propertyName + (dashboardInfo.propertyCity ? ` · ${dashboardInfo.propertyCity}` : "")
-              : "Loading…"}
-          </Text>
-        </View>
-        <TouchableOpacity
-          style={s.filterBtn}
-          activeOpacity={0.7}
-          onPress={() => void handleOpenNotifications()}
-        >
-          <Ionicons name="notifications-outline" size={20} color={colors.navy} />
-          {unreadCount > 0 && (
-            <View style={s.notifBadge}>
-              <Text style={s.notifBadgeText}>
-                {unreadCount > 9 ? "9+" : unreadCount}
-              </Text>
-            </View>
-          )}
-        </TouchableOpacity>
-      </View>
-
-      <NativeScrollView
-        contentContainerStyle={[
-          s.dbScrollContent,
-          { paddingBottom: insets.bottom + 90 },
-        ]}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Hero Rent Card */}
-        <View style={s.dbHeroCard}>
-          <Text style={s.dbHeroLabel}>NEXT RENT DUE</Text>
-          {dashboardInfo === undefined ? (
-            <ActivityIndicator size="small" color={colors.white} style={{ marginVertical: 8 }} />
-          ) : dashboardInfo?.rentDue ? (
-            <>
-              <Text style={s.dbHeroDate}>{dashboardInfo.rentDue.dueDate}</Text>
-              <Text style={s.dbHeroAmount}>
-                {dashboardInfo.rentAmount != null
-                  ? `₹${dashboardInfo.rentAmount.toLocaleString("en-IN")} / month`
-                  : "Amount not set"}
-              </Text>
-              <View style={s.dbHeroFooter}>
-                <View style={s.dbDueChip}>
-                  <Ionicons name="time-outline" size={13} color={colors.white} />
-                  <Text style={s.dbDueChipText}>
-                    Due in {dashboardInfo.rentDue.daysLeft} day{dashboardInfo.rentDue.daysLeft !== 1 ? "s" : ""}
-                  </Text>
-                </View>
-                <TouchableOpacity style={s.dbPayBtn} activeOpacity={0.8}>
-                  <Text style={s.dbPayBtnText}>Pay Now</Text>
-                </TouchableOpacity>
-              </View>
-            </>
-          ) : (
-            <>
-              <Text style={s.dbHeroDate}>—</Text>
-              {dashboardInfo?.rentAmount != null ? (
-                <Text style={s.dbHeroAmount}>
-                  ₹{dashboardInfo.rentAmount.toLocaleString("en-IN")} / month
-                </Text>
-              ) : null}
-              <View style={s.dbHeroFooter}>
-                <View style={s.dbDueChip}>
-                  <Ionicons name="time-outline" size={13} color={colors.white} />
-                  <Text style={s.dbDueChipText}>No due date set</Text>
-                </View>
-                <TouchableOpacity style={s.dbPayBtn} activeOpacity={0.8}>
-                  <Text style={s.dbPayBtnText}>Pay Now</Text>
-                </TouchableOpacity>
-              </View>
-            </>
-          )}
-        </View>
-
-        {/* Quick Actions */}
-        <Text style={s.dbSectionTitle}>Quick Actions</Text>
-        <View style={s.dbActionsCard}>
-          {QUICK_ACTIONS.map((action, idx) => (
-            <React.Fragment key={action.key}>
-              <TouchableOpacity
-                style={s.dbActionRow}
-                activeOpacity={0.6}
-                onPress={() => handleQuickAction(action.key)}
-              >
-                <View
-                  style={[
-                    s.dbActionIconCircle,
-                    { backgroundColor: action.accent + "18" },
-                  ]}
-                >
-                  <Ionicons name={action.icon} size={20} color={action.accent} />
-                </View>
-                <View style={s.dbActionTextWrap}>
-                  <Text style={s.dbActionTitle}>{action.title}</Text>
-                  <Text style={s.dbActionSub}>{action.sub}</Text>
-                </View>
-                <View style={[s.dbActionChevronWrap, { backgroundColor: action.accent + "12" }]}>
-                  <Ionicons name="chevron-forward" size={14} color={action.accent} />
-                </View>
-              </TouchableOpacity>
-              {idx < QUICK_ACTIONS.length - 1 && (
-                <View style={s.dbDivider} />
-              )}
-            </React.Fragment>
-          ))}
-        </View>
-
-        {/* Property Overview */}
-        <Text style={s.dbSectionTitle}>Property Overview</Text>
-        <View style={s.dbOverviewCard}>
-          {((): Array<{ icon: keyof typeof Ionicons.glyphMap; label: string; value: string }> => {
-            if (!dashboardInfo) return [];
-            const rows: Array<{ icon: keyof typeof Ionicons.glyphMap; label: string; value: string }> = [];
-            if (dashboardInfo.assignedRoomNumber) {
-              rows.push({ icon: "home-outline", label: "Room", value: `Room ${dashboardInfo.assignedRoomNumber}` });
-            }
-            if (dashboardInfo.agreementLabel) {
-              rows.push({ icon: "calendar-outline", label: "Agreement", value: dashboardInfo.agreementLabel });
-            }
-            if (dashboardInfo.lockInPeriod) {
-              rows.push({ icon: "lock-closed-outline", label: "Lock-in", value: dashboardInfo.lockInPeriod });
-            }
-            if (dashboardInfo.noticePeriod) {
-              rows.push({ icon: "time-outline", label: "Notice", value: `${dashboardInfo.noticePeriod} notice required` });
-            }
-            if (dashboardInfo.moveInDate) {
-              rows.push({ icon: "enter-outline", label: "Move-in", value: dashboardInfo.moveInDate });
-            }
-            return rows;
-          })().map((row, idx, arr) => (
-            <React.Fragment key={row.label}>
-              <View style={s.dbOverviewRow}>
-                <View style={s.dbOverviewIconWrap}>
-                  <Ionicons name={row.icon} size={18} color={colors.muted} />
-                </View>
-                <View style={s.dbOverviewText}>
-                  <Text style={s.dbOverviewLabel}>{row.label}</Text>
-                  <Text style={s.dbOverviewValue}>{row.value}</Text>
-                </View>
-              </View>
-              {idx < arr.length - 1 && (
-                <View style={s.dbDivider} />
-              )}
-            </React.Fragment>
-          ))}
-        </View>
-
-        {/* Notices */}
-        <Text style={s.dbSectionTitle}>Notices</Text>
-        <View style={s.dbNoticeCard}>
-          {NOTICES.map((notice, idx) => (
-            <React.Fragment key={notice.title}>
-              <View style={s.dbNoticeRow}>
-                <Ionicons
-                  name={notice.icon}
-                  size={18}
-                  color={colors.muted}
-                  style={{ marginTop: 2 }}
-                />
-                <View style={s.dbNoticeTextWrap}>
-                  <Text style={s.dbNoticeTitle}>{notice.title}</Text>
-                  <Text style={s.dbNoticeSub}>{notice.sub}</Text>
-                </View>
-              </View>
-              {idx < NOTICES.length - 1 && <View style={s.dbDivider} />}
-            </React.Fragment>
-          ))}
-        </View>
-      </NativeScrollView>
-    </View>
-  );
-}
-
-// --------------- Property Card ---------------
-
 function PropertyCard({ property }: { property: Property }) {
   const rentRange = getRentRange(property.roomOptions);
   const amenities = getAmenities(property.roomOptions);
@@ -1194,7 +166,6 @@ function PropertyCard({ property }: { property: Property }) {
   const agreement = property.agreement;
 
   const [cardHeight, setCardHeight] = useState(0);
-  // Match the original layout where the hero area used ~34% of the card height.
   const heroHeight = cardHeight > 0 ? cardHeight * 0.34 : 220;
 
   const scrollY = useSharedValue(0);
@@ -1205,7 +176,6 @@ function PropertyCard({ property }: { property: Property }) {
   }, [heroHeight, heroHeightSv]);
 
   useEffect(() => {
-    // Reset when the displayed property changes.
     scrollY.value = 0;
   }, [property._id, scrollY]);
 
@@ -1269,7 +239,6 @@ function PropertyCard({ property }: { property: Property }) {
         style={c.bodyScroll}
         contentContainerStyle={{
           ...c.bodyScrollContent,
-          // Push content below the hero; hero itself scrolls away via translation.
           paddingTop: heroHeight + 18,
         }}
         showsVerticalScrollIndicator={true}
@@ -1400,216 +369,320 @@ function ScrollHint() {
   );
 }
 
-const c = StyleSheet.create({
-  wrapper: { flex: 1, position: "relative" },
-  hero: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    overflow: "hidden",
-    backgroundColor: colors.surfaceGray,
-    zIndex: 0,
-  },
-  heroBackground: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  body: {
-    flex: 66,
-    minHeight: 0,
-    position: "relative",
-  },
-  bodyScroll: {
-    flex: 1,
-    position: "relative",
-    zIndex: 1,
-  },
-  bodyScrollContent: {
-    paddingHorizontal: 20,
-    paddingTop: 18,
-    paddingBottom: 48,
-  },
-  summary: {
-    marginBottom: 20,
-    paddingBottom: 18,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  summaryHeaderRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: 10,
-    marginBottom: 10,
-  },
-  summaryName: {
-    flex: 1,
-    fontSize: 19,
-    fontWeight: "800",
-    color: colors.navy,
-    letterSpacing: -0.2,
-  },
-  summaryPrice: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: colors.positiveAmount,
-    marginTop: 4,
-  },
-  summaryLocRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 6,
-    marginBottom: 12,
-  },
-  summaryLocText: {
-    flex: 1,
-    fontSize: 14,
-    color: colors.muted,
-    lineHeight: 20,
-  },
-  summaryBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    alignSelf: "flex-start",
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: radii.pill,
-    backgroundColor: colors.surfaceGray,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  summaryBadgeText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: colors.navy,
-    letterSpacing: 0.15,
-  },
-  scrollHintAbs: {
-    position: "absolute",
-    bottom: 22,
-    right: 16,
-    left: undefined,
-    alignItems: "flex-end",
-    zIndex: 2,
-  },
-  scrollHint: {
-    alignItems: "center",
-  },
-  scrollHintHandle: {
-    width: 44,
-    height: 6,
-    borderRadius: 999,
-    backgroundColor: colors.surfaceGray,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  section: { marginBottom: 16 },
-  secTitle: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: colors.muted,
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
-    marginBottom: 6,
-  },
-  roomRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  roomChip: {
-    backgroundColor: colors.surfaceGray,
-    borderRadius: radii.input,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    alignItems: "center",
-  },
-  roomCat: { fontSize: 13, fontWeight: "600", color: colors.navy },
-  roomRent: {
-    fontSize: 11,
-    fontWeight: "500",
-    color: colors.positiveAmount,
-    marginTop: 2,
-  },
-  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
-  tagChip: {
-    backgroundColor: colors.primary,
-    borderRadius: radii.chip,
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-  },
-  tagText: { fontSize: 12, fontWeight: "600", color: colors.white },
-  amenChip: {
-    backgroundColor: colors.surfaceGray,
-    borderRadius: radii.chip,
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  amenText: { fontSize: 12, fontWeight: "500", color: colors.navy },
-  agreeText: {
-    fontSize: 13,
-    color: colors.muted,
-    lineHeight: 20,
-  },
-});
+// ─── Status pill colours ─────────────────────────────────────────────────────
+const STATUS_PILL: Record<string, { label: string; fg: string; bg: string; dot: string }> = {
+  pending:  { label: "Pending",     fg: "#92400E", bg: "#FEF3C7", dot: "#D97706" },
+  accepted: { label: "Confirmed",   fg: "#15803D", bg: "#DCFCE7", dot: "#16A34A" },
+  rejected: { label: "Declined",    fg: "#B91C1C", bg: "#FEE2E2", dot: "#DC2626" },
+};
 
-// --------------- Main Screen ---------------
+function StatusPillRN({ status }: { status: string }) {
+  const s = STATUS_PILL[status] ?? STATUS_PILL.pending;
+  return (
+    <View style={[d.pill, { backgroundColor: s.bg }]}>
+      <View style={[d.pillDot, { backgroundColor: s.dot }]} />
+      <Text style={[d.pillText, { color: s.fg }]}>{s.label}</Text>
+    </View>
+  );
+}
+
+function StudentDashboard({
+  booking,
+  onLogout,
+}: {
+  booking: BookingRequest;
+  onLogout: () => void;
+}) {
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+
+  const greeting = (() => {
+    const h = new Date().getHours();
+    if (h < 12) return "Good morning";
+    if (h < 17) return "Good afternoon";
+    return "Good evening";
+  })();
+
+  const firstName = booking.studentName.split(" ")[0];
+  const initials = booking.studentName
+    .split(" ")
+    .slice(0, 2)
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase();
+
+  const locationLine = [booking.propertyCity, booking.propertyState]
+    .filter(Boolean)
+    .join(", ");
+
+  // Booking status chip text for the rent hero
+  const bookingChip =
+    booking.status === "accepted"
+      ? { text: "Booking Confirmed", bg: "rgba(212,245,66,0.18)", fg: "#D4F542" }
+      : booking.status === "rejected"
+      ? { text: "Application Declined", bg: "rgba(248,113,113,0.18)", fg: "#FCA5A5" }
+      : { text: "Under review", bg: "rgba(255,255,255,0.12)", fg: "rgba(255,255,255,0.85)" };
+
+  // Quick requests grid — monochrome icons on surfaceGray
+  const quickActions = [
+    { icon: "time-outline" as const,             label: "Late entry",   sub: "Notify the gate",       route: "/personal" },
+    { icon: "calendar-outline" as const,          label: "Extend stay",  sub: "Push your move-out",    route: "/personal" },
+    { icon: "swap-horizontal-outline" as const,   label: "Room change",  sub: "Request a new room",    route: "/personal" },
+    { icon: "log-out-outline" as const,           label: "Move out",     sub: "Start the process",     route: "/personal" },
+  ];
+
+  return (
+    <View style={[d.root, { paddingTop: insets.top }]}>
+      {/* ── Top bar ── */}
+      <View style={d.topBar}>
+        <View style={{ gap: 1 }}>
+          <Text style={d.greetText}>{greeting}</Text>
+          <Text style={d.nameText}>{firstName}</Text>
+        </View>
+        <View style={d.topBarRight}>
+          {/* Bell */}
+          <View style={d.bellWrap}>
+            <Ionicons name="notifications-outline" size={16} color={colors.navy} />
+            <View style={d.bellDot} />
+          </View>
+          {/* Avatar */}
+          <View style={d.avatar}>
+            <Text style={d.avatarTxt}>{initials}</Text>
+          </View>
+        </View>
+      </View>
+
+      <ScrollView
+        style={d.scroll}
+        contentContainerStyle={{ paddingBottom: insets.bottom + TAB_BAR_CLEARANCE }}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* ── Stay pill ── */}
+        <View style={d.stayPill}>
+          <View style={d.stayIcon}>
+            <Ionicons name="bed-outline" size={18} color={colors.navy} />
+          </View>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={d.stayName} numberOfLines={1}>
+              {booking.propertyName ?? "Your Property"}
+              {locationLine ? ` · ${locationLine}` : ""}
+            </Text>
+            <Text style={d.staySub}>Booking · Move-in {booking.moveInDate}</Text>
+          </View>
+          <View style={d.activeChip}>
+            <Text style={d.activeChipTxt}>
+              {booking.status === "accepted" ? "Confirmed" : booking.status === "rejected" ? "Declined" : "Pending"}
+            </Text>
+            <View
+              style={[
+                d.activeDot,
+                {
+                  backgroundColor:
+                    booking.status === "accepted"
+                      ? "#16A34A"
+                      : booking.status === "rejected"
+                      ? "#DC2626"
+                      : "#D97706",
+                },
+              ]}
+            />
+          </View>
+        </View>
+
+        {/* ── Booking hero (navy card) ── */}
+        <View style={d.heroCard}>
+          {/* decorative circle */}
+          <View style={d.heroCircle} />
+          <View style={d.heroRow1}>
+            <Text style={d.heroDueLabel}>Booking request</Text>
+            <View style={[d.heroChip, { backgroundColor: bookingChip.bg }]}>
+              <Text style={[d.heroChipTxt, { color: bookingChip.fg }]}>{bookingChip.text}</Text>
+            </View>
+          </View>
+          <View style={d.heroRow2}>
+            <View>
+              <Text style={d.heroAmount}>{booking.propertyName ?? "Your property"}</Text>
+              <View style={d.heroSubRow}>
+                <Ionicons name="time-outline" size={13} color="rgba(255,255,255,0.7)" />
+                <Text style={d.heroSubTxt}>
+                  Move-in: {booking.moveInDate}
+                </Text>
+              </View>
+            </View>
+          </View>
+          {/* divider + breakdown */}
+          <View style={d.heroBreakDiv} />
+          <View style={d.heroBreakRow}>
+            <View style={d.heroBreakItem}>
+              <Text style={d.heroBreakLabel}>Property</Text>
+              <Text style={d.heroBreakVal} numberOfLines={1}>{booking.propertyName ?? "—"}</Text>
+            </View>
+            <View style={[d.heroBreakItem, d.heroBreakBorder]}>
+              <Text style={d.heroBreakLabel}>Move-in</Text>
+              <Text style={d.heroBreakVal}>{booking.moveInDate}</Text>
+            </View>
+            <View style={[d.heroBreakItem, d.heroBreakBorder]}>
+              <Text style={d.heroBreakLabel}>Status</Text>
+              <Text style={d.heroBreakVal}>
+                {booking.status.charAt(0).toUpperCase() + booking.status.slice(1)}
+              </Text>
+            </View>
+          </View>
+          {/* CTA */}
+          <View style={d.heroCta}>
+            <TouchableOpacity
+              style={d.heroCtaBtn}
+              activeOpacity={0.85}
+              onPress={() => router.push("/chats" as any)}
+            >
+              <Text style={d.heroCtaBtnTxt}>Chat with operator</Text>
+              <Ionicons name="arrow-forward" size={16} color="#1A1A1A" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={d.heroCtaGhost}
+              activeOpacity={0.7}
+              onPress={() => router.push("/complaint" as any)}
+            >
+              <Ionicons name="document-text-outline" size={17} color="#fff" />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* ── E-KYC card ── */}
+        <View style={d.card}>
+          <View style={d.kycHead}>
+            <View style={d.kycIconWrap}>
+              <Ionicons name="shield-outline" size={20} color={colors.navy} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={d.cardTitle}>E-KYC verification</Text>
+              <Text style={d.cardSub}>Finish to unlock all features</Text>
+            </View>
+            <View style={[d.kycChip, { backgroundColor: "#FEF3C7" }]}>
+              <Text style={[d.kycChipTxt, { color: "#92400E" }]}>0/4 done</Text>
+            </View>
+          </View>
+          {/* progress bar */}
+          <View style={d.progressTrack}>
+            <View style={[d.progressFill, { width: "0%" }]} />
+          </View>
+          {/* steps */}
+          {[
+            { label: "Aadhaar / ID proof", done: false },
+            { label: "Profile photo", done: false },
+            { label: "Rental agreement e-sign", done: false },
+            { label: "Police verification", done: false },
+          ].map((step, i) => (
+            <View key={step.label} style={[d.kycStep, i === 0 && { borderTopWidth: 0 }]}>
+              <View style={[d.kycStepDot, step.done && d.kycStepDotDone]}>
+                {step.done && <Ionicons name="checkmark" size={12} color="#D4F542" />}
+              </View>
+              <Text style={[d.kycStepTxt, !step.done && { color: colors.muted }]}>{step.label}</Text>
+              {!step.done && <Text style={d.kycAddTxt}>Add</Text>}
+            </View>
+          ))}
+          <TouchableOpacity style={d.kycBtn} activeOpacity={0.85}>
+            <Text style={d.kycBtnTxt}>Complete verification</Text>
+            <Ionicons name="arrow-forward" size={16} color="#D4F542" />
+          </TouchableOpacity>
+        </View>
+
+        {/* ── Quick requests ── */}
+        <View style={d.sectionHeader}>
+          <Text style={d.sectionTitle}>Quick requests</Text>
+        </View>
+        <View style={d.reqGrid}>
+          {quickActions.map((a) => (
+            <TouchableOpacity
+              key={a.label}
+              style={d.reqCard}
+              activeOpacity={0.7}
+              onPress={() => router.push(a.route as any)}
+            >
+              <View style={d.reqIconWrap}>
+                <Ionicons name={a.icon} size={19} color={colors.navy} />
+              </View>
+              <View>
+                <Text style={d.reqLabel}>{a.label}</Text>
+                <Text style={d.reqSub}>{a.sub}</Text>
+              </View>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {/* ── Complaints ── */}
+        <View style={d.card}>
+          <View style={d.cardTitleRow}>
+            <Text style={d.cardTitle}>Complaints &amp; issues</Text>
+            <TouchableOpacity
+              style={d.seeAllBtn}
+              onPress={() => router.push("/complaint" as any)}
+            >
+              <Text style={d.seeAllTxt}>See all</Text>
+              <Ionicons name="arrow-forward" size={12} color={colors.navy} />
+            </TouchableOpacity>
+          </View>
+          <View style={d.emptyComplaints}>
+            <Text style={d.emptyTxt}>No complaints raised yet</Text>
+          </View>
+          <TouchableOpacity
+            style={d.raiseBtn}
+            activeOpacity={0.7}
+            onPress={() => router.push("/complaint" as any)}
+          >
+            <Ionicons name="add" size={15} color={colors.navy} />
+            <Text style={d.raiseBtnTxt}>Raise a complaint</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* ── Edit details row ── */}
+        <TouchableOpacity
+          style={d.editRow}
+          activeOpacity={0.7}
+          onPress={() => router.push("/personal" as any)}
+        >
+          <View style={d.editIconWrap}>
+            <Ionicons name="create-outline" size={17} color={colors.navy} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={d.editLabel}>Edit basic details</Text>
+            <Text style={d.editSub}>Contact, course, guardian &amp; emergency info</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color={colors.muted} />
+        </TouchableOpacity>
+
+        {/* ── Watermark ── */}
+        <View style={d.watermark}>
+          <View style={d.watermarkLine} />
+          <Text style={d.watermarkTxt}>LIVEET</Text>
+          <View style={d.watermarkLine} />
+        </View>
+        <Text style={d.watermarkTag}>your stay, sorted</Text>
+      </ScrollView>
+    </View>
+  );
+}
 
 export default function AppHome() {
   const convex = useConvex();
   const insets = useSafeAreaInsets();
-  const router = useRouter();
+  const { signOut } = useAuth();
+
+  const handleLogout = useCallback(() => {
+    Alert.alert("Log out", "Are you sure you want to log out?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Log out",
+        style: "destructive",
+        onPress: () => void signOut(),
+      },
+    ]);
+  }, [signOut]);
 
   const [properties, setProperties] = useState<Property[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [discoverLoading, setDiscoverLoading] = useState(false);
-  const [showDashboard, setShowDashboard] = useState(false);
-
-  const propertiesRef = useRef<Property[]>([]);
-  propertiesRef.current = properties;
-
-  const fetchProperties = useCallback(async () => {
-    setLoading(true);
-    try {
-      const result = await (convex as any).query("properties:listForTenants", {});
-      if (result) setProperties(result);
-    } catch (err) {
-      console.warn("Failed to fetch properties:", err);
-    } finally {
-      setLoading(false);
-    }
-  }, [convex]);
-
-  // Fetches properties without touching the global loading flag (used on view-switch)
-  const fetchDiscoverProperties = useCallback(async () => {
-    setDiscoverLoading(true);
-    try {
-      const result = await (convex as any).query("properties:listForTenants", {});
-      if (result) setProperties(result);
-    } catch (err) {
-      console.warn("Failed to fetch properties:", err);
-    } finally {
-      setDiscoverLoading(false);
-    }
-  }, [convex]);
-
-  // Listen for view switch events from profile screen
-  useEffect(() => {
-    const unsub = discoverEvents.on((target) => {
-      if (target === "dashboard") {
-        setShowDashboard(true);
-      } else {
-        setShowDashboard(false);
-        if (propertiesRef.current.length === 0) {
-          fetchDiscoverProperties();
-        }
-      }
-    });
-    return () => { unsub(); };
-  }, [fetchDiscoverProperties]);
-
-  const translateX = useSharedValue(0);
-  const translateY = useSharedValue(0);
+  const [bookingRequest, setBookingRequest] = useState<BookingRequest | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -1619,27 +692,22 @@ export default function AppHome() {
 
     (async () => {
       try {
-        const gate = await (convex as any).query("moveIn:hasPaidMoveInForTenant", {});
-        // Only auto-show dashboard if the user hasn't manually overridden to discover
-        if (!cancelled && gate?.shouldShowDashboard && discoverEvents.getOverride() !== "discover") {
-          setShowDashboard(true);
-          discoverEvents.setGateView("dashboard");
-          setLoading(false);
-          clearTimeout(timeout);
-          return;
+        const [result, booking] = await Promise.all([
+          (convex as any).query("properties:listForTenants", {}),
+          (convex as any).query("properties:getMyBookingRequest", {}),
+        ]);
+        if (!cancelled) {
+          if (result) setProperties(result);
+          if (booking) setBookingRequest(booking);
         }
-        const result = await (convex as any).query(
-          "properties:listForTenants",
-          {},
-        );
-        if (!cancelled && result) setProperties(result);
       } catch (err) {
-        console.warn("Failed to fetch properties:", err);
+        console.warn("Failed to fetch data:", err);
       } finally {
         clearTimeout(timeout);
         if (!cancelled) setLoading(false);
       }
     })();
+
     return () => {
       cancelled = true;
       clearTimeout(timeout);
@@ -1649,13 +717,13 @@ export default function AppHome() {
   const currentProperty = properties[currentIndex] ?? null;
   const nextProperty = properties[currentIndex + 1] ?? null;
 
+  const translateX = useSharedValue(0);
+  const translateY = useSharedValue(0);
+
   const recordSwipe = useCallback(
     async (propertyId: string, liked: boolean) => {
       try {
-        await (convex as any).mutation("properties:recordSwipe", {
-          propertyId,
-          liked,
-        });
+        await (convex as any).mutation("properties:recordSwipe", { propertyId, liked });
       } catch (err) {
         console.warn("Failed to record swipe:", err);
       }
@@ -1739,18 +807,8 @@ export default function AppHome() {
 
   const bgCardStyle = useAnimatedStyle(() => {
     const absX = Math.abs(translateX.value);
-    const scale = interpolate(
-      absX,
-      [0, SWIPE_THRESHOLD],
-      [0.92, 1],
-      Extrapolation.CLAMP,
-    );
-    const opacity = interpolate(
-      absX,
-      [0, SWIPE_THRESHOLD],
-      [0.5, 1],
-      Extrapolation.CLAMP,
-    );
+    const scale = interpolate(absX, [0, SWIPE_THRESHOLD], [0.92, 1], Extrapolation.CLAMP);
+    const opacity = interpolate(absX, [0, SWIPE_THRESHOLD], [0.5, 1], Extrapolation.CLAMP);
     return { transform: [{ scale }], opacity };
   });
 
@@ -1779,37 +837,32 @@ export default function AppHome() {
       <View style={[s.root, { paddingTop: insets.top }]}>
         <View style={s.loadWrap}>
           <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={s.loadText}>Finding properties...</Text>
+          <Text style={s.loadText}>Loading...</Text>
         </View>
       </View>
     );
   }
 
-  if (showDashboard) {
-    return <TenantDashboard insets={insets} />;
+  // Show student dashboard if tenant has submitted a booking request
+  if (bookingRequest) {
+    return <StudentDashboard booking={bookingRequest} onLogout={handleLogout} />;
   }
 
   return (
     <View style={[s.root, { paddingTop: insets.top }]}>
-      {/* Header */}
       <View style={s.header}>
-        <TouchableOpacity
-          style={s.filterBtn}
-          onPress={() => router.push("/(app)/favorites")}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="heart-outline" size={20} color={colors.navy} />
+        <TouchableOpacity style={s.hSide} onPress={handleLogout} activeOpacity={0.7}>
+          <Ionicons name="log-out-outline" size={22} color={colors.navy} />
         </TouchableOpacity>
         <View style={s.hCenter}>
           <Text style={s.hTitle}>Discover</Text>
           <Text style={s.hSub}>Properties near you</Text>
         </View>
-        <TouchableOpacity style={s.filterBtn}>
+        <TouchableOpacity style={[s.filterBtn, s.hSide]} activeOpacity={0.7}>
           <Ionicons name="options-outline" size={20} color={colors.navy} />
         </TouchableOpacity>
       </View>
 
-      {/* Card stack */}
       <View style={s.cardArea}>
         {noMore ? (
           <View style={s.empty}>
@@ -1817,9 +870,7 @@ export default function AppHome() {
               <Ionicons name="home-outline" size={48} color={colors.muted} />
             </View>
             <Text style={s.emptyTitle}>No more properties</Text>
-            <Text style={s.emptySub}>
-              Check back later for new listings
-            </Text>
+            <Text style={s.emptySub}>Check back later for new listings</Text>
           </View>
         ) : (
           <>
@@ -1831,14 +882,10 @@ export default function AppHome() {
 
             <GestureDetector gesture={gesture}>
               <Animated.View style={[s.card, topCardStyle]}>
-                <Animated.View
-                  style={[s.stamp, s.likeStamp, likeOpacity]}
-                >
+                <Animated.View style={[s.stamp, s.likeStamp, likeOpacity]}>
                   <Text style={s.likeStampTxt}>LIKE</Text>
                 </Animated.View>
-                <Animated.View
-                  style={[s.stamp, s.nopeStamp, nopeOpacity]}
-                >
+                <Animated.View style={[s.stamp, s.nopeStamp, nopeOpacity]}>
                   <Text style={s.nopeStampTxt}>NOPE</Text>
                 </Animated.View>
                 <PropertyCard property={currentProperty} />
@@ -1848,11 +895,8 @@ export default function AppHome() {
         )}
       </View>
 
-      {/* Action buttons */}
       {!noMore && (
-        <View
-          style={[s.actions, { paddingBottom: insets.bottom + TAB_BAR_CLEARANCE }]}
-        >
+        <View style={[s.actions, { paddingBottom: insets.bottom + TAB_BAR_CLEARANCE }]}>
           <TouchableOpacity
             style={[s.actionBtn, s.unlikeBtn]}
             onPress={handleUnlikePress}
@@ -1861,10 +905,7 @@ export default function AppHome() {
             <Ionicons name="close" size={30} color={colors.navy} />
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[s.actionBtn, s.starBtn]}
-            activeOpacity={0.7}
-          >
+          <TouchableOpacity style={[s.actionBtn, s.starBtn]} activeOpacity={0.7}>
             <Ionicons name="star" size={20} color={colors.trendBadgeText} />
           </TouchableOpacity>
 
@@ -1881,6 +922,146 @@ export default function AppHome() {
   );
 }
 
+// ─── PropertyCard styles ────────────────────────────────────────────────────
+const c = StyleSheet.create({
+  wrapper: { flex: 1, position: "relative" },
+  hero: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    overflow: "hidden",
+    backgroundColor: colors.surfaceGray,
+    zIndex: 0,
+  },
+  heroBackground: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  bodyScroll: {
+    flex: 1,
+    position: "relative",
+    zIndex: 1,
+  },
+  bodyScrollContent: {
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 48,
+  },
+  summary: {
+    marginBottom: 20,
+    paddingBottom: 18,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  summaryHeaderRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 10,
+    marginBottom: 10,
+  },
+  summaryName: {
+    flex: 1,
+    fontSize: 19,
+    fontWeight: "800",
+    color: colors.navy,
+    letterSpacing: -0.2,
+  },
+  summaryPrice: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: colors.positiveAmount,
+    marginTop: 4,
+  },
+  summaryLocRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 6,
+    marginBottom: 12,
+  },
+  summaryLocText: {
+    flex: 1,
+    fontSize: 14,
+    color: colors.muted,
+    lineHeight: 20,
+  },
+  summaryBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radii.pill,
+    backgroundColor: colors.surfaceGray,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  summaryBadgeText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: colors.navy,
+    letterSpacing: 0.15,
+  },
+  scrollHintAbs: {
+    position: "absolute",
+    bottom: 22,
+    right: 16,
+    alignItems: "flex-end",
+    zIndex: 2,
+  },
+  scrollHint: {
+    alignItems: "center",
+  },
+  section: { marginBottom: 16 },
+  secTitle: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: colors.muted,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    marginBottom: 6,
+  },
+  roomRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  roomChip: {
+    backgroundColor: colors.surfaceGray,
+    borderRadius: radii.input,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    alignItems: "center",
+  },
+  roomCat: { fontSize: 13, fontWeight: "600", color: colors.navy },
+  roomRent: {
+    fontSize: 11,
+    fontWeight: "500",
+    color: colors.positiveAmount,
+    marginTop: 2,
+  },
+  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  tagChip: {
+    backgroundColor: colors.primary,
+    borderRadius: radii.chip,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+  },
+  tagText: { fontSize: 12, fontWeight: "600", color: colors.white },
+  amenChip: {
+    backgroundColor: colors.surfaceGray,
+    borderRadius: radii.chip,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  amenText: { fontSize: 12, fontWeight: "500", color: colors.navy },
+  agreeText: {
+    fontSize: 13,
+    color: colors.muted,
+    lineHeight: 20,
+  },
+});
+
+// ─── Discovery screen styles ─────────────────────────────────────────────────
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.pageBg },
   loadWrap: {
@@ -1890,7 +1071,6 @@ const s = StyleSheet.create({
     gap: 12,
   },
   loadText: { fontSize: 14, color: colors.muted },
-
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -1902,7 +1082,6 @@ const s = StyleSheet.create({
   hTitle: { fontSize: 22, fontWeight: "800", color: colors.navy },
   hSub: { fontSize: 12, color: colors.muted, marginTop: 2 },
   filterBtn: {
-    width: 40,
     height: 40,
     borderRadius: 12,
     backgroundColor: colors.cardBg,
@@ -1910,7 +1089,6 @@ const s = StyleSheet.create({
     justifyContent: "center",
     ...cardShadow,
   },
-
   cardArea: {
     flex: 1,
     marginHorizontal: CARD_SIDE_INSET,
@@ -1927,7 +1105,6 @@ const s = StyleSheet.create({
     overflow: "hidden",
     ...cardShadow,
   },
-
   stamp: {
     position: "absolute",
     top: 24,
@@ -1959,7 +1136,6 @@ const s = StyleSheet.create({
     color: colors.error,
     letterSpacing: 3,
   },
-
   actions: {
     flexDirection: "row",
     justifyContent: "center",
@@ -1992,7 +1168,6 @@ const s = StyleSheet.create({
     borderRadius: 30,
     backgroundColor: colors.error,
   },
-
   empty: { alignItems: "center", padding: 40 },
   emptyCircle: {
     width: 100,
@@ -2010,337 +1185,237 @@ const s = StyleSheet.create({
     marginTop: 8,
     textAlign: "center",
   },
-  // --- Dashboard styles ---
-  dbScrollContent: {
-    paddingHorizontal: 20,
-    paddingTop: 8,
-  },
-  dbHeroCard: {
-    backgroundColor: colors.primary,
-    borderRadius: radii.card,
-    paddingVertical: 24,
-    paddingHorizontal: 20,
-    marginBottom: 24,
-    ...cardShadow,
-  },
-  dbHeroLabel: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "rgba(255,255,255,0.55)",
-    textTransform: "uppercase",
-    letterSpacing: 1.2,
-    marginBottom: 6,
-  },
-  dbHeroDate: {
-    fontSize: 26,
-    fontWeight: "800",
-    color: colors.white,
-    marginBottom: 4,
-  },
-  dbHeroAmount: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: colors.trendBadge,
-    marginBottom: 18,
-  },
-  dbHeroFooter: {
+});
+
+// ─── Student Dashboard styles (exact Claude Design) ──────────────────────────
+const d = StyleSheet.create({
+  root: { flex: 1, backgroundColor: "#EEF2F6" },
+  scroll: { flex: 1 },
+
+  // ── Top bar
+  topBar: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-  },
-  dbDueChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    backgroundColor: "rgba(255,255,255,0.12)",
-    borderRadius: radii.pill,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  dbDueChipText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: colors.white,
-  },
-  dbPayBtn: {
-    backgroundColor: colors.trendBadge,
-    borderRadius: radii.pill,
-    paddingHorizontal: 22,
-    paddingVertical: 10,
-  },
-  dbPayBtnText: {
-    fontSize: 14,
-    fontWeight: "800",
-    color: colors.navy,
-  },
-  dbSectionTitle: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: colors.muted,
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
-    marginBottom: 12,
-  },
-  dbActionsCard: {
-    backgroundColor: colors.cardBg,
-    borderRadius: radii.card,
-    paddingHorizontal: 18,
-    paddingVertical: 4,
-    marginBottom: 24,
-    ...cardShadow,
-  },
-  dbActionRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 14,
-  },
-  dbActionIconCircle: {
-    width: 42,
-    height: 42,
-    borderRadius: radii.pill,
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 14,
-  },
-  dbActionTextWrap: {
-    flex: 1,
-  },
-  dbActionTitle: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: colors.navy,
-    marginBottom: 2,
-  },
-  dbActionSub: {
-    fontSize: 12,
-    color: colors.muted,
-    fontWeight: "500",
-  },
-  dbActionChevronWrap: {
-    width: 28,
-    height: 28,
-    borderRadius: radii.pill,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  dbOverviewCard: {
-    backgroundColor: colors.cardBg,
-    borderRadius: radii.card,
-    paddingHorizontal: 18,
-    paddingVertical: 8,
-    marginBottom: 24,
-    ...cardShadow,
-  },
-  dbOverviewRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 14,
-  },
-  dbOverviewIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: colors.surfaceGray,
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 14,
-  },
-  dbOverviewText: {
-    flex: 1,
-  },
-  dbOverviewLabel: {
-    fontSize: 11,
-    fontWeight: "600",
-    color: colors.muted,
-    marginBottom: 2,
-  },
-  dbOverviewValue: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: colors.navy,
-  },
-  dbDivider: {
-    height: 1,
-    backgroundColor: colors.border,
-  },
-  dbNoticeCard: {
-    backgroundColor: colors.cardBg,
-    borderRadius: radii.card,
-    paddingHorizontal: 18,
-    paddingVertical: 8,
-    marginBottom: 16,
-    ...cardShadow,
-  },
-  dbNoticeRow: {
-    flexDirection: "row",
-    paddingVertical: 14,
-  },
-  dbNoticeTextWrap: {
-    flex: 1,
-    marginLeft: 12,
-  },
-  dbNoticeTitle: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: colors.navy,
-    marginBottom: 2,
-  },
-  dbNoticeSub: {
-    fontSize: 12,
-    color: colors.muted,
-    lineHeight: 17,
-  },
-
-  // --- Notification styles ---
-  notifEmpty: {
-    alignItems: "center",
-    paddingVertical: 40,
-    gap: 12,
-  },
-  notifEmptyText: {
-    fontSize: 14,
-    color: colors.muted,
-  },
-  notifDivider: {
-    height: 1,
-    backgroundColor: colors.border,
-  },
-  notifItem: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    paddingVertical: 14,
-    gap: 12,
-  },
-  notifItemUnread: {
-    backgroundColor: "#F0FDF4",
-    marginHorizontal: -20,
     paddingHorizontal: 20,
+    paddingTop: 8,
+    paddingBottom: 14,
   },
-  notifIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.surfaceGray,
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
+  greetText: { fontSize: 12.5, color: "#6B7280", fontWeight: "500" },
+  nameText: { fontSize: 22, fontWeight: "700", color: "#1E293B", letterSpacing: -0.6 },
+  topBarRight: { flexDirection: "row", alignItems: "center", gap: 8 },
+  bellWrap: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: "#fff", borderWidth: 1, borderColor: "#E2E8F0",
+    alignItems: "center", justifyContent: "center",
   },
-  notifTextWrap: {
-    flex: 1,
+  bellDot: {
+    position: "absolute", top: 7, right: 8,
+    width: 7, height: 7, borderRadius: 999,
+    backgroundColor: "#D4F542",
+    borderWidth: 1.5, borderColor: "#fff",
   },
-  notifItemTitle: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: colors.navy,
-    marginBottom: 2,
+  avatar: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: "#1E293B",
+    alignItems: "center", justifyContent: "center",
   },
-  notifItemBody: {
-    fontSize: 13,
-    color: colors.muted,
-    lineHeight: 18,
-    marginBottom: 4,
+  avatarTxt: { fontSize: 13, fontWeight: "700", color: "#fff", letterSpacing: -0.2 },
+
+  // ── Stay pill
+  stayPill: {
+    marginHorizontal: 20, marginBottom: 14,
+    flexDirection: "row", alignItems: "center", gap: 10,
+    padding: 10, paddingRight: 12,
+    backgroundColor: "#fff", borderRadius: 16, borderWidth: 1, borderColor: "#E2E8F0",
   },
-  notifItemTime: {
-    fontSize: 11,
-    color: colors.muted,
-    fontWeight: "500",
+  stayIcon: {
+    width: 36, height: 36, borderRadius: 10,
+    backgroundColor: "#F1F5F9",
+    alignItems: "center", justifyContent: "center", flexShrink: 0,
   },
-  notifDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: "#16A34A",
-    marginTop: 6,
-    flexShrink: 0,
+  stayName: { fontSize: 13.5, fontWeight: "700", color: "#1E293B", letterSpacing: -0.2 },
+  staySub: { fontSize: 11.5, color: "#6B7280", marginTop: 1 },
+  activeChip: {
+    flexDirection: "row", alignItems: "center", gap: 5,
+    backgroundColor: "#F1F5F9",
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999,
   },
-  notifBadge: {
-    position: "absolute",
-    top: 4,
-    right: 4,
-    minWidth: 16,
-    height: 16,
-    borderRadius: 8,
-    backgroundColor: colors.error,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 3,
+  activeChipTxt: { fontSize: 11, fontWeight: "700", color: "#1E293B" },
+  activeDot: { width: 6, height: 6, borderRadius: 999 },
+
+  // ── Rent / booking hero card (navy)
+  heroCard: {
+    marginHorizontal: 20, marginBottom: 14,
+    backgroundColor: "#1E293B", borderRadius: 22,
+    padding: 16, paddingBottom: 18,
+    overflow: "hidden",
+    ...cardShadow,
   },
-  notifBadgeText: {
-    fontSize: 9,
-    fontWeight: "800",
-    color: colors.white,
+  heroCircle: {
+    position: "absolute", top: -40, right: -40,
+    width: 160, height: 160, borderRadius: 80,
+    backgroundColor: "rgba(212,245,66,0.06)",
   },
-  confirmBtn: {
-    marginTop: 8,
-    alignSelf: "flex-start",
-    backgroundColor: "#16A34A",
-    borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 7,
+  heroRow1: {
+    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
   },
-  confirmBtnText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: colors.white,
+  heroDueLabel: { fontSize: 13, color: "rgba(255,255,255,0.65)", fontWeight: "500" },
+  heroChip: {
+    paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999,
+  },
+  heroChipTxt: { fontSize: 11, fontWeight: "700", letterSpacing: 0.1 },
+  heroRow2: { marginTop: 6 },
+  heroAmount: {
+    fontSize: 26, fontWeight: "700", color: "#fff",
+    letterSpacing: -0.6, lineHeight: 32,
+  },
+  heroSubRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 7 },
+  heroSubTxt: { fontSize: 12, color: "rgba(255,255,255,0.7)", fontWeight: "500" },
+  heroBreakDiv: {
+    height: 1, backgroundColor: "rgba(255,255,255,0.08)",
+    marginTop: 16, marginBottom: 14,
+  },
+  heroBreakRow: { flexDirection: "row" },
+  heroBreakItem: { flex: 1, paddingLeft: 0 },
+  heroBreakBorder: { borderLeftWidth: 1, borderLeftColor: "rgba(255,255,255,0.08)", paddingLeft: 10 },
+  heroBreakLabel: {
+    fontSize: 10, color: "rgba(255,255,255,0.5)",
+    fontWeight: "600", letterSpacing: 0.3,
+  },
+  heroBreakVal: {
+    fontSize: 14, fontWeight: "700", color: "#fff",
+    marginTop: 3, letterSpacing: -0.2,
+  },
+  heroCta: { flexDirection: "row", gap: 8, marginTop: 16 },
+  heroCtaBtn: {
+    flex: 1, height: 46, borderRadius: 14,
+    backgroundColor: "#D4F542",
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
+  },
+  heroCtaBtnTxt: { fontSize: 14.5, fontWeight: "800", color: "#1A1A1A", letterSpacing: 0.1 },
+  heroCtaGhost: {
+    width: 46, height: 46, borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.18)",
+    alignItems: "center", justifyContent: "center",
   },
 
-  // Shift request bottom sheet
-  shiftFormWrap: { paddingBottom: 8 },
-  shiftFieldLabel: { fontSize: 13, fontWeight: "600", color: colors.navy, marginBottom: 6 },
-  shiftInput: {
-    borderWidth: 1,
-    borderColor: "#D1D5DB",
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 14,
-    color: colors.black,
-    backgroundColor: "#F8FAFC",
+  // ── White card (KYC, complaints)
+  card: {
+    marginHorizontal: 20, marginBottom: 14,
+    backgroundColor: "#fff", borderRadius: 18,
+    padding: 16, borderWidth: 1, borderColor: "#E2E8F0",
   },
-  shiftInputMultiline: { minHeight: 80, textAlignVertical: "top" },
-  shiftSubmitBtn: {
-    marginTop: 18,
-    backgroundColor: colors.primary,
-    borderRadius: 999,
-    paddingVertical: 13,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  shiftSubmitBtnText: { fontSize: 14, fontWeight: "700", color: colors.white },
-  extendOptionRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#E2E8F0",
-    borderRadius: 12,
-    padding: 14,
+  cardTitle: { fontSize: 16.5, fontWeight: "700", color: "#1E293B", letterSpacing: -0.4 },
+  cardSub: { fontSize: 11.5, color: "#6B7280", marginTop: 1 },
+  cardTitleRow: {
+    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
     marginBottom: 10,
-    backgroundColor: "#F8FAFC",
   },
-  extendOptionRowSelected: {
-    borderColor: "#93C5FD",
-    backgroundColor: "#EFF6FF",
+  seeAllBtn: { flexDirection: "row", alignItems: "center", gap: 2 },
+  seeAllTxt: { fontSize: 12, fontWeight: "700", color: "#1E293B" },
+
+  // ── KYC card
+  kycHead: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 14 },
+  kycIconWrap: {
+    width: 40, height: 40, borderRadius: 12,
+    backgroundColor: "#F1F5F9",
+    alignItems: "center", justifyContent: "center", flexShrink: 0,
   },
-  extendOptionLeft: { flex: 1 },
-  extendOptionLabel: { fontSize: 14, fontWeight: "700", color: colors.black },
-  extendOptionSub: { fontSize: 12, color: colors.muted, marginTop: 2 },
-  extendOptionAmount: { fontSize: 15, fontWeight: "800", color: colors.black },
-  moveOutValidationRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 8,
-    marginTop: 10,
-    borderRadius: 10,
-    padding: 10,
+  kycChip: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
+  kycChipTxt: { fontSize: 11, fontWeight: "700" },
+  progressTrack: {
+    height: 7, borderRadius: 999, backgroundColor: "#F3F4F6",
+    overflow: "hidden", marginBottom: 14,
   },
-  moveOutValidationText: { fontSize: 13, fontWeight: "600", flex: 1, lineHeight: 18 },
-  shiftSuccessWrap: { alignItems: "center", paddingVertical: 24, gap: 10 },
-  shiftSuccessTitle: { fontSize: 18, fontWeight: "800", color: colors.black },
-  shiftSuccessBody: {
-    fontSize: 13,
-    color: colors.muted,
-    textAlign: "center",
-    lineHeight: 19,
-    paddingHorizontal: 8,
+  progressFill: { height: "100%", backgroundColor: "#1E293B", borderRadius: 999 },
+  kycStep: {
+    flexDirection: "row", alignItems: "center", gap: 11,
+    paddingVertical: 7, borderTopWidth: 1, borderTopColor: "#E2E8F0",
   },
+  kycStepDot: {
+    width: 22, height: 22, borderRadius: 999, flexShrink: 0,
+    backgroundColor: "#fff", borderWidth: 1.5, borderColor: "#E2E8F0",
+    alignItems: "center", justifyContent: "center",
+  },
+  kycStepDotDone: { backgroundColor: "#1E293B", borderColor: "#1E293B" },
+  kycStepTxt: { flex: 1, fontSize: 13.5, fontWeight: "600", color: "#1E293B" },
+  kycAddTxt: { fontSize: 11, fontWeight: "700", color: "#1E293B" },
+  kycBtn: {
+    height: 46, borderRadius: 14, backgroundColor: "#1E293B",
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 8, marginTop: 14,
+    shadowColor: "#1E293B", shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.4, shadowRadius: 20, elevation: 8,
+  },
+  kycBtnTxt: { fontSize: 14, fontWeight: "700", color: "#fff" },
+
+  // ── Quick requests grid
+  sectionHeader: { marginHorizontal: 20, marginBottom: 10 },
+  sectionTitle: { fontSize: 16.5, fontWeight: "700", color: "#1E293B", letterSpacing: -0.4 },
+  reqGrid: {
+    marginHorizontal: 20, marginBottom: 14,
+    flexDirection: "row", flexWrap: "wrap", gap: 10,
+  },
+  reqCard: {
+    width: (SCREEN_WIDTH - 50) / 2,
+    backgroundColor: "#fff", borderRadius: 16,
+    borderWidth: 1, borderColor: "#E2E8F0",
+    padding: 14, gap: 10,
+  },
+  reqIconWrap: {
+    width: 38, height: 38, borderRadius: 11,
+    backgroundColor: "#F1F5F9",
+    alignItems: "center", justifyContent: "center",
+  },
+  reqLabel: { fontSize: 14, fontWeight: "700", color: "#1E293B", letterSpacing: -0.2 },
+  reqSub: { fontSize: 11, color: "#6B7280", marginTop: 2 },
+
+  // ── Complaints
+  emptyComplaints: { paddingVertical: 16, alignItems: "center" },
+  emptyTxt: { fontSize: 13, color: "#6B7280" },
+  raiseBtn: {
+    height: 44, borderRadius: 14,
+    backgroundColor: "#F1F5F9",
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
+  },
+  raiseBtnTxt: { fontSize: 13.5, fontWeight: "700", color: "#1E293B" },
+
+  // ── Edit details row
+  editRow: {
+    marginHorizontal: 20, marginBottom: 14,
+    flexDirection: "row", alignItems: "center", gap: 12,
+    padding: 12, paddingHorizontal: 14,
+    backgroundColor: "#fff", borderRadius: 16,
+    borderWidth: 1, borderColor: "#E2E8F0",
+  },
+  editIconWrap: {
+    width: 38, height: 38, borderRadius: 11,
+    backgroundColor: "#F1F5F9",
+    alignItems: "center", justifyContent: "center", flexShrink: 0,
+  },
+  editLabel: { fontSize: 14, fontWeight: "700", color: "#1E293B", letterSpacing: -0.2 },
+  editSub: { fontSize: 11.5, color: "#6B7280", marginTop: 1 },
+
+  // ── Watermark
+  watermark: {
+    flexDirection: "row", alignItems: "center", gap: 12,
+    marginHorizontal: 20, marginTop: 10, opacity: 0.55,
+  },
+  watermarkLine: { flex: 1, height: 1, backgroundColor: "#94A3B8" },
+  watermarkTxt: { fontSize: 15, fontWeight: "700", color: "#94A3B8", letterSpacing: 6 },
+  watermarkTag: {
+    fontSize: 11, color: "#94A3B8", fontStyle: "italic",
+    letterSpacing: 0.5, textAlign: "center",
+    marginTop: 6, marginBottom: 18, opacity: 0.55,
+  },
+
+  // ── Status pill
+  pill: {
+    flexDirection: "row", alignItems: "center", gap: 5,
+    paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999,
+  },
+  pillDot: { width: 6, height: 6, borderRadius: 999 },
+  pillText: { fontSize: 11, fontWeight: "700", letterSpacing: 0.1 },
 });
