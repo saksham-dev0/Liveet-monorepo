@@ -143,6 +143,7 @@ export default defineSchema({
           roomType: v.string(),
           rent: v.string(),
           deposit: v.string(),
+          bookingAmount: v.optional(v.string()),
         })
       )
     ),
@@ -173,6 +174,7 @@ export default defineSchema({
     parentEmail: v.optional(v.string()),
     moveInDate: v.string(),
     foodPreference: v.optional(v.string()),
+    roomTypePreference: v.optional(v.string()),
     paymentProofId: v.optional(v.string()),
     status: v.union(v.literal("pending"), v.literal("accepted"), v.literal("rejected")),
     createdAt: v.number(),

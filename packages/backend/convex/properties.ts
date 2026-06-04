@@ -17,11 +17,7 @@ type RoomOption = {
 
 async function getStorageUrl(ctx: QueryCtx, storageId: string | undefined) {
   if (!storageId) return null;
-  try {
-    return await ctx.storage.getUrl(storageId as Id<"_storage">);
-  } catch {
-    return null;
-  }
+  return await ctx.storage.getUrl(storageId as Id<"_storage">);
 }
 
 function buildRoomOptions(property: Doc<"properties">) {
@@ -240,6 +236,7 @@ export const submitBookingRequest = mutation({
     parentEmail: v.optional(v.string()),
     moveInDate: v.string(),
     foodPreference: v.optional(v.string()),
+    roomTypePreference: v.optional(v.string()),
     paymentProofId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -267,10 +264,29 @@ export const submitBookingRequest = mutation({
       parentEmail: args.parentEmail,
       moveInDate: args.moveInDate,
       foodPreference: args.foodPreference,
+      roomTypePreference: args.roomTypePreference,
       paymentProofId: args.paymentProofId,
       status: "pending",
       createdAt: Date.now(),
     });
+
+    const property = await ctx.db.get(args.propertyId);
+    if (property) {
+      await ctx.db.insert("tasks", {
+        operatorId: property.operatorId,
+        title: `Booking request from ${args.studentName}`,
+        kind: "booking",
+        priority: "High",
+        status: "todo",
+        bucket: "today",
+        due: args.moveInDate,
+        propertyId: args.propertyId,
+        linkedType: "booking",
+        linkedLabel: args.studentName,
+        linkedSub: args.roomTypePreference ?? undefined,
+        createdAt: Date.now(),
+      });
+    }
 
     return { success: true };
   },
@@ -302,10 +318,30 @@ export const getMyBookingRequest = query({
 
     const coverImageUrl = await getStorageUrl(ctx, p.images?.[0]);
 
+    // If accepted, find the tenant record by matching studentPhone at this property
+    let tenantRent: number | null = null;
+    let tenantPaymentStatus: string | null = null;
+    let tenantPaymentHistory: any[] | null = null;
+    let tenantId: string | null = null;
+    if (booking.status === "accepted") {
+      const tenants = await ctx.db
+        .query("tenants")
+        .withIndex("by_propertyId", (q) => q.eq("propertyId", booking.propertyId))
+        .collect();
+      const matched = tenants.find((t) => t.studentPhone === booking.studentPhone);
+      if (matched) {
+        tenantRent = matched.rent ?? null;
+        tenantPaymentStatus = matched.paymentStatus ?? null;
+        tenantPaymentHistory = matched.paymentHistory ?? null;
+        tenantId = matched._id;
+      }
+    }
+
     return {
       _id: booking._id,
       propertyId: booking.propertyId,
       studentName: booking.studentName,
+      studentPhone: booking.studentPhone,
       moveInDate: booking.moveInDate,
       status: booking.status,
       createdAt: booking.createdAt,
@@ -313,7 +349,95 @@ export const getMyBookingRequest = query({
       propertyCity: p.city ?? null,
       propertyState: p.state ?? null,
       coverImageUrl,
+      tenantRent,
+      tenantPaymentStatus,
+      tenantPaymentHistory,
+      tenantId,
     };
+  },
+});
+
+export const getBookingRequestsForOperator = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier)
+      )
+      .unique();
+    if (!user) return [];
+
+    const properties = await ctx.db
+      .query("properties")
+      .withIndex("by_operatorId", (q) => q.eq("operatorId", user._id))
+      .collect();
+
+    const results = [];
+    for (const prop of properties) {
+      const bookings = await ctx.db
+        .query("bookingRequests")
+        .withIndex("by_propertyId", (q) => q.eq("propertyId", prop._id))
+        .order("desc")
+        .collect();
+      for (const b of bookings) {
+        const coverImageUrl = await getStorageUrl(ctx, prop.images?.[0]);
+        results.push({
+          _id: b._id,
+          propertyId: b.propertyId,
+          propertyName: prop.name,
+          propertyCity: prop.city ?? null,
+          coverImageUrl,
+          studentName: b.studentName,
+          studentPhone: b.studentPhone,
+          studentEmail: b.studentEmail ?? null,
+          course: b.course ?? null,
+          yearOfStudy: b.yearOfStudy ?? null,
+          parentName: b.parentName ?? null,
+          parentPhone: b.parentPhone ?? null,
+          moveInDate: b.moveInDate,
+          foodPreference: b.foodPreference ?? null,
+          roomTypePreference: b.roomTypePreference ?? null,
+          paymentProofId: b.paymentProofId ?? null,
+          paymentProofUrl: await getStorageUrl(ctx, b.paymentProofId ?? undefined),
+          status: b.status,
+          createdAt: b.createdAt,
+        });
+      }
+    }
+    return results;
+  },
+});
+
+export const updateBookingRequestStatus = mutation({
+  args: {
+    bookingId: v.id("bookingRequests"),
+    status: v.union(v.literal("accepted"), v.literal("rejected")),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Not authenticated");
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier)
+      )
+      .unique();
+    if (!user) throw new Error("User not found");
+
+    const booking = await ctx.db.get(args.bookingId);
+    if (!booking) throw new Error("Booking not found");
+
+    const property = await ctx.db.get(booking.propertyId);
+    if (!property || property.operatorId !== user._id)
+      throw new Error("Unauthorized");
+
+    await ctx.db.patch(args.bookingId, { status: args.status });
+    return { success: true };
   },
 });
 
@@ -347,6 +471,10 @@ export const getById = query({
       contactPhone: operator?.phone ?? null,
       contactEmail: operator?.email ?? null,
       roomOptions,
+      roomPricings: (p.roomPricings ?? []).map((rp) => ({
+        roomType: rp.roomType,
+        bookingAmount: rp.bookingAmount ?? null,
+      })),
       tenantDetails: getTenantDetails(p),
       agreement: {
         agreementDuration: p.agreementDuration ?? null,

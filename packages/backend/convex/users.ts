@@ -72,7 +72,7 @@ export const completeOnboarding = mutation({
       agreementDuration: v.optional(v.string()),
       noticePeriod: v.optional(v.string()),
       roomPricings: v.optional(
-        v.array(v.object({ roomType: v.string(), rent: v.string(), deposit: v.string() }))
+        v.array(v.object({ roomType: v.string(), rent: v.string(), deposit: v.string(), bookingAmount: v.optional(v.string()) }))
       ),
       additionalCharges: v.optional(
         v.array(v.object({ id: v.string(), amount: v.string() }))
@@ -145,7 +145,7 @@ export const updateMyProperty = mutation({
     agreementDuration: v.optional(v.string()),
     noticePeriod: v.optional(v.string()),
     roomPricings: v.optional(
-      v.array(v.object({ roomType: v.string(), rent: v.string(), deposit: v.string() }))
+      v.array(v.object({ roomType: v.string(), rent: v.string(), deposit: v.string(), bookingAmount: v.optional(v.string()) }))
     ),
     additionalCharges: v.optional(
       v.array(v.object({ id: v.string(), amount: v.string() }))

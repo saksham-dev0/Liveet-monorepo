@@ -93,6 +93,7 @@ type BookingRequest = {
   _id: string;
   propertyId: string;
   studentName: string;
+  studentPhone?: string;
   moveInDate: string;
   status: "pending" | "accepted" | "rejected";
   createdAt: number;
@@ -100,6 +101,10 @@ type BookingRequest = {
   propertyCity: string | null;
   propertyState: string | null;
   coverImageUrl: string | null;
+  tenantRent: number | null;
+  tenantPaymentStatus: string | null;
+  tenantPaymentHistory: any[] | null;
+  tenantId: string | null;
 };
 
 function formatAmount(n: number): string {
@@ -494,39 +499,78 @@ function StudentDashboard({
           {/* decorative circle */}
           <View style={d.heroCircle} />
           <View style={d.heroRow1}>
-            <Text style={d.heroDueLabel}>Booking request</Text>
+            <Text style={d.heroDueLabel}>
+              {booking.status === "accepted" && booking.tenantRent ? "Rent due" : "Booking request"}
+            </Text>
             <View style={[d.heroChip, { backgroundColor: bookingChip.bg }]}>
               <Text style={[d.heroChipTxt, { color: bookingChip.fg }]}>{bookingChip.text}</Text>
             </View>
           </View>
           <View style={d.heroRow2}>
             <View>
-              <Text style={d.heroAmount}>{booking.propertyName ?? "Your property"}</Text>
-              <View style={d.heroSubRow}>
-                <Ionicons name="time-outline" size={13} color="rgba(255,255,255,0.7)" />
-                <Text style={d.heroSubTxt}>
-                  Move-in: {booking.moveInDate}
-                </Text>
-              </View>
+              {booking.status === "accepted" && booking.tenantRent ? (
+                <>
+                  <Text style={d.heroAmount}>₹{booking.tenantRent.toLocaleString("en-IN")}</Text>
+                  <View style={d.heroSubRow}>
+                    <Ionicons name="calendar-outline" size={13} color="rgba(255,255,255,0.7)" />
+                    <Text style={d.heroSubTxt}>
+                      Monthly rent · {booking.tenantPaymentStatus === "paid" ? "Paid" : booking.tenantPaymentStatus === "partial" ? "Partial" : "Pending"}
+                    </Text>
+                  </View>
+                </>
+              ) : (
+                <>
+                  <Text style={d.heroAmount}>{booking.propertyName ?? "Your property"}</Text>
+                  <View style={d.heroSubRow}>
+                    <Ionicons name="time-outline" size={13} color="rgba(255,255,255,0.7)" />
+                    <Text style={d.heroSubTxt}>
+                      Move-in: {booking.moveInDate}
+                    </Text>
+                  </View>
+                </>
+              )}
             </View>
           </View>
           {/* divider + breakdown */}
           <View style={d.heroBreakDiv} />
           <View style={d.heroBreakRow}>
-            <View style={d.heroBreakItem}>
-              <Text style={d.heroBreakLabel}>Property</Text>
-              <Text style={d.heroBreakVal} numberOfLines={1}>{booking.propertyName ?? "—"}</Text>
-            </View>
-            <View style={[d.heroBreakItem, d.heroBreakBorder]}>
-              <Text style={d.heroBreakLabel}>Move-in</Text>
-              <Text style={d.heroBreakVal}>{booking.moveInDate}</Text>
-            </View>
-            <View style={[d.heroBreakItem, d.heroBreakBorder]}>
-              <Text style={d.heroBreakLabel}>Status</Text>
-              <Text style={d.heroBreakVal}>
-                {booking.status.charAt(0).toUpperCase() + booking.status.slice(1)}
-              </Text>
-            </View>
+            {booking.status === "accepted" && booking.tenantRent ? (
+              <>
+                <View style={d.heroBreakItem}>
+                  <Text style={d.heroBreakLabel}>Rent</Text>
+                  <Text style={d.heroBreakVal}>₹{booking.tenantRent.toLocaleString("en-IN")}</Text>
+                </View>
+                <View style={[d.heroBreakItem, d.heroBreakBorder]}>
+                  <Text style={d.heroBreakLabel}>Status</Text>
+                  <Text style={d.heroBreakVal}>
+                    {booking.tenantPaymentStatus
+                      ? booking.tenantPaymentStatus.charAt(0).toUpperCase() + booking.tenantPaymentStatus.slice(1)
+                      : "Pending"}
+                  </Text>
+                </View>
+                <View style={[d.heroBreakItem, d.heroBreakBorder]}>
+                  <Text style={d.heroBreakLabel}>Move-in</Text>
+                  <Text style={d.heroBreakVal}>{booking.moveInDate}</Text>
+                </View>
+              </>
+            ) : (
+              <>
+                <View style={d.heroBreakItem}>
+                  <Text style={d.heroBreakLabel}>Property</Text>
+                  <Text style={d.heroBreakVal} numberOfLines={1}>{booking.propertyName ?? "—"}</Text>
+                </View>
+                <View style={[d.heroBreakItem, d.heroBreakBorder]}>
+                  <Text style={d.heroBreakLabel}>Move-in</Text>
+                  <Text style={d.heroBreakVal}>{booking.moveInDate}</Text>
+                </View>
+                <View style={[d.heroBreakItem, d.heroBreakBorder]}>
+                  <Text style={d.heroBreakLabel}>Status</Text>
+                  <Text style={d.heroBreakVal}>
+                    {booking.status.charAt(0).toUpperCase() + booking.status.slice(1)}
+                  </Text>
+                </View>
+              </>
+            )}
           </View>
           {/* CTA */}
           <View style={d.heroCta}>
