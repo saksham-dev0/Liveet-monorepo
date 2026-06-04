@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useMemo, useState } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -11,10 +11,11 @@ import {
   Pressable,
   SectionList,
   ActivityIndicator,
+  Image,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { useConvex } from "convex/react";
+import { useConvex, useConvexAuth } from "convex/react";
 import { useFocusEffect } from "expo-router";
 
 // ─── Design tokens ────────────────────────────────────────────
@@ -500,6 +501,254 @@ function InfoRow({ label, value, last = false }: { label: string; value: string;
   );
 }
 
+// ─── Booking request card ─────────────────────────────────────
+type BookingRequest = {
+  _id: string;
+  propertyName: string;
+  propertyCity: string | null;
+  studentName: string;
+  studentPhone: string;
+  studentEmail: string | null;
+  course: string | null;
+  yearOfStudy: string | null;
+  parentName: string | null;
+  parentPhone: string | null;
+  moveInDate: string;
+  foodPreference: string | null;
+  paymentProofUrl: string | null;
+  roomTypePreference: string | null;
+  status: "pending" | "accepted" | "rejected";
+  createdAt: number;
+};
+
+// ─── Booking detail sheet ─────────────────────────────────────
+function BookingDetailSheet({
+  booking,
+  onClose,
+  onAccept,
+  onReject,
+}: {
+  booking: BookingRequest;
+  onClose: () => void;
+  onAccept: (id: string) => void;
+  onReject: (id: string) => void;
+}) {
+  const isPending = booking.status === "pending";
+  const isAccepted = booking.status === "accepted";
+  const submittedDate = new Date(booking.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+
+  return (
+    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={styles.sheetOverlay} onPress={onClose} />
+      <View style={styles.sheet}>
+        <View style={styles.sheetHandle} />
+
+        {/* header */}
+        <View style={styles.sheetHeader}>
+          <View style={[styles.bookingIconWrap, { width: 48, height: 48, borderRadius: 14 }]}>
+            <Ionicons name="person-add-outline" size={22} color="#7C3AED" />
+          </View>
+          <View style={styles.sheetHeaderText}>
+            <Text style={styles.sheetTitle} numberOfLines={1}>{booking.studentName}</Text>
+            <Text style={styles.sheetKind}>{booking.propertyName}{booking.propertyCity ? `, ${booking.propertyCity}` : ""}</Text>
+          </View>
+          <View style={[
+            styles.bookingBadge,
+            isPending ? { backgroundColor: "#FEF3C7" } : isAccepted ? { backgroundColor: "#D1FAE5" } : { backgroundColor: "#FEE2E2" },
+          ]}>
+            <Text style={[
+              styles.bookingBadgeText,
+              isPending ? { color: "#92400E" } : isAccepted ? { color: "#065F46" } : { color: "#991B1B" },
+            ]}>
+              {isPending ? "Pending" : isAccepted ? "Accepted" : "Rejected"}
+            </Text>
+          </View>
+          <TouchableOpacity style={styles.sheetClose} onPress={onClose}>
+            <Ionicons name="close" size={16} color={C.navy} />
+          </TouchableOpacity>
+        </View>
+
+        <ScrollView style={styles.sheetScroll} contentContainerStyle={styles.sheetScrollContent} showsVerticalScrollIndicator={false}>
+          {/* status banner */}
+          <View style={styles.statusBanner}>
+            <View>
+              <Text style={styles.bannerCaption}>MOVE-IN DATE</Text>
+              <Text style={[styles.bannerValue, { color: C.accent }]}>{booking.moveInDate}</Text>
+              {booking.roomTypePreference ? (
+                <Text style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", fontWeight: "600", marginTop: 4 }}>
+                  {booking.roomTypePreference}
+                </Text>
+              ) : null}
+            </View>
+            <View style={{ alignItems: "flex-end" }}>
+              <Text style={styles.bannerCaption}>SUBMITTED</Text>
+              <Text style={[styles.bannerStatus, { fontSize: 13, marginTop: 4 }]}>{submittedDate}</Text>
+            </View>
+          </View>
+
+          {/* student info */}
+          <View style={styles.block}>
+            <View style={styles.blockHeader}>
+              <View style={styles.blockIconWrap}>
+                <Ionicons name="person-outline" size={14} color={C.navy} />
+              </View>
+              <Text style={styles.blockTitle}>STUDENT INFO</Text>
+            </View>
+            <InfoRow label="Name" value={booking.studentName} />
+            <InfoRow label="Phone" value={booking.studentPhone} />
+            {booking.studentEmail ? <InfoRow label="Email" value={booking.studentEmail} /> : null}
+            {booking.course ? <InfoRow label="Course" value={booking.course} /> : null}
+            {booking.yearOfStudy ? <InfoRow label="Year of study" value={booking.yearOfStudy} last={!booking.roomTypePreference && !booking.foodPreference && !booking.parentName} /> : null}
+            {booking.roomTypePreference ? <InfoRow label="Room type" value={booking.roomTypePreference} last={!booking.foodPreference && !booking.parentName} /> : null}
+            {booking.foodPreference ? <InfoRow label="Food preference" value={booking.foodPreference} last={!booking.parentName} /> : null}
+          </View>
+
+          {/* payment proof */}
+          <View style={styles.block}>
+            <View style={styles.blockHeader}>
+              <View style={styles.blockIconWrap}>
+                <Ionicons name="cash-outline" size={14} color={C.navy} />
+              </View>
+              <Text style={styles.blockTitle}>PAYMENT PROOF</Text>
+            </View>
+            {booking.paymentProofUrl ? (
+              <Image
+                source={{ uri: booking.paymentProofUrl }}
+                style={styles.paymentProofImage}
+                resizeMode="contain"
+              />
+            ) : (
+              <View style={styles.paymentProofEmpty}>
+                <Ionicons name="image-outline" size={22} color={C.subtle} />
+                <Text style={styles.paymentProofEmptyText}>No proof uploaded</Text>
+              </View>
+            )}
+          </View>
+
+          {/* parent / guardian */}
+          {(booking.parentName || booking.parentPhone) && (
+            <View style={styles.block}>
+              <View style={styles.blockHeader}>
+                <View style={styles.blockIconWrap}>
+                  <Ionicons name="people-outline" size={14} color={C.navy} />
+                </View>
+                <Text style={styles.blockTitle}>PARENT / GUARDIAN</Text>
+              </View>
+              {booking.parentName ? <InfoRow label="Name" value={booking.parentName} /> : null}
+              {booking.parentPhone ? <InfoRow label="Phone" value={booking.parentPhone} last /> : null}
+            </View>
+          )}
+        </ScrollView>
+
+        {isPending && (
+          <View style={[styles.sheetCTA, { flexDirection: "row", gap: 10 }]}>
+            <TouchableOpacity
+              style={[styles.ctaBtn, { flex: 1, backgroundColor: C.white, borderWidth: 1, borderColor: "#FECACA" }]}
+              onPress={() => { onReject(booking._id); onClose(); }}
+            >
+              <Ionicons name="close-outline" size={18} color="#DC2626" />
+              <Text style={[styles.ctaBtnText, { color: "#DC2626" }]}>Reject</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.ctaBtn, { flex: 1, backgroundColor: C.navy }]}
+              onPress={() => { onAccept(booking._id); onClose(); }}
+            >
+              <Ionicons name="checkmark" size={18} color={C.accent} />
+              <Text style={[styles.ctaBtnText, { color: C.accent }]}>Accept</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
+    </Modal>
+  );
+}
+
+function BookingRequestCard({
+  booking,
+  onAccept,
+  onReject,
+  onOpen,
+}: {
+  booking: BookingRequest;
+  onAccept: (id: string) => void;
+  onReject: (id: string) => void;
+  onOpen: (b: BookingRequest) => void;
+}) {
+  const isPending = booking.status === "pending";
+  const isAccepted = booking.status === "accepted";
+
+  return (
+    <TouchableOpacity style={styles.bookingCard} activeOpacity={0.8} onPress={() => onOpen(booking)}>
+      <View style={styles.bookingCardHeader}>
+        <View style={styles.bookingIconWrap}>
+          <Ionicons name="person-add-outline" size={18} color={C.navy} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.bookingName} numberOfLines={1}>{booking.studentName}</Text>
+          <Text style={styles.bookingProp} numberOfLines={1}>{booking.propertyName}{booking.propertyCity ? `, ${booking.propertyCity}` : ""}</Text>
+        </View>
+        <View style={[
+          styles.bookingBadge,
+          isPending
+            ? { backgroundColor: "#FEF3C7" }
+            : isAccepted
+            ? { backgroundColor: "#D1FAE5" }
+            : { backgroundColor: "#FEE2E2" },
+        ]}>
+          <Text style={[
+            styles.bookingBadgeText,
+            isPending
+              ? { color: "#92400E" }
+              : isAccepted
+              ? { color: "#065F46" }
+              : { color: "#991B1B" },
+          ]}>
+            {isPending ? "Pending" : isAccepted ? "Accepted" : "Rejected"}
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.bookingDetails}>
+        <View style={styles.bookingDetailRow}>
+          <Ionicons name="calendar-outline" size={13} color={C.muted} />
+          <Text style={styles.bookingDetailText}>Move-in: {booking.moveInDate}</Text>
+        </View>
+        <View style={styles.bookingDetailRow}>
+          <Ionicons name="call-outline" size={13} color={C.muted} />
+          <Text style={styles.bookingDetailText}>{booking.studentPhone}</Text>
+        </View>
+        {booking.course && (
+          <View style={styles.bookingDetailRow}>
+            <Ionicons name="school-outline" size={13} color={C.muted} />
+            <Text style={styles.bookingDetailText}>{booking.course}{booking.yearOfStudy ? ` · Year ${booking.yearOfStudy}` : ""}</Text>
+          </View>
+        )}
+      </View>
+
+      {isPending && (
+        <View style={styles.bookingActions}>
+          <TouchableOpacity
+            style={[styles.bookingBtn, styles.bookingBtnReject]}
+            onPress={(e) => { e.stopPropagation?.(); onReject(booking._id); }}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="close-outline" size={15} color="#DC2626" />
+            <Text style={[styles.bookingBtnText, { color: "#DC2626" }]}>Reject</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.bookingBtn, styles.bookingBtnAccept]}
+            onPress={(e) => { e.stopPropagation?.(); onAccept(booking._id); }}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="checkmark-outline" size={15} color={C.accentText} />
+            <Text style={[styles.bookingBtnText, { color: C.accentText }]}>Accept</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+    </TouchableOpacity>
+  );
+}
+
 // ─── Empty state ──────────────────────────────────────────────
 function EmptyState() {
   return (
@@ -519,35 +768,73 @@ function EmptyState() {
 export default function TasksScreen() {
   const insets = useSafeAreaInsets();
   const convex = useConvex();
+  const { isAuthenticated, isLoading: authLoading } = useConvexAuth();
 
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [bookingRequests, setBookingRequests] = useState<BookingRequest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [filter, setFilter] = useState<FilterKey>("all");
   const [searchOpen, setSearchOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [selectedBooking, setSelectedBooking] = useState<BookingRequest | null>(null);
+
+  const convexRef = useRef(convex);
+  convexRef.current = convex;
+  const pendingLoad = useRef(false);
 
   const loadTasks = useCallback(async () => {
+    setIsLoading(true);
     try {
-      const data = await (convex as any).query("tasks:list", {});
+      const [data, bookings] = await Promise.all([
+        (convexRef.current as any).query("tasks:list", {}),
+        (convexRef.current as any).query("properties:getBookingRequestsForOperator", {}),
+      ]);
       setTasks(data ?? []);
-    } catch (e) {
+      setBookingRequests(bookings ?? []);
+    } catch {
       setTasks([]);
+      setBookingRequests([]);
     } finally {
       setIsLoading(false);
     }
-  }, [convex]);
+  }, []);
 
+  // Mark that a load is needed when screen gains focus
   useFocusEffect(useCallback(() => {
-    setIsLoading(true);
-    loadTasks();
-  }, [loadTasks]));
+    pendingLoad.current = true;
+  }, []));
+
+  // Execute the load only once auth is ready
+  useEffect(() => {
+    if (!authLoading && isAuthenticated && pendingLoad.current) {
+      pendingLoad.current = false;
+      loadTasks();
+    }
+  });
+
+  const handleAcceptBooking = useCallback(async (id: string) => {
+    setBookingRequests((xs) => xs.map((b) => b._id === id ? { ...b, status: "accepted" as const } : b));
+    try {
+      await (convex as any).mutation("properties:updateBookingRequestStatus", { bookingId: id, status: "accepted" });
+    } catch {
+      loadTasks();
+    }
+  }, [convex, loadTasks]);
+
+  const handleRejectBooking = useCallback(async (id: string) => {
+    setBookingRequests((xs) => xs.map((b) => b._id === id ? { ...b, status: "rejected" as const } : b));
+    try {
+      await (convex as any).mutation("properties:updateBookingRequestStatus", { bookingId: id, status: "rejected" });
+    } catch {
+      loadTasks();
+    }
+  }, [convex, loadTasks]);
 
   const toggleStatus = useCallback(async (id: string) => {
     const task = tasks.find((t) => t._id === id);
     if (!task) return;
     const next = task.status === "done" ? "todo" : "done";
-    // Optimistic update
     setTasks((xs) => xs.map((t) => t._id === id ? { ...t, status: next } : t));
     try {
       await (convex as any).mutation("tasks:updateStatus", { id, status: next });
@@ -588,7 +875,7 @@ export default function TasksScreen() {
       .map((b) => ({ ...b, data: open.filter((t) => t.bucket === b.key) }))
       .filter((g) => g.data.length > 0);
     const doneItems = filtered.filter((t) => t.status === "done");
-    if (doneItems.length) result.push({ key: "done", label: "Completed", tint: "#15803D", data: doneItems });
+    if (doneItems.length) result.push({ key: "done" as Bucket, label: "Completed", tint: "#15803D", data: doneItems });
     return result;
   }, [filtered, filter]);
 
@@ -644,44 +931,66 @@ export default function TasksScreen() {
       {/* Filter chips */}
       <FilterChips value={filter} onChange={setFilter} counts={counts} />
 
-      {/* List */}
+      {/* Content */}
       {isLoading ? (
         <View style={styles.emptyWrap}>
           <ActivityIndicator size="large" color={C.navy} />
         </View>
-      ) : tasks.length === 0 ? (
-        <EmptyState />
-      ) : sections && sections.length > 0 ? (
-        <SectionList
-          sections={sections}
-          keyExtractor={(item) => String(item._id)}
-          renderItem={({ item }) => (
-            <View style={{ paddingHorizontal: 16 }}>
-              {renderCard(item)}
-            </View>
-          )}
-          renderSectionHeader={({ section }) => (
-            <SectionHeader label={section.label} count={section.data.length} tint={section.tint} />
-          )}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
-          stickySectionHeadersEnabled={false}
-          ListEmptyComponent={<EmptyState />}
-        />
-      ) : filtered.length === 0 ? (
-        <EmptyState />
       ) : (
-        <FlatList
-          data={filtered}
-          keyExtractor={(item) => String(item._id)}
-          renderItem={({ item }) => (
-            <View style={{ paddingHorizontal: 16 }}>
-              {renderCard(item)}
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingBottom: 100 }}
+          nestedScrollEnabled
+        >
+          {/* Booking requests section */}
+          {bookingRequests.length > 0 && (
+            <View style={{ marginBottom: 4 }}>
+              <SectionHeader
+                label="Booking Requests"
+                count={bookingRequests.filter((b) => b.status === "pending").length}
+                tint="#7C3AED"
+              />
+              {bookingRequests.map((b) => (
+                <View key={b._id} style={{ paddingHorizontal: 16 }}>
+                  <BookingRequestCard
+                    booking={b}
+                    onAccept={handleAcceptBooking}
+                    onReject={handleRejectBooking}
+                    onOpen={setSelectedBooking}
+                  />
+                </View>
+              ))}
             </View>
           )}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
-        />
+
+          {/* Tasks section */}
+          {tasks.length === 0 && bookingRequests.length === 0 ? (
+            <EmptyState />
+          ) : tasks.length === 0 ? null : sections && sections.length > 0 ? (
+            <>
+              {sections.map((section) => (
+                <View key={section.key}>
+                  <SectionHeader label={section.label} count={section.data.length} tint={section.tint} />
+                  {section.data.map((item) => (
+                    <View key={item._id} style={{ paddingHorizontal: 16 }}>
+                      {renderCard(item)}
+                    </View>
+                  ))}
+                </View>
+              ))}
+            </>
+          ) : filtered.length === 0 ? (
+            tasks.length > 0 ? <EmptyState /> : null
+          ) : (
+            <>
+              {filtered.map((item) => (
+                <View key={item._id} style={{ paddingHorizontal: 16 }}>
+                  {renderCard(item)}
+                </View>
+              ))}
+            </>
+          )}
+        </ScrollView>
       )}
 
       {/* FAB */}
@@ -698,6 +1007,16 @@ export default function TasksScreen() {
           task={currentSelected}
           onClose={() => setSelectedTask(null)}
           onToggleStatus={toggleStatus}
+        />
+      )}
+
+      {/* Booking detail sheet */}
+      {selectedBooking && (
+        <BookingDetailSheet
+          booking={selectedBooking}
+          onClose={() => setSelectedBooking(null)}
+          onAccept={(id) => { handleAcceptBooking(id); }}
+          onReject={(id) => { handleRejectBooking(id); }}
         />
       )}
     </View>
@@ -1331,5 +1650,111 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "800",
     letterSpacing: 0.1,
+  },
+
+  // Booking request card
+  bookingCard: {
+    backgroundColor: C.white,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: C.border,
+    marginBottom: 10,
+    overflow: "hidden",
+  },
+  bookingCardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    padding: 14,
+    paddingBottom: 10,
+  },
+  bookingIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: "#EDE9FE",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  bookingName: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: C.navy,
+    letterSpacing: -0.2,
+  },
+  bookingProp: {
+    fontSize: 11.5,
+    color: C.muted,
+    fontWeight: "500",
+    marginTop: 1,
+  },
+  bookingBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  bookingBadgeText: {
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.1,
+  },
+  bookingDetails: {
+    paddingHorizontal: 14,
+    paddingBottom: 12,
+    gap: 5,
+  },
+  bookingDetailRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  bookingDetailText: {
+    fontSize: 12,
+    color: C.muted,
+    fontWeight: "500",
+  },
+  bookingActions: {
+    flexDirection: "row",
+    borderTopWidth: 1,
+    borderTopColor: C.border,
+  },
+  bookingBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 12,
+    gap: 5,
+  },
+  bookingBtnReject: {
+    borderRightWidth: 1,
+    borderRightColor: C.border,
+  },
+  bookingBtnAccept: {
+    // backgroundColor: C.navy,
+  },
+  bookingBtnText: {
+    fontSize: 13,
+    fontWeight: "700",
+  },
+
+  paymentProofImage: {
+    width: "100%",
+    height: 220,
+    borderRadius: 10,
+    marginVertical: 12,
+    backgroundColor: C.surfaceGray,
+  },
+  paymentProofEmpty: {
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 24,
+  },
+  paymentProofEmptyText: {
+    fontSize: 12.5,
+    color: C.subtle,
+    fontWeight: "600",
   },
 });

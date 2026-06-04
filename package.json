@@ -10,8 +10,10 @@
   ],
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "android": "expo run:android",
-    "ios": "expo run:ios"
+    "android:ten": "pnpm --filter native-ten run android",
+    "android:op": "pnpm --filter native-op run android",
+    "ios:ten": "pnpm --filter native-ten run ios",
+    "ios:op": "pnpm --filter native-op run ios"
   },
   "keywords": [],
   "author": "",

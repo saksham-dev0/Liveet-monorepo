@@ -73,7 +73,7 @@ const CHARGES = [
   { id: "cleaning", label: "Cleaning", emoji: "🧹" },
 ];
 
-type RoomPricing = { id: string; roomType: string; rent: string; deposit: string };
+type RoomPricing = { id: string; roomType: string; rent: string; deposit: string; bookingAmount: string };
 
 // ─── Section header ────────────────────────────────────────────
 function SectionTitle({ children }: { children: string }) {
@@ -139,7 +139,7 @@ export default function ListPropertyScreen() {
   // Rent
   const [agreementDuration, setAgreementDuration] = useState("");
   const [roomPricings, setRoomPricings] = useState<RoomPricing[]>([
-    { id: "1", roomType: "", rent: "", deposit: "" },
+    { id: "1", roomType: "", rent: "", deposit: "", bookingAmount: "" },
   ]);
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
   const [chargeAmounts, setChargeAmounts] = useState<Record<string, string>>({});
@@ -191,7 +191,7 @@ export default function ListPropertyScreen() {
   const addRoomPricing = () =>
     setRoomPricings((prev) => [
       ...prev,
-      { id: Date.now().toString(), roomType: "", rent: "", deposit: "" },
+      { id: Date.now().toString(), roomType: "", rent: "", deposit: "", bookingAmount: "" },
     ]);
 
   const removeRoomPricing = (id: string) =>
@@ -223,7 +223,7 @@ export default function ListPropertyScreen() {
       const charges = Object.entries(chargeAmounts).map(([id, amount]) => ({ id, amount }));
       const pricings = roomPricings
         .filter((r) => r.roomType && r.rent)
-        .map(({ roomType, rent, deposit }) => ({ roomType, rent, deposit }));
+        .map(({ roomType, rent, deposit, bookingAmount }) => ({ roomType, rent, deposit, bookingAmount: bookingAmount || undefined }));
 
       await (convex as any).mutation("users:updateMyProperty", {
         name: name.trim(),
@@ -452,6 +452,14 @@ export default function ListPropertyScreen() {
                   onChangeText={(v) => updateRoomPricing(item.id, "deposit", v)}
                 />
               </View>
+              <TextInput
+                style={s.input}
+                placeholder="Booking amount (₹)"
+                placeholderTextColor={colors.muted}
+                keyboardType="number-pad"
+                value={item.bookingAmount}
+                onChangeText={(v) => updateRoomPricing(item.id, "bookingAmount", v)}
+              />
             </View>
           ))}
 

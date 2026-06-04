@@ -3,7 +3,7 @@ import { v } from "convex/values";
 
 async function getCurrentUser(ctx: any) {
   const identity = await ctx.auth.getUserIdentity();
-  if (!identity) throw new Error("Unauthenticated");
+  if (!identity) return null;
   return ctx.db
     .query("users")
     .withIndex("by_tokenIdentifier", (q: any) =>

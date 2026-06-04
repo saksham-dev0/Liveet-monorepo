@@ -32,7 +32,7 @@ export default function Index() {
   }
 
   if (onboardingDone) {
-    return <Redirect href="/(app)" />;
+    return <Redirect href={"/(app)" as any} />;
   }
 
   return <Redirect href="/(onboarding)/welcome" />;

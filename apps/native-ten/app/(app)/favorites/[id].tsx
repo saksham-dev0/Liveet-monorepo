@@ -61,6 +61,11 @@ type PaymentDetails = {
   qrImageUrl: string | null;
 };
 
+type RoomPricing = {
+  roomType: string;
+  bookingAmount: string | null;
+};
+
 type BookingForm = {
   studentName: string;
   studentPhone: string;
@@ -72,6 +77,7 @@ type BookingForm = {
   parentEmail: string;
   moveInDate: string;
   foodPreference: string;
+  roomTypePreference: string;
 };
 
 type PropertyDetail = {
@@ -88,6 +94,7 @@ type PropertyDetail = {
   contactPhone?: string | null;
   contactEmail?: string | null;
   roomOptions: RoomOption[];
+  roomPricings: RoomPricing[];
   tenantDetails: {
     canStayMale?: boolean;
     canStayFemale?: boolean;
@@ -193,6 +200,7 @@ export default function PropertyDetailScreen() {
     parentEmail: "",
     moveInDate: "",
     foodPreference: "",
+    roomTypePreference: "",
   });
 
   useEffect(() => {
@@ -286,13 +294,14 @@ export default function PropertyDetailScreen() {
         parentEmail: form.parentEmail.trim() || undefined,
         moveInDate: form.moveInDate.trim(),
         foodPreference: form.foodPreference.trim() || undefined,
+        roomTypePreference: form.roomTypePreference.trim() || undefined,
         paymentProofId: paymentProofId ?? undefined,
       });
       setBookingStep(0);
       setForm({
         studentName: "", studentPhone: "", studentEmail: "",
         course: "", yearOfStudy: "", parentName: "", parentPhone: "",
-        parentEmail: "", moveInDate: "", foodPreference: "",
+        parentEmail: "", moveInDate: "", foodPreference: "", roomTypePreference: "",
       });
       setPaymentProofId(null);
       setPaymentProofUri(null);
@@ -656,6 +665,47 @@ export default function PropertyDetailScreen() {
                   <Text style={s.noPaymentText}>No payment details available for this property.</Text>
                 )}
 
+                {property.roomPricings.length > 0 && (
+                  <View style={{ marginBottom: 20 }}>
+                    <Text style={[s.formSection, { marginBottom: 8 }]}>Select Room Type</Text>
+                    <View style={s.chipWrap}>
+                      {property.roomPricings.map((rp) => {
+                        const active = form.roomTypePreference === rp.roomType;
+                        return (
+                          <TouchableOpacity
+                            key={rp.roomType}
+                            style={[s.roomTypePrefChip, active && s.roomTypePrefChipActive]}
+                            onPress={() => setForm((f) => ({ ...f, roomTypePreference: active ? "" : rp.roomType }))}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={[s.roomTypePrefName, active && s.roomTypePrefNameActive]}>
+                              {rp.roomType}
+                            </Text>
+                            {rp.bookingAmount ? (
+                              <Text style={[s.roomTypePrefAmount, active && s.roomTypePrefAmountActive]}>
+                                Booking: ₹{rp.bookingAmount}
+                              </Text>
+                            ) : null}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                    {form.roomTypePreference ? (
+                      (() => {
+                        const selected = property.roomPricings.find((rp) => rp.roomType === form.roomTypePreference);
+                        return selected?.bookingAmount ? (
+                          <View style={s.bookingAmountBanner}>
+                            <Ionicons name="information-circle-outline" size={16} color={NAVY} />
+                            <Text style={s.bookingAmountBannerText}>
+                              Transfer <Text style={{ fontWeight: "800" }}>₹{selected.bookingAmount}</Text> as booking amount for {form.roomTypePreference}
+                            </Text>
+                          </View>
+                        ) : null;
+                      })()
+                    ) : null}
+                  </View>
+                )}
+
                 <TouchableOpacity
                   style={s.proceedBtn}
                   onPress={() => setBookingStep(2)}
@@ -735,6 +785,30 @@ export default function PropertyDetailScreen() {
                 />
 
                 <Text style={[s.formSection, { marginTop: 8 }]}>Move-in Preferences</Text>
+                {property.roomPricings.length > 0 && (
+                  <>
+                    <Text style={s.prefLabel}>Room Type Preference</Text>
+                    <View style={[s.prefRow, { flexWrap: "wrap" }]}>
+                      {property.roomPricings.map((rp) => (
+                        <TouchableOpacity
+                          key={rp.roomType}
+                          style={[s.prefChip, form.roomTypePreference === rp.roomType && s.prefChipActive, { flex: 0, paddingHorizontal: 16 }]}
+                          onPress={() => setForm((f) => ({ ...f, roomTypePreference: f.roomTypePreference === rp.roomType ? "" : rp.roomType }))}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={[s.prefChipText, form.roomTypePreference === rp.roomType && s.prefChipTextActive]}>
+                            {rp.roomType}
+                          </Text>
+                          {rp.bookingAmount ? (
+                            <Text style={[{ fontSize: 11, fontWeight: "600", color: form.roomTypePreference === rp.roomType ? ACCENT : MUTED, marginTop: 2 }]}>
+                              ₹{rp.bookingAmount}
+                            </Text>
+                          ) : null}
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </>
+                )}
                 <TextInput
                   style={s.input}
                   placeholder="Move-in Date * (e.g. 15 July 2025)"
@@ -1228,4 +1302,31 @@ const s = StyleSheet.create({
     marginBottom: 8,
     paddingVertical: 4,
   },
+  roomTypePrefChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 13,
+    borderWidth: 1.5,
+    borderColor: BORDER,
+    backgroundColor: SURFACE,
+    alignItems: "center",
+    minWidth: 80,
+  },
+  roomTypePrefChipActive: { borderColor: NAVY, backgroundColor: NAVY },
+  roomTypePrefName: { fontSize: 13, fontWeight: "700", color: NAVY },
+  roomTypePrefNameActive: { color: WHITE },
+  roomTypePrefAmount: { fontSize: 11, fontWeight: "600", color: MUTED, marginTop: 2 },
+  roomTypePrefAmountActive: { color: ACCENT },
+  bookingAmountBanner: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    backgroundColor: "#EFF6FF",
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+  },
+  bookingAmountBannerText: { flex: 1, fontSize: 13, color: NAVY, lineHeight: 18 },
 });
