@@ -81,15 +81,25 @@ const tokenCache = {
 function useConvexClerkAuth() {
   const { isLoaded, isSignedIn, getToken } = useAuth();
 
+  // Use a ref so fetchAccessToken has a stable identity across renders.
+  // ConvexProviderWithAuth re-calls client.setAuth() whenever fetchAccessToken
+  // changes reference, which triggers an auth cycle and causes queries to flicker.
+  const getTokenRef = React.useRef(getToken);
+  React.useEffect(() => { getTokenRef.current = getToken; }, [getToken]);
+
   const fetchAccessToken = useCallback(
     async (options?: { forceRefreshToken?: boolean }) => {
-      const token = await getToken({
-        template: "convex",
-        skipCache: options?.forceRefreshToken ?? false,
-      });
-      return token ?? null;
+      try {
+        const token = await getTokenRef.current({
+          template: "convex",
+          skipCache: options?.forceRefreshToken ?? false,
+        });
+        return token ?? null;
+      } catch {
+        return null;
+      }
     },
-    [getToken],
+    [], // stable — reads getToken via ref
   );
 
   return useMemo(

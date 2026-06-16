@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -11,8 +11,11 @@ import {
 } from "react-native";
 import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useConvex } from "convex/react";
+import { useQuery } from "convex/react";
+import { anyApi } from "convex/server";
 import { Ionicons } from "@expo/vector-icons";
+
+const getLikedPropertiesRef = anyApi.properties.getLikedProperties;
 import { useRouter } from "expo-router";
 import { colors, radii } from "../../../constants/theme";
 import LiveetTenantHero from "../../../assets/images/Liveet-tenant.png";
@@ -180,28 +183,21 @@ function EmptyState({ onRefresh }: { onRefresh: () => void }) {
 }
 
 export default function FavoritesScreen() {
-  const convex = useConvex();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const [properties, setProperties] = useState<LikedProperty[]>([]);
-  const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("all");
 
-  const fetchLiked = useCallback(async () => {
-    setLoading(true);
-    try {
-      const result = await (convex as any).query("properties:getLikedProperties", {});
-      if (result) setProperties(result);
-    } catch (err) {
-      console.warn("Failed to fetch liked properties:", err);
-    } finally {
-      setLoading(false);
-    }
-  }, [convex]);
+  const likedData = useQuery(getLikedPropertiesRef, {});
 
+  // Keep the last non-empty result so the UI doesn't flash empty during
+  // Clerk token refresh (when Convex briefly re-runs the query unauthenticated).
+  const lastDataRef = useRef<LikedProperty[]>([]);
   useEffect(() => {
-    void fetchLiked();
-  }, [fetchLiked]);
+    if (likedData && likedData.length > 0) lastDataRef.current = likedData;
+  }, [likedData]);
+
+  const loading = likedData === undefined;
+  const properties: LikedProperty[] = likedData ?? lastDataRef.current;
 
   const filtered = properties.filter((p) => {
     if (filter === "all") return true;
@@ -259,7 +255,7 @@ export default function FavoritesScreen() {
           <ActivityIndicator size="large" color={NAVY} />
         </View>
       ) : properties.length === 0 ? (
-        <EmptyState onRefresh={fetchLiked} />
+        <EmptyState onRefresh={() => {}} />
       ) : (
         <>
           <FilterChips value={filter} onChange={setFilter} counts={counts} />
@@ -280,8 +276,6 @@ export default function FavoritesScreen() {
               removeClippedSubviews
               maxToRenderPerBatch={8}
               windowSize={5}
-              onRefresh={fetchLiked}
-              refreshing={loading}
             />
           )}
         </>

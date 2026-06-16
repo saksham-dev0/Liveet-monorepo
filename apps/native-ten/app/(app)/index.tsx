@@ -11,7 +11,12 @@ import {
 } from "react-native";
 import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useConvex } from "convex/react";
+import { useConvex, useConvexAuth, useMutation, useQuery } from "convex/react";
+import { anyApi } from "convex/server";
+import { useSyncUserWithConvex } from "../hooks/useSyncUserWithConvex";
+
+const recordSwipeRef = anyApi.properties.recordSwipe;
+const getKycStatusRef = anyApi.kyc.getKycStatus;
 import { GestureDetector, Gesture } from "react-native-gesture-handler";
 import Animated, {
   useSharedValue,
@@ -105,6 +110,10 @@ type BookingRequest = {
   tenantPaymentStatus: string | null;
   tenantPaymentHistory: any[] | null;
   tenantId: string | null;
+  tenantBalanceDue: number | null;
+  tenantTotalCharges: number | null;
+  tenantCollected: number | null;
+  bookingPaymentItems: { key: string; label: string; amount: number }[] | null;
 };
 
 function formatAmount(n: number): string {
@@ -401,12 +410,28 @@ function StudentDashboard({
   const insets = useSafeAreaInsets();
   const router = useRouter();
 
+  const kycStatus = useQuery(
+    getKycStatusRef,
+    booking.tenantId ? { tenantId: booking.tenantId as any } : "skip"
+  );
+
+  const kycSteps = [
+    { label: "Aadhaar / ID proof", done: !!kycStatus?.idProofStatus },
+    { label: "Profile photo", done: !!kycStatus?.profilePhotoStatus },
+    { label: "Rental agreement e-sign", done: !!kycStatus?.agreementStatus },
+  ];
+  const kycDoneCount = kycSteps.filter((s) => s.done).length;
+  const kycProgressPct = `${Math.round((kycDoneCount / 3) * 100)}%` as const;
+
   const greeting = (() => {
     const h = new Date().getHours();
     if (h < 12) return "Good morning";
     if (h < 17) return "Good afternoon";
     return "Good evening";
   })();
+
+  const bookingItemsTotal = (booking.bookingPaymentItems ?? []).reduce((s, x) => s + x.amount, 0);
+  const bookingBalanceDue = booking.tenantPaymentStatus === "paid" ? 0 : bookingItemsTotal;
 
   const firstName = booking.studentName.split(" ")[0];
   const initials = booking.studentName
@@ -500,7 +525,11 @@ function StudentDashboard({
           <View style={d.heroCircle} />
           <View style={d.heroRow1}>
             <Text style={d.heroDueLabel}>
-              {booking.status === "accepted" && booking.tenantRent ? "Rent due" : "Booking request"}
+              {booking.status === "accepted" && booking.tenantRent
+                ? "Rent due"
+                : booking.status === "accepted" && booking.bookingPaymentItems?.length
+                ? booking.tenantBalanceDue === 0 ? "All dues cleared" : "Payment dues"
+                : "Booking request"}
             </Text>
             <View style={[d.heroChip, { backgroundColor: bookingChip.bg }]}>
               <Text style={[d.heroChipTxt, { color: bookingChip.fg }]}>{bookingChip.text}</Text>
@@ -515,6 +544,20 @@ function StudentDashboard({
                     <Ionicons name="calendar-outline" size={13} color="rgba(255,255,255,0.7)" />
                     <Text style={d.heroSubTxt}>
                       Monthly rent · {booking.tenantPaymentStatus === "paid" ? "Paid" : booking.tenantPaymentStatus === "partial" ? "Partial" : "Pending"}
+                    </Text>
+                  </View>
+                </>
+              ) : booking.status === "accepted" && booking.bookingPaymentItems && booking.bookingPaymentItems.length > 0 ? (
+                <>
+                  <Text style={d.heroAmount}>
+                    ₹{bookingBalanceDue.toLocaleString("en-IN")}
+                  </Text>
+                  <View style={d.heroSubRow}>
+                    <Ionicons name="wallet-outline" size={13} color="rgba(255,255,255,0.7)" />
+                    <Text style={d.heroSubTxt}>
+                      {bookingBalanceDue === 0
+                        ? "Fully paid"
+                        : `Payment due · ${booking.bookingPaymentItems!.length} item${booking.bookingPaymentItems!.length > 1 ? "s" : ""}`}
                     </Text>
                   </View>
                 </>
@@ -553,6 +596,15 @@ function StudentDashboard({
                   <Text style={d.heroBreakVal}>{booking.moveInDate}</Text>
                 </View>
               </>
+            ) : booking.status === "accepted" && booking.bookingPaymentItems && booking.bookingPaymentItems.length > 0 ? (
+              <>
+                {booking.bookingPaymentItems.slice(0, 3).map((item, i) => (
+                  <View key={item.key} style={[d.heroBreakItem, i > 0 && d.heroBreakBorder]}>
+                    <Text style={d.heroBreakLabel} numberOfLines={1}>{item.label}</Text>
+                    <Text style={d.heroBreakVal}>₹{item.amount.toLocaleString("en-IN")}</Text>
+                  </View>
+                ))}
+              </>
             ) : (
               <>
                 <View style={d.heroBreakItem}>
@@ -574,23 +626,81 @@ function StudentDashboard({
           </View>
           {/* CTA */}
           <View style={d.heroCta}>
-            <TouchableOpacity
-              style={d.heroCtaBtn}
-              activeOpacity={0.85}
-              onPress={() => router.push("/chats" as any)}
-            >
-              <Text style={d.heroCtaBtnTxt}>Chat with operator</Text>
-              <Ionicons name="arrow-forward" size={16} color="#1A1A1A" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={d.heroCtaGhost}
-              activeOpacity={0.7}
-              onPress={() => router.push("/complaint" as any)}
-            >
-              <Ionicons name="document-text-outline" size={17} color="#fff" />
-            </TouchableOpacity>
+            {booking.status === "accepted" && booking.bookingPaymentItems && booking.bookingPaymentItems.length > 0 && !booking.tenantRent ? (
+              <>
+                <TouchableOpacity style={d.heroCtaBtn} activeOpacity={0.85}>
+                  <Ionicons name="card-outline" size={16} color="#1A1A1A" />
+                  <Text style={d.heroCtaBtnTxt}>Pay now</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={d.heroCtaBtnOutline}
+                  activeOpacity={0.85}
+                  onPress={() => router.push("/chats" as any)}
+                >
+                  <Ionicons name="chatbubble-outline" size={15} color="#fff" />
+                  <Text style={d.heroCtaBtnOutlineTxt}>Chat</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <TouchableOpacity
+                  style={d.heroCtaBtn}
+                  activeOpacity={0.85}
+                  onPress={() => router.push("/chats" as any)}
+                >
+                  <Text style={d.heroCtaBtnTxt}>Pay the dues</Text>
+                  <Ionicons name="arrow-forward" size={16} color="#1A1A1A" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={d.heroCtaGhost}
+                  activeOpacity={0.7}
+                  onPress={() => router.push("/complaint" as any)}
+                >
+                  <Ionicons name="document-text-outline" size={17} color="#fff" />
+                </TouchableOpacity>
+              </>
+            )}
           </View>
         </View>
+
+        {/* ── Booking payment due card ── */}
+        {booking.status === "accepted" && booking.bookingPaymentItems && booking.bookingPaymentItems.length > 0 && (
+          <View style={d.card}>
+            <View style={d.kycHead}>
+              <View style={d.kycIconWrap}>
+                <Ionicons name="key-outline" size={20} color={colors.navy} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={d.cardTitle}>Payment dues</Text>
+                <Text style={d.cardSub}>Pay these to confirm your move-in</Text>
+              </View>
+            </View>
+            {booking.bookingPaymentItems.map((item, i) => (
+              <View
+                key={item.key}
+                style={{
+                  flexDirection: "row",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  paddingVertical: 11,
+                  borderTopWidth: i === 0 ? 0 : StyleSheet.hairlineWidth,
+                  borderTopColor: "#E2E8F0",
+                }}
+              >
+                <Text style={{ fontSize: 13, fontWeight: "600", color: "#6B7280" }}>{item.label}</Text>
+                <Text style={{ fontSize: 14, fontWeight: "700", color: colors.navy }}>₹{item.amount.toLocaleString("en-IN")}</Text>
+              </View>
+            ))}
+            <View style={{ borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "#E2E8F0", paddingVertical: 12, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+              <Text style={{ fontSize: 13, fontWeight: "800", color: colors.navy }}>Balance due</Text>
+              <Text style={{ fontSize: 16, fontWeight: "800", color: bookingBalanceDue === 0 ? "#16A34A" : colors.navy }}>
+                {bookingBalanceDue === 0
+                  ? "Fully paid"
+                  : `₹${bookingBalanceDue.toLocaleString("en-IN")}`}
+              </Text>
+            </View>
+          </View>
+        )}
 
         {/* ── E-KYC card ── */}
         <View style={d.card}>
@@ -602,21 +712,31 @@ function StudentDashboard({
               <Text style={d.cardTitle}>E-KYC verification</Text>
               <Text style={d.cardSub}>Finish to unlock all features</Text>
             </View>
-            <View style={[d.kycChip, { backgroundColor: "#FEF3C7" }]}>
-              <Text style={[d.kycChipTxt, { color: "#92400E" }]}>0/4 done</Text>
+            <View
+              style={[
+                d.kycChip,
+                {
+                  backgroundColor:
+                    kycDoneCount === 3 ? "#DCFCE7" : "#FEF3C7",
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  d.kycChipTxt,
+                  { color: kycDoneCount === 3 ? "#15803D" : "#92400E" },
+                ]}
+              >
+                {kycDoneCount}/3 done
+              </Text>
             </View>
           </View>
           {/* progress bar */}
           <View style={d.progressTrack}>
-            <View style={[d.progressFill, { width: "0%" }]} />
+            <View style={[d.progressFill, { width: kycProgressPct }]} />
           </View>
           {/* steps */}
-          {[
-            { label: "Aadhaar / ID proof", done: false },
-            { label: "Profile photo", done: false },
-            { label: "Rental agreement e-sign", done: false },
-            { label: "Police verification", done: false },
-          ].map((step, i) => (
+          {kycSteps.map((step, i) => (
             <View key={step.label} style={[d.kycStep, i === 0 && { borderTopWidth: 0 }]}>
               <View style={[d.kycStepDot, step.done && d.kycStepDotDone]}>
                 {step.done && <Ionicons name="checkmark" size={12} color="#D4F542" />}
@@ -625,10 +745,26 @@ function StudentDashboard({
               {!step.done && <Text style={d.kycAddTxt}>Add</Text>}
             </View>
           ))}
-          <TouchableOpacity style={d.kycBtn} activeOpacity={0.85}>
-            <Text style={d.kycBtnTxt}>Complete verification</Text>
-            <Ionicons name="arrow-forward" size={16} color="#D4F542" />
-          </TouchableOpacity>
+          {kycDoneCount < 3 && (
+            <TouchableOpacity
+              style={d.kycBtn}
+              activeOpacity={0.85}
+              onPress={() =>
+                router.push({
+                  pathname: "/kyc/[propertyId]",
+                  params: {
+                    propertyId: booking.propertyId,
+                    tenantId: booking.tenantId ?? "",
+                  },
+                })
+              }
+            >
+              <Text style={d.kycBtnTxt}>
+                {kycDoneCount === 0 ? "Complete verification" : "Continue verification"}
+              </Text>
+              <Ionicons name="arrow-forward" size={16} color="#D4F542" />
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* ── Quick requests ── */}
@@ -709,6 +845,9 @@ function StudentDashboard({
 
 export default function AppHome() {
   const convex = useConvex();
+  const { isAuthenticated } = useConvexAuth();
+  const { syncUser } = useSyncUserWithConvex();
+  const recordSwipeMutation = useMutation(recordSwipeRef);
   const insets = useSafeAreaInsets();
   const { signOut } = useAuth();
 
@@ -727,6 +866,11 @@ export default function AppHome() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [bookingRequest, setBookingRequest] = useState<BookingRequest | null>(null);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    void syncUser();
+  }, [isAuthenticated, syncUser]);
 
   useEffect(() => {
     let cancelled = false;
@@ -767,12 +911,12 @@ export default function AppHome() {
   const recordSwipe = useCallback(
     async (propertyId: string, liked: boolean) => {
       try {
-        await (convex as any).mutation("properties:recordSwipe", { propertyId, liked });
+        await recordSwipeMutation({ propertyId: propertyId as any, liked });
       } catch (err) {
-        console.warn("Failed to record swipe:", err);
+        console.warn("[recordSwipe] failed:", err);
       }
     },
-    [convex],
+    [recordSwipeMutation],
   );
 
   const advanceCard = useCallback(
@@ -1344,6 +1488,13 @@ const d = StyleSheet.create({
     borderWidth: 1, borderColor: "rgba(255,255,255,0.18)",
     alignItems: "center", justifyContent: "center",
   },
+  heroCtaBtnOutline: {
+    flex: 1, height: 46, borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.18)",
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6,
+  },
+  heroCtaBtnOutlineTxt: { fontSize: 14.5, fontWeight: "800", color: "#fff", letterSpacing: 0.1 },
 
   // ── White card (KYC, complaints)
   card: {

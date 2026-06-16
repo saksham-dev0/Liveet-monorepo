@@ -999,7 +999,7 @@ const s = StyleSheet.create({
   fab: {
     position: "absolute",
     right: 18,
-    bottom: 88,
+    bottom: 108,
     height: 48,
     paddingHorizontal: 16,
     borderRadius: 999,
