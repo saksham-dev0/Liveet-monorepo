@@ -355,6 +355,7 @@ export const getMyBookingRequest = query({
         tenantId = matched._id;
         // Compute balance the same way the operator's manage screen does
         const totalCharges =
+          (matched.rent ?? 0) +
           (matched.advance ?? 0) +
           (matched.security ?? 0) +
           (matched.booking ?? 0) +
@@ -468,6 +469,9 @@ export const updateBookingRequestStatus = mutation({
       )
       .unique();
     if (!user) throw new Error("User not found");
+
+    if (args.bookingPaymentItems?.some((i) => i.amount < 0))
+      throw new Error("Payment item amounts must be non-negative");
 
     const booking = await ctx.db.get(args.bookingId);
     if (!booking) throw new Error("Booking not found");

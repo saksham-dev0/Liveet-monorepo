@@ -508,25 +508,26 @@ function fmtINR(n: string | number) {
 }
 
 function PriceChargeRow({
-  label, value, onChange, last,
+  label, value, onChange, last, readOnly,
 }: {
-  label: string; value: string; onChange: (v: string) => void; last?: boolean;
+  label: string; value: string; onChange: (v: string) => void; last?: boolean; readOnly?: boolean;
 }) {
   const [focused, setFocused] = useState(false);
   return (
     <View style={[styles.priceChargeRow, last && { borderBottomWidth: 0 }]}>
       <Text style={styles.priceChargeLabel}>{label}</Text>
-      <View style={[styles.priceChargeInput, focused && styles.priceChargeInputFocused]}>
+      <View style={[styles.priceChargeInput, focused && !readOnly && styles.priceChargeInputFocused]}>
         <Text style={styles.priceChargePrefix}>₹</Text>
         <TextInput
-          style={styles.priceChargeTextInput}
+          style={[styles.priceChargeTextInput, readOnly && { color: C.subtle }]}
           value={value}
-          onChangeText={(t) => onChange(t.replace(/[^\d]/g, ""))}
+          onChangeText={readOnly ? undefined : (t) => onChange(t.replace(/[^\d]/g, ""))}
           placeholder="0"
           placeholderTextColor={C.subtle}
           keyboardType="numeric"
-          onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
+          editable={!readOnly}
+          onFocus={readOnly ? undefined : () => setFocused(true)}
+          onBlur={readOnly ? undefined : () => setFocused(false)}
         />
       </View>
     </View>
@@ -622,7 +623,9 @@ function BookingDetailSheet({
   const submittedDate = new Date(booking.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 
   // pricing state — seed from roomPricings if available
-  const matchedPricing = booking.roomPricings?.find((p) => p.roomType === booking.roomTypePreference) ?? booking.roomPricings?.[0];
+  const matchedPricing = booking.roomTypePreference
+    ? booking.roomPricings?.find((p) => p.roomType === booking.roomTypePreference)
+    : booking.roomPricings?.[0];
   const [charges, setCharges] = useState({
     rent: matchedPricing?.rent ?? "",
     deposit: matchedPricing?.deposit ?? "",
@@ -637,7 +640,7 @@ function BookingDetailSheet({
 
   const SELECTABLE_LINES = PRICE_LINES.filter((l) => l.key !== "bookingAmt");
   const total = SELECTABLE_LINES.reduce((sum, l) => sum + (bookingItems[l.key] ? (Number(charges[l.key as keyof typeof charges]) || 0) : 0), 0);
-  const selectedCount = SELECTABLE_LINES.filter((l) => bookingItems[l.key]).length;
+  const selectedCount = SELECTABLE_LINES.filter((l) => bookingItems[l.key] && (Number(charges[l.key as keyof typeof charges]) || 0) > 0).length;
 
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
@@ -715,7 +718,7 @@ function BookingDetailSheet({
             </View>
             <PriceChargeRow label="Rent (monthly)" value={charges.rent} onChange={(v) => setCharge("rent", v)} />
             <PriceChargeRow label="Security deposit" value={charges.deposit} onChange={(v) => setCharge("deposit", v)} />
-            <PriceChargeRow label="Booking amount" value={charges.bookingAmt} onChange={(v) => setCharge("bookingAmt", v)} />
+            <PriceChargeRow label="Booking amount" value={charges.bookingAmt} onChange={() => {}} readOnly />
             <PriceChargeRow label="Advance" value={charges.advance} onChange={(v) => setCharge("advance", v)} />
             <PriceChargeRow label="Maintenance" value={charges.maintenance} onChange={(v) => setCharge("maintenance", v)} last />
           </View>
@@ -925,15 +928,26 @@ function EmptyState() {
 }
 
 // ─── New Task Sheet ───────────────────────────────────────────
+function parseDueDate(due: string): Date | null {
+  const m = due.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const [, yyyy, mm, dd] = m.map(Number);
+  const d = new Date(yyyy, mm - 1, dd);
+  if (d.getFullYear() !== yyyy || d.getMonth() !== mm - 1 || d.getDate() !== dd) return null;
+  return d;
+}
+
 function computeBucket(due: string): Bucket {
   if (!due) return "later";
-  const d = new Date(due);
+  const d = parseDueDate(due);
+  if (!d) return "later";
   const now = new Date();
-  const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
-  const weekEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 7, 23, 59, 59);
-  if (d < now) return "overdue";
-  if (d <= todayEnd) return "today";
-  if (d <= weekEnd) return "week";
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const tomorrowStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  const weekEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 8);
+  if (d < todayStart) return "overdue";
+  if (d < tomorrowStart) return "today";
+  if (d < weekEnd) return "week";
   return "later";
 }
 
@@ -952,6 +966,7 @@ function NewTaskSheet({ onClose, onCreated }: { onClose: () => void; onCreated: 
 
   async function handleCreate() {
     if (!title.trim()) { setError("Title required"); return; }
+    if (due && !parseDueDate(due)) { setError("Invalid date — use YYYY-MM-DD"); return; }
     setSaving(true);
     setError("");
     try {
@@ -1013,7 +1028,7 @@ function NewTaskSheet({ onClose, onCreated }: { onClose: () => void; onCreated: 
                     size={13}
                     color={kind === k ? C.accentText : C.muted}
                   />
-                  <Text style={[styles.chipText, kind === k && styles.chipTextActive]}>
+                  <Text style={[styles.newTaskChipText, kind === k && styles.chipTextActive]}>
                     {KIND_LABEL[k]}
                   </Text>
                 </TouchableOpacity>
@@ -1033,7 +1048,7 @@ function NewTaskSheet({ onClose, onCreated }: { onClose: () => void; onCreated: 
                   onPress={() => setPriority(p)}
                 >
                   <View style={[styles.pillDot, { backgroundColor: pm.dot }]} />
-                  <Text style={[styles.chipText, priority === p && { color: pm.fg }]}>{p}</Text>
+                  <Text style={[styles.newTaskChipText, priority === p && { color: pm.fg }]}>{p}</Text>
                 </TouchableOpacity>
               );
             })}
@@ -1759,7 +1774,7 @@ const styles = StyleSheet.create({
     backgroundColor: C.accent,
     borderColor: C.accent,
   },
-  chipText: {
+  newTaskChipText: {
     fontSize: 12,
     fontWeight: "600",
     color: C.muted,

@@ -42,6 +42,8 @@ export const getKycStatus = query({
       .unique();
     if (!kyc) return null;
 
+    if (kyc.userId !== user._id && kyc.operatorId !== user._id) return null;
+
     const [frontUrl, backUrl, photoUrl] = await Promise.all([
       kyc.idProofFrontStorageId ? ctx.storage.getUrl(kyc.idProofFrontStorageId) : null,
       kyc.idProofBackStorageId ? ctx.storage.getUrl(kyc.idProofBackStorageId) : null,
@@ -75,6 +77,22 @@ export const submitIdProof = mutation({
       .query("tenantKyc")
       .withIndex("by_tenantId", (q: any) => q.eq("tenantId", args.tenantId))
       .unique();
+
+    if (existing) {
+      if (existing.userId !== user._id) throw new Error("Unauthorized");
+    } else {
+      const booking = await ctx.db
+        .query("bookingRequests")
+        .withIndex("by_userId", (q: any) => q.eq("userId", user._id))
+        .filter((q: any) =>
+          q.and(
+            q.eq(q.field("propertyId"), tenant.propertyId),
+            q.eq(q.field("status"), "accepted")
+          )
+        )
+        .first();
+      if (!booking) throw new Error("Unauthorized");
+    }
 
     const now = Date.now();
 
@@ -115,7 +133,7 @@ export const submitProfilePhoto = mutation({
     profilePhotoStorageId: v.string(),
   },
   handler: async (ctx, args) => {
-    await getAuthUser(ctx);
+    const user = await getAuthUser(ctx);
 
     const tenant = await ctx.db.get(args.tenantId);
     if (!tenant) throw new Error("Tenant not found");
@@ -126,6 +144,7 @@ export const submitProfilePhoto = mutation({
       .unique();
 
     if (!existing) throw new Error("Submit ID proof first");
+    if (existing.userId !== user._id) throw new Error("Unauthorized");
 
     await ctx.db.patch(existing._id, {
       legalName: args.legalName,
@@ -209,6 +228,32 @@ export const getPropertyDetailsForTenant = query({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return null;
 
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q: any) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier)
+      )
+      .unique();
+    if (!user) return null;
+
+    const hasAccess =
+      (await ctx.db
+        .query("bookingRequests")
+        .withIndex("by_userId", (q: any) => q.eq("userId", user._id))
+        .filter((q: any) =>
+          q.and(
+            q.eq(q.field("propertyId"), args.propertyId),
+            q.eq(q.field("status"), "accepted")
+          )
+        )
+        .first()) ||
+      (await ctx.db
+        .query("tenantKyc")
+        .withIndex("by_userId", (q: any) => q.eq("userId", user._id))
+        .filter((q: any) => q.eq(q.field("propertyId"), args.propertyId))
+        .first());
+    if (!hasAccess) return null;
+
     const property = await ctx.db.get(args.propertyId);
     if (!property) return null;
 
@@ -238,7 +283,7 @@ export const submitAgreementSign = mutation({
     digitalSignatureName: v.string(),
   },
   handler: async (ctx, args) => {
-    await getAuthUser(ctx);
+    const user = await getAuthUser(ctx);
 
     const tenant = await ctx.db.get(args.tenantId);
     if (!tenant) throw new Error("Tenant not found");
@@ -249,6 +294,11 @@ export const submitAgreementSign = mutation({
       .unique();
 
     if (!existing) throw new Error("Complete ID proof and profile photo first");
+    if (existing.userId !== user._id) throw new Error("Unauthorized");
+    if (!existing.idProofFrontStorageId || !existing.idProofBackStorageId)
+      throw new Error("Complete ID proof first");
+    if (!existing.profilePhotoStorageId)
+      throw new Error("Complete profile photo first");
 
     const now = Date.now();
     await ctx.db.patch(existing._id, {
@@ -271,7 +321,11 @@ export const updateKycStatus = mutation({
       v.literal("profilePhotoStatus"),
       v.literal("agreementStatus")
     ),
-    status: v.string(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("verified"),
+      v.literal("rejected")
+    ),
   },
   handler: async (ctx, args) => {
     const user = await getAuthUser(ctx);
