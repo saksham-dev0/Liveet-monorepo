@@ -65,9 +65,10 @@ function CustomTabBar({ state, navigation }: BottomTabBarProps) {
   const activeTab = state.index;
 
   const TAB_ROOTS = ["/favorites"];
-  const isNestedScreen = TAB_ROOTS.some(
-    (root) => pathname.startsWith(root + "/")
-  );
+  const HIDDEN_PATHS = ["/kyc/"];
+  const isNestedScreen =
+    TAB_ROOTS.some((root) => pathname.startsWith(root + "/")) ||
+    HIDDEN_PATHS.some((p) => pathname.startsWith(p));
   if (isNestedScreen) return null;
 
   const pillInnerWidth = screenWidth - BAR_SIDE_MARGIN * 2 - BAR_H_PADDING * 2;

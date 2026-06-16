@@ -116,15 +116,30 @@ export const recordSwipe = mutation({
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return null;
+    if (!identity) throw new Error("Unauthenticated");
 
-    const user = await ctx.db
+    let user = await ctx.db
       .query("users")
       .withIndex("by_tokenIdentifier", (q) =>
         q.eq("tokenIdentifier", identity.tokenIdentifier)
       )
       .unique();
-    if (!user) return null;
+
+    if (!user) {
+      // User record missing — create it on-demand so swipes are never lost
+      const userId = await ctx.db.insert("users", {
+        tokenIdentifier: identity.tokenIdentifier,
+        clerkUserId: identity.subject,
+        email: identity.email,
+        name: identity.name,
+        imageUrl: identity.pictureUrl,
+        role: "tenant",
+        hasCompletedOnboarding: false,
+      });
+      user = await ctx.db.get(userId);
+    }
+
+    if (!user) throw new Error("User not found");
 
     const existing = await ctx.db
       .query("propertyLikes")
@@ -187,6 +202,7 @@ export const getLikedProperties = query({
           state: p.state ?? null,
           minRent,
           maxRent,
+          propertyType: p.propertyType ?? null,
         };
       })
     );
@@ -323,6 +339,9 @@ export const getMyBookingRequest = query({
     let tenantPaymentStatus: string | null = null;
     let tenantPaymentHistory: any[] | null = null;
     let tenantId: string | null = null;
+    let tenantBalanceDue: number | null = null;
+    let tenantTotalCharges: number | null = null;
+    let tenantCollected: number | null = null;
     if (booking.status === "accepted") {
       const tenants = await ctx.db
         .query("tenants")
@@ -334,6 +353,17 @@ export const getMyBookingRequest = query({
         tenantPaymentStatus = matched.paymentStatus ?? null;
         tenantPaymentHistory = matched.paymentHistory ?? null;
         tenantId = matched._id;
+        // Compute balance the same way the operator's manage screen does
+        const totalCharges =
+          (matched.advance ?? 0) +
+          (matched.security ?? 0) +
+          (matched.booking ?? 0) +
+          (matched.maintenance ?? 0) +
+          (matched.customCharges ?? []).reduce((s: number, c: any) => s + c.amount, 0);
+        const collected = (matched.paymentHistory ?? []).reduce((s: number, e: any) => s + e.amount, 0);
+        tenantTotalCharges = totalCharges;
+        tenantCollected = collected;
+        tenantBalanceDue = Math.max(0, totalCharges - collected);
       }
     }
 
@@ -353,6 +383,10 @@ export const getMyBookingRequest = query({
       tenantPaymentStatus,
       tenantPaymentHistory,
       tenantId,
+      tenantBalanceDue,
+      tenantTotalCharges,
+      tenantCollected,
+      bookingPaymentItems: booking.bookingPaymentItems ?? null,
     };
   },
 });
@@ -405,6 +439,7 @@ export const getBookingRequestsForOperator = query({
           paymentProofUrl: await getStorageUrl(ctx, b.paymentProofId ?? undefined),
           status: b.status,
           createdAt: b.createdAt,
+          roomPricings: prop.roomPricings ?? null,
         });
       }
     }
@@ -416,6 +451,11 @@ export const updateBookingRequestStatus = mutation({
   args: {
     bookingId: v.id("bookingRequests"),
     status: v.union(v.literal("accepted"), v.literal("rejected")),
+    bookingPaymentItems: v.optional(v.array(v.object({
+      key: v.string(),
+      label: v.string(),
+      amount: v.number(),
+    }))),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -436,7 +476,80 @@ export const updateBookingRequestStatus = mutation({
     if (!property || property.operatorId !== user._id)
       throw new Error("Unauthorized");
 
-    await ctx.db.patch(args.bookingId, { status: args.status });
+    await ctx.db.patch(args.bookingId, {
+      status: args.status,
+      ...(args.bookingPaymentItems ? { bookingPaymentItems: args.bookingPaymentItems } : {}),
+    });
+
+    if (args.status === "accepted") {
+      // Auto-create tenant record from booking data
+      const items = args.bookingPaymentItems ?? booking.bookingPaymentItems ?? [];
+      const getAmount = (key: string) =>
+        items.find((i) => i.key === key)?.amount ?? undefined;
+
+      // Check if tenant already exists for this booking (idempotency)
+      const existing = await ctx.db
+        .query("tenants")
+        .withIndex("by_propertyId", (q) => q.eq("propertyId", booking.propertyId))
+        .filter((q) => q.eq(q.field("studentPhone"), booking.studentPhone))
+        .first();
+
+      if (!existing) {
+        const now = Date.now();
+
+        // Booking amount the student already paid upfront (from property room pricing)
+        const roomPricing = (property.roomPricings ?? []).find(
+          (rp) => rp.roomType === booking.roomTypePreference
+        );
+        const paidBookingAmount = roomPricing?.bookingAmount
+          ? Number(roomPricing.bookingAmount)
+          : 0;
+
+        const initialHistory = paidBookingAmount > 0 ? [{
+          id: `booking-${args.bookingId}`,
+          amount: paidBookingAmount,
+          status: "paid" as const,
+          note: "Booking amount paid",
+          createdAt: now,
+        }] : undefined;
+
+        // Map unknown keys to customCharges so all items are accounted for
+        const knownKeys = new Set(["rent", "security", "advance", "booking", "maintenance"]);
+        const customCharges = items
+          .filter((i) => !knownKeys.has(i.key))
+          .map((i) => ({ id: i.key, label: i.label, amount: i.amount }));
+
+        // Total charges = sum of operator-specified payment items
+        const totalCharges = items.reduce((sum, i) => sum + i.amount, 0);
+        const paymentStatus = totalCharges === 0 || paidBookingAmount >= totalCharges
+          ? "paid" as const
+          : paidBookingAmount > 0
+          ? "partial" as const
+          : "pending" as const;
+
+        await ctx.db.insert("tenants", {
+          propertyId: booking.propertyId,
+          operatorId: user._id,
+          studentName: booking.studentName,
+          studentPhone: booking.studentPhone,
+          studentEmail: booking.studentEmail,
+          course: booking.course,
+          parentName: booking.parentName,
+          parentPhone: booking.parentPhone,
+          parentEmail: booking.parentEmail,
+          rent: getAmount("rent"),
+          security: getAmount("security"),
+          advance: getAmount("advance"),
+          booking: getAmount("booking"),
+          maintenance: getAmount("maintenance"),
+          ...(customCharges.length > 0 ? { customCharges } : {}),
+          paymentStatus,
+          paymentHistory: initialHistory,
+          createdAt: now,
+        });
+      }
+    }
+
     return { success: true };
   },
 });

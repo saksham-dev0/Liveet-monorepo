@@ -177,9 +177,50 @@ export default defineSchema({
     roomTypePreference: v.optional(v.string()),
     paymentProofId: v.optional(v.string()),
     status: v.union(v.literal("pending"), v.literal("accepted"), v.literal("rejected")),
+    bookingPaymentItems: v.optional(v.array(v.object({
+      key: v.string(),
+      label: v.string(),
+      amount: v.number(),
+    }))),
     createdAt: v.number(),
   })
     .index("by_propertyId", ["propertyId"])
+    .index("by_userId", ["userId"]),
+
+  tenantKyc: defineTable({
+    tenantId: v.id("tenants"),
+    propertyId: v.id("properties"),
+    operatorId: v.id("users"),
+    userId: v.id("users"),
+    idProofType: v.optional(v.string()),
+    idProofNumber: v.optional(v.string()),
+    idProofFrontStorageId: v.optional(v.string()),
+    idProofBackStorageId: v.optional(v.string()),
+    idProofStatus: v.optional(
+      v.union(v.literal("pending"), v.literal("verified"), v.literal("rejected"))
+    ),
+    legalName: v.optional(v.string()),
+    profilePhotoStorageId: v.optional(v.string()),
+    profilePhotoStatus: v.optional(
+      v.union(v.literal("pending"), v.literal("verified"), v.literal("rejected"))
+    ),
+    agreementStorageId: v.optional(v.string()),
+    agreementSignedAt: v.optional(v.number()),
+    digitalSignatureName: v.optional(v.string()),
+    agreementStatus: v.optional(
+      v.union(v.literal("pending"), v.literal("signed"), v.literal("verified"))
+    ),
+    overallStatus: v.union(
+      v.literal("incomplete"),
+      v.literal("pending"),
+      v.literal("verified")
+    ),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_tenantId", ["tenantId"])
+    .index("by_propertyId", ["propertyId"])
+    .index("by_operatorId", ["operatorId"])
     .index("by_userId", ["userId"]),
 
   tasks: defineTable({

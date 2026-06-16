@@ -277,6 +277,12 @@ export default function RecordPaymentScreen() {
     [newLines, items]
   );
 
+  useEffect(() => {
+    if (status === "paid" && total > 0) {
+      setCollected(String(total));
+    }
+  }, [total, status]);
+
   const handleSave = useCallback(async () => {
     if (!tenantId || saving) return;
     const amt = Number(collected) || 0;

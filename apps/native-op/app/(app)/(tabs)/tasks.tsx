@@ -501,6 +501,89 @@ function InfoRow({ label, value, last = false }: { label: string; value: string;
   );
 }
 
+// ─── Pricing helpers ──────────────────────────────────────────
+function fmtINR(n: string | number) {
+  const v = Number(n) || 0;
+  return "₹" + v.toLocaleString("en-IN");
+}
+
+function PriceChargeRow({
+  label, value, onChange, last,
+}: {
+  label: string; value: string; onChange: (v: string) => void; last?: boolean;
+}) {
+  const [focused, setFocused] = useState(false);
+  return (
+    <View style={[styles.priceChargeRow, last && { borderBottomWidth: 0 }]}>
+      <Text style={styles.priceChargeLabel}>{label}</Text>
+      <View style={[styles.priceChargeInput, focused && styles.priceChargeInputFocused]}>
+        <Text style={styles.priceChargePrefix}>₹</Text>
+        <TextInput
+          style={styles.priceChargeTextInput}
+          value={value}
+          onChangeText={(t) => onChange(t.replace(/[^\d]/g, ""))}
+          placeholder="0"
+          placeholderTextColor={C.subtle}
+          keyboardType="numeric"
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+        />
+      </View>
+    </View>
+  );
+}
+
+function PriceBookingLine({
+  label, amount, isOn, onToggle, isFirst, alreadyPaid,
+}: {
+  label: string; amount: number; isOn: boolean; onToggle: () => void; isFirst?: boolean; alreadyPaid?: boolean;
+}) {
+  const disabled = amount === 0 || alreadyPaid;
+  return (
+    <TouchableOpacity
+      style={[styles.priceBookingLine, !isFirst && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: C.border }]}
+      onPress={() => !disabled && onToggle()}
+      activeOpacity={disabled ? 1 : 0.7}
+    >
+      <View style={[
+        styles.priceCheckbox,
+        alreadyPaid ? styles.priceCheckboxPaid : isOn && styles.priceCheckboxOn,
+      ]}>
+        {alreadyPaid
+          ? <Ionicons name="checkmark" size={12} color="#15803D" />
+          : isOn && <Ionicons name="checkmark" size={12} color={C.accentText} />}
+      </View>
+      <Text style={[styles.priceBookingLineLabel, disabled && !alreadyPaid && { opacity: 0.45 }]}>{label}</Text>
+      {alreadyPaid
+        ? <View style={styles.paidBadge}><Text style={styles.paidBadgeText}>Paid</Text></View>
+        : disabled && <Text style={{ fontSize: 10.5, color: C.subtle, flex: 1 }}>Set amount above</Text>}
+      <Text style={[styles.priceBookingLineAmount, { opacity: disabled && !alreadyPaid ? 0.45 : 1, color: alreadyPaid ? C.positive : C.navy }]}>{fmtINR(amount)}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function PriceTotalCard({ amount, count }: { amount: number; count: number }) {
+  return (
+    <View style={styles.priceTotalCard}>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+        <Text style={styles.priceTotalLabel}>Booking amount to be paid</Text>
+        <View style={styles.priceTotalCountBadge}>
+          <Text style={styles.priceTotalCountText}>{count} item{count === 1 ? "" : "s"}</Text>
+        </View>
+      </View>
+      <Text style={styles.priceTotalAmount}>{fmtINR(amount)}</Text>
+    </View>
+  );
+}
+
+const PRICE_LINES = [
+  { key: "rent", label: "Rent (monthly)" },
+  { key: "deposit", label: "Security deposit" },
+  { key: "bookingAmt", label: "Booking amount" },
+  { key: "advance", label: "Advance" },
+  { key: "maintenance", label: "Maintenance" },
+];
+
 // ─── Booking request card ─────────────────────────────────────
 type BookingRequest = {
   _id: string;
@@ -517,6 +600,7 @@ type BookingRequest = {
   foodPreference: string | null;
   paymentProofUrl: string | null;
   roomTypePreference: string | null;
+  roomPricings: { roomType: string; rent: string; deposit: string; bookingAmount?: string }[] | null;
   status: "pending" | "accepted" | "rejected";
   createdAt: number;
 };
@@ -530,12 +614,30 @@ function BookingDetailSheet({
 }: {
   booking: BookingRequest;
   onClose: () => void;
-  onAccept: (id: string) => void;
+  onAccept: (id: string, paymentItems: { key: string; label: string; amount: number }[]) => void;
   onReject: (id: string) => void;
 }) {
   const isPending = booking.status === "pending";
   const isAccepted = booking.status === "accepted";
   const submittedDate = new Date(booking.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+
+  // pricing state — seed from roomPricings if available
+  const matchedPricing = booking.roomPricings?.find((p) => p.roomType === booking.roomTypePreference) ?? booking.roomPricings?.[0];
+  const [charges, setCharges] = useState({
+    rent: matchedPricing?.rent ?? "",
+    deposit: matchedPricing?.deposit ?? "",
+    bookingAmt: matchedPricing?.bookingAmount ?? "",
+    advance: "",
+    maintenance: "",
+  });
+  const [bookingItems, setBookingItems] = useState<Record<string, boolean>>({});
+
+  const setCharge = (key: string, val: string) => setCharges((c) => ({ ...c, [key]: val }));
+  const toggleItem = (key: string) => setBookingItems((s) => ({ ...s, [key]: !s[key] }));
+
+  const SELECTABLE_LINES = PRICE_LINES.filter((l) => l.key !== "bookingAmt");
+  const total = SELECTABLE_LINES.reduce((sum, l) => sum + (bookingItems[l.key] ? (Number(charges[l.key as keyof typeof charges]) || 0) : 0), 0);
+  const selectedCount = SELECTABLE_LINES.filter((l) => bookingItems[l.key]).length;
 
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
@@ -603,6 +705,49 @@ function BookingDetailSheet({
             {booking.foodPreference ? <InfoRow label="Food preference" value={booking.foodPreference} last={!booking.parentName} /> : null}
           </View>
 
+          {/* pricing breakdown — charges */}
+          <View style={styles.block}>
+            <View style={styles.blockHeader}>
+              <View style={styles.blockIconWrap}>
+                <Ionicons name="pricetag-outline" size={14} color={C.navy} />
+              </View>
+              <Text style={styles.blockTitle}>CHARGES</Text>
+            </View>
+            <PriceChargeRow label="Rent (monthly)" value={charges.rent} onChange={(v) => setCharge("rent", v)} />
+            <PriceChargeRow label="Security deposit" value={charges.deposit} onChange={(v) => setCharge("deposit", v)} />
+            <PriceChargeRow label="Booking amount" value={charges.bookingAmt} onChange={(v) => setCharge("bookingAmt", v)} />
+            <PriceChargeRow label="Advance" value={charges.advance} onChange={(v) => setCharge("advance", v)} />
+            <PriceChargeRow label="Maintenance" value={charges.maintenance} onChange={(v) => setCharge("maintenance", v)} last />
+          </View>
+
+          {/* pricing breakdown — booking payment */}
+          <View style={styles.block}>
+            <View style={styles.blockHeader}>
+              <View style={styles.blockIconWrap}>
+                <Ionicons name="key-outline" size={14} color={C.navy} />
+              </View>
+              <Text style={styles.blockTitle}>BOOKING PAYMENT</Text>
+            </View>
+            <View style={{ paddingTop: 4 }}>
+              {PRICE_LINES.map((line, i) => (
+                <PriceBookingLine
+                  key={line.key}
+                  label={line.label}
+                  amount={Number(charges[line.key as keyof typeof charges]) || 0}
+                  isOn={!!bookingItems[line.key]}
+                  onToggle={() => toggleItem(line.key)}
+                  isFirst={i === 0}
+                  alreadyPaid={line.key === "bookingAmt"}
+                />
+              ))}
+            </View>
+            {selectedCount > 0 && (
+              <View style={{ paddingVertical: 12 }}>
+                <PriceTotalCard amount={total} count={selectedCount} />
+              </View>
+            )}
+          </View>
+
           {/* payment proof */}
           <View style={styles.block}>
             <View style={styles.blockHeader}>
@@ -641,21 +786,37 @@ function BookingDetailSheet({
         </ScrollView>
 
         {isPending && (
-          <View style={[styles.sheetCTA, { flexDirection: "row", gap: 10 }]}>
-            <TouchableOpacity
-              style={[styles.ctaBtn, { flex: 1, backgroundColor: C.white, borderWidth: 1, borderColor: "#FECACA" }]}
-              onPress={() => { onReject(booking._id); onClose(); }}
-            >
-              <Ionicons name="close-outline" size={18} color="#DC2626" />
-              <Text style={[styles.ctaBtnText, { color: "#DC2626" }]}>Reject</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.ctaBtn, { flex: 1, backgroundColor: C.navy }]}
-              onPress={() => { onAccept(booking._id); onClose(); }}
-            >
-              <Ionicons name="checkmark" size={18} color={C.accent} />
-              <Text style={[styles.ctaBtnText, { color: C.accent }]}>Accept</Text>
-            </TouchableOpacity>
+          <View style={styles.sheetCTA}>
+            {selectedCount === 0 && (
+              <Text style={{ fontSize: 11.5, color: "#DC2626", fontWeight: "600", textAlign: "center", marginBottom: 8 }}>
+                Select at least one booking payment item to accept
+              </Text>
+            )}
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              <TouchableOpacity
+                style={[styles.ctaBtn, { flex: 1, backgroundColor: C.white, borderWidth: 1, borderColor: "#FECACA" }]}
+                onPress={() => { onReject(booking._id); onClose(); }}
+              >
+                <Ionicons name="close-outline" size={18} color="#DC2626" />
+                <Text style={[styles.ctaBtnText, { color: "#DC2626" }]}>Reject</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.ctaBtn, { flex: 1, backgroundColor: selectedCount > 0 ? C.navy : C.border }]}
+                onPress={() => {
+                  if (selectedCount > 0) {
+                    const items = SELECTABLE_LINES
+                      .filter((l) => bookingItems[l.key] && (Number(charges[l.key as keyof typeof charges]) || 0) > 0)
+                      .map((l) => ({ key: l.key, label: l.label, amount: Number(charges[l.key as keyof typeof charges]) || 0 }));
+                    onAccept(booking._id, items);
+                    onClose();
+                  }
+                }}
+                activeOpacity={selectedCount > 0 ? 0.8 : 1}
+              >
+                <Ionicons name="checkmark" size={18} color={selectedCount > 0 ? C.accent : C.subtle} />
+                <Text style={[styles.ctaBtnText, { color: selectedCount > 0 ? C.accent : C.subtle }]}>Accept</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         )}
       </View>
@@ -665,12 +826,10 @@ function BookingDetailSheet({
 
 function BookingRequestCard({
   booking,
-  onAccept,
   onReject,
   onOpen,
 }: {
   booking: BookingRequest;
-  onAccept: (id: string) => void;
   onReject: (id: string) => void;
   onOpen: (b: BookingRequest) => void;
 }) {
@@ -726,22 +885,23 @@ function BookingRequestCard({
       </View>
 
       {isPending && (
-        <View style={styles.bookingActions}>
+        <View style={[styles.bookingActions, { justifyContent: "center" }]}>
           <TouchableOpacity
-            style={[styles.bookingBtn, styles.bookingBtnReject]}
+            style={[styles.bookingBtn, { flex: 0, paddingHorizontal: 20 }]}
             onPress={(e) => { e.stopPropagation?.(); onReject(booking._id); }}
             activeOpacity={0.8}
           >
             <Ionicons name="close-outline" size={15} color="#DC2626" />
             <Text style={[styles.bookingBtnText, { color: "#DC2626" }]}>Reject</Text>
           </TouchableOpacity>
+          <View style={{ width: 1, backgroundColor: C.border, alignSelf: "stretch" }} />
           <TouchableOpacity
-            style={[styles.bookingBtn, styles.bookingBtnAccept]}
-            onPress={(e) => { e.stopPropagation?.(); onAccept(booking._id); }}
+            style={[styles.bookingBtn, { flex: 1 }]}
+            onPress={() => onOpen(booking)}
             activeOpacity={0.8}
           >
-            <Ionicons name="checkmark-outline" size={15} color={C.accentText} />
-            <Text style={[styles.bookingBtnText, { color: C.accentText }]}>Accept</Text>
+            <Ionicons name="document-text-outline" size={15} color={C.navy} />
+            <Text style={[styles.bookingBtnText, { color: C.navy }]}>Fill payment details</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -764,6 +924,164 @@ function EmptyState() {
   );
 }
 
+// ─── New Task Sheet ───────────────────────────────────────────
+function computeBucket(due: string): Bucket {
+  if (!due) return "later";
+  const d = new Date(due);
+  const now = new Date();
+  const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+  const weekEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 7, 23, 59, 59);
+  if (d < now) return "overdue";
+  if (d <= todayEnd) return "today";
+  if (d <= weekEnd) return "week";
+  return "later";
+}
+
+function NewTaskSheet({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const convex = useConvex();
+  const [title, setTitle] = useState("");
+  const [kind, setKind] = useState("reminder");
+  const [priority, setPriority] = useState<Priority>("Med");
+  const [due, setDue] = useState("");
+  const [desc, setDesc] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const KINDS = Object.keys(KIND_LABEL);
+  const PRIORITIES: Priority[] = ["High", "Med", "Low"];
+
+  async function handleCreate() {
+    if (!title.trim()) { setError("Title required"); return; }
+    setSaving(true);
+    setError("");
+    try {
+      const bucket = due ? computeBucket(due) : "later";
+      await (convex as any).mutation("tasks:create", {
+        title: title.trim(),
+        kind,
+        priority,
+        status: "todo",
+        bucket,
+        ...(due ? { due } : {}),
+        ...(desc.trim() ? { desc: desc.trim() } : {}),
+      });
+      onCreated();
+      onClose();
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to create task");
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal visible animationType="slide" transparent onRequestClose={onClose}>
+      <Pressable style={styles.sheetOverlay} onPress={onClose} />
+      <View style={styles.newSheet}>
+        {/* Handle */}
+        <View style={styles.sheetHandle} />
+
+        <View style={styles.newSheetHeader}>
+          <Text style={styles.newSheetTitle}>New task</Text>
+          <TouchableOpacity onPress={onClose} hitSlop={8}>
+            <Ionicons name="close" size={22} color={C.navy} />
+          </TouchableOpacity>
+        </View>
+
+        <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+          {/* Title */}
+          <Text style={styles.fieldLabel}>Title *</Text>
+          <TextInput
+            style={styles.fieldInput}
+            placeholder="e.g. Fix leaking tap in Room 3"
+            placeholderTextColor={C.subtle}
+            value={title}
+            onChangeText={(t) => { setTitle(t); setError(""); }}
+          />
+
+          {/* Kind */}
+          <Text style={styles.fieldLabel}>Category</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14 }}>
+            <View style={{ flexDirection: "row", gap: 8, paddingHorizontal: 2 }}>
+              {KINDS.map((k) => (
+                <TouchableOpacity
+                  key={k}
+                  style={[styles.chipBtn, kind === k && styles.chipBtnActive]}
+                  onPress={() => setKind(k)}
+                >
+                  <Ionicons
+                    name={KIND_ICON[k] ?? "document-outline"}
+                    size={13}
+                    color={kind === k ? C.accentText : C.muted}
+                  />
+                  <Text style={[styles.chipText, kind === k && styles.chipTextActive]}>
+                    {KIND_LABEL[k]}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </ScrollView>
+
+          {/* Priority */}
+          <Text style={styles.fieldLabel}>Priority</Text>
+          <View style={{ flexDirection: "row", gap: 8, marginBottom: 14 }}>
+            {PRIORITIES.map((p) => {
+              const pm = PRIORITY_MAP[p];
+              return (
+                <TouchableOpacity
+                  key={p}
+                  style={[styles.chipBtn, priority === p && { backgroundColor: pm.bg, borderColor: pm.dot }]}
+                  onPress={() => setPriority(p)}
+                >
+                  <View style={[styles.pillDot, { backgroundColor: pm.dot }]} />
+                  <Text style={[styles.chipText, priority === p && { color: pm.fg }]}>{p}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          {/* Due date */}
+          <Text style={styles.fieldLabel}>Due date (YYYY-MM-DD)</Text>
+          <TextInput
+            style={styles.fieldInput}
+            placeholder="2026-06-15"
+            placeholderTextColor={C.subtle}
+            value={due}
+            onChangeText={setDue}
+            keyboardType="numbers-and-punctuation"
+          />
+
+          {/* Description */}
+          <Text style={styles.fieldLabel}>Description</Text>
+          <TextInput
+            style={[styles.fieldInput, { height: 80, textAlignVertical: "top" }]}
+            placeholder="Optional notes..."
+            placeholderTextColor={C.subtle}
+            value={desc}
+            onChangeText={setDesc}
+            multiline
+          />
+
+          {!!error && <Text style={styles.fieldError}>{error}</Text>}
+
+          <TouchableOpacity
+            style={[styles.createBtn, saving && { opacity: 0.6 }]}
+            onPress={handleCreate}
+            disabled={saving}
+            activeOpacity={0.85}
+          >
+            {saving
+              ? <ActivityIndicator size="small" color={C.accentText} />
+              : <Text style={styles.createBtnText}>Create task</Text>
+            }
+          </TouchableOpacity>
+
+          <View style={{ height: 32 }} />
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
 // ─── Main screen ──────────────────────────────────────────────
 export default function TasksScreen() {
   const insets = useSafeAreaInsets();
@@ -778,6 +1096,7 @@ export default function TasksScreen() {
   const [search, setSearch] = useState("");
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [selectedBooking, setSelectedBooking] = useState<BookingRequest | null>(null);
+  const [showNewTask, setShowNewTask] = useState(false);
 
   const convexRef = useRef(convex);
   convexRef.current = convex;
@@ -813,10 +1132,14 @@ export default function TasksScreen() {
     }
   });
 
-  const handleAcceptBooking = useCallback(async (id: string) => {
+  const handleAcceptBooking = useCallback(async (id: string, paymentItems?: { key: string; label: string; amount: number }[]) => {
     setBookingRequests((xs) => xs.map((b) => b._id === id ? { ...b, status: "accepted" as const } : b));
     try {
-      await (convex as any).mutation("properties:updateBookingRequestStatus", { bookingId: id, status: "accepted" });
+      await (convex as any).mutation("properties:updateBookingRequestStatus", {
+        bookingId: id,
+        status: "accepted",
+        ...(paymentItems ? { bookingPaymentItems: paymentItems } : {}),
+      });
     } catch {
       loadTasks();
     }
@@ -954,7 +1277,6 @@ export default function TasksScreen() {
                 <View key={b._id} style={{ paddingHorizontal: 16 }}>
                   <BookingRequestCard
                     booking={b}
-                    onAccept={handleAcceptBooking}
                     onReject={handleRejectBooking}
                     onOpen={setSelectedBooking}
                   />
@@ -994,12 +1316,20 @@ export default function TasksScreen() {
       )}
 
       {/* FAB */}
-      <TouchableOpacity style={styles.fab} activeOpacity={0.85}>
+      <TouchableOpacity style={styles.fab} activeOpacity={0.85} onPress={() => setShowNewTask(true)}>
         <View style={styles.fabIcon}>
           <Ionicons name="add" size={14} color={C.accent} />
         </View>
         <Text style={styles.fabText}>New task</Text>
       </TouchableOpacity>
+
+      {/* New task sheet */}
+      {showNewTask && (
+        <NewTaskSheet
+          onClose={() => setShowNewTask(false)}
+          onCreated={loadTasks}
+        />
+      )}
 
       {/* Detail sheet */}
       {currentSelected && (
@@ -1015,7 +1345,7 @@ export default function TasksScreen() {
         <BookingDetailSheet
           booking={selectedBooking}
           onClose={() => setSelectedBooking(null)}
-          onAccept={(id) => { handleAcceptBooking(id); }}
+          onAccept={(id, items) => { handleAcceptBooking(id, items); }}
           onReject={(id) => { handleRejectBooking(id); }}
         />
       )}
@@ -1313,7 +1643,7 @@ const styles = StyleSheet.create({
   fab: {
     position: "absolute",
     right: 18,
-    bottom: 90,
+    bottom: 110,
     height: 48,
     paddingHorizontal: 16,
     borderRadius: 999,
@@ -1370,6 +1700,89 @@ const styles = StyleSheet.create({
     color: C.muted,
     textAlign: "center",
     lineHeight: 18,
+  },
+
+  // New task sheet
+  newSheet: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    maxHeight: "85%",
+    backgroundColor: C.white,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    paddingTop: 10,
+  },
+  newSheetHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 18,
+    marginTop: 8,
+  },
+  newSheetTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: C.navy,
+  },
+  fieldLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: C.muted,
+    marginBottom: 6,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  fieldInput: {
+    backgroundColor: C.surfaceGray,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 14,
+    color: C.navy,
+    marginBottom: 14,
+  },
+  chipBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1.5,
+    borderColor: C.border,
+    backgroundColor: C.white,
+  },
+  chipBtnActive: {
+    backgroundColor: C.accent,
+    borderColor: C.accent,
+  },
+  chipText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: C.muted,
+  },
+  chipTextActive: {
+    color: C.accentText,
+  },
+  fieldError: {
+    fontSize: 12,
+    color: C.error,
+    marginBottom: 10,
+  },
+  createBtn: {
+    backgroundColor: C.navy,
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: "center",
+    marginTop: 4,
+  },
+  createBtnText: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: C.white,
   },
 
   // Detail sheet
@@ -1757,4 +2170,56 @@ const styles = StyleSheet.create({
     color: C.subtle,
     fontWeight: "600",
   },
+
+  // Editable pricing in booking sheet
+  priceChargeRow: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingVertical: 11, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.border, gap: 12,
+  },
+  priceChargeLabel: { fontSize: 13, fontWeight: "600", color: C.navy, flex: 1 },
+  priceChargeInput: {
+    flexDirection: "row", alignItems: "center",
+    borderRadius: 10, padding: 4, paddingHorizontal: 10,
+    width: 130, borderWidth: 1, borderColor: "transparent",
+  },
+  priceChargeInputFocused: { borderColor: C.navy, backgroundColor: "rgba(30,41,59,0.04)" },
+  priceChargePrefix: { color: C.muted, fontSize: 13, fontWeight: "600", marginRight: 4 },
+  priceChargeTextInput: { flex: 1, textAlign: "right", fontSize: 14, fontWeight: "700", color: C.navy },
+
+  priceBookingLine: {
+    flexDirection: "row", alignItems: "center", gap: 10,
+    paddingVertical: 11,
+  },
+  priceCheckbox: {
+    width: 20, height: 20, borderRadius: 6,
+    borderWidth: 1.5, borderColor: C.border,
+    backgroundColor: C.surfaceGray,
+    alignItems: "center", justifyContent: "center",
+  },
+  priceCheckboxOn: { backgroundColor: C.navy, borderColor: C.navy },
+  priceCheckboxPaid: { backgroundColor: "#DCFCE7", borderColor: "#16A34A" },
+  paidBadge: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  paidBadgeText: {
+    fontSize: 10.5,
+    color: C.positive,
+    fontWeight: "700",
+    letterSpacing: 0.2,
+  },
+  priceBookingLineLabel: { flex: 1, fontSize: 13, fontWeight: "600", color: C.navy },
+  priceBookingLineAmount: { fontSize: 13, fontWeight: "700", color: C.navy },
+
+  priceTotalCard: {
+    backgroundColor: C.navy, borderRadius: 14,
+    padding: 14, gap: 4,
+  },
+  priceTotalLabel: { fontSize: 11, color: "rgba(255,255,255,0.65)", fontWeight: "700", letterSpacing: 0.2 },
+  priceTotalAmount: { fontSize: 22, fontWeight: "800", color: C.accent, letterSpacing: -0.5 },
+  priceTotalCountBadge: {
+    backgroundColor: "rgba(255,255,255,0.12)", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3,
+  },
+  priceTotalCountText: { fontSize: 11, color: "rgba(255,255,255,0.75)", fontWeight: "700" },
 });
