@@ -282,3 +282,250 @@ export const addTenant = mutation({
     return tenantId;
   },
 });
+
+export const submitLateEntry = mutation({
+  args: {
+    date: v.string(),
+    time: v.string(),
+    reason: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q: any) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier)
+      )
+      .unique();
+    if (!user) throw new Error("User not found");
+
+    const booking = await ctx.db
+      .query("bookingRequests")
+      .withIndex("by_userId", (q: any) => q.eq("userId", user._id))
+      .first();
+    if (!booking) throw new Error("No booking found");
+    if (booking.status !== "accepted") throw new Error("Booking not accepted");
+
+    const property = await ctx.db.get(booking.propertyId);
+    if (!property) throw new Error("Property not found");
+
+    return await ctx.db.insert("lateEntryRequests", {
+      userId: user._id,
+      propertyId: booking.propertyId,
+      operatorId: property.operatorId,
+      date: args.date,
+      time: args.time,
+      reason: args.reason,
+      status: "pending",
+      createdAt: Date.now(),
+    });
+  },
+});
+
+export const getMyTenantDetails = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q: any) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier)
+      )
+      .unique();
+    if (!user) return null;
+
+    const booking = await ctx.db
+      .query("bookingRequests")
+      .withIndex("by_userId", (q: any) => q.eq("userId", user._id))
+      .order("desc")
+      .first();
+    if (!booking || booking.status !== "accepted") return null;
+
+    const property = await ctx.db.get(booking.propertyId);
+    if (!property) return null;
+
+    const tenants = await ctx.db
+      .query("tenants")
+      .withIndex("by_propertyId", (q: any) => q.eq("propertyId", booking.propertyId))
+      .collect();
+    const tenant = tenants.find((t: any) => t.studentPhone === booking.studentPhone);
+
+    let room: { roomNumber: string; type: string; rent?: number } | null = null;
+    if (tenant?.roomId) {
+      const r = await ctx.db.get(tenant.roomId);
+      if (r) room = { roomNumber: r.roomNumber, type: r.type, rent: r.rent };
+    }
+
+    return {
+      studentName: booking.studentName,
+      studentPhone: booking.studentPhone ?? null,
+      course: tenant?.course ?? null,
+      propertyName: property.name,
+      propertyCity: property.city ?? null,
+      propertyState: property.state ?? null,
+      moveInDate: booking.moveInDate,
+      rent: tenant?.rent ?? null,
+      room,
+    };
+  },
+});
+
+export const getAvailableRoomsForTenant = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q: any) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier)
+      )
+      .unique();
+    if (!user) return [];
+
+    const booking = await ctx.db
+      .query("bookingRequests")
+      .withIndex("by_userId", (q: any) => q.eq("userId", user._id))
+      .order("desc")
+      .first();
+    if (!booking || booking.status !== "accepted") return [];
+
+    const floors = await ctx.db
+      .query("floors")
+      .withIndex("by_propertyId", (q: any) => q.eq("propertyId", booking.propertyId))
+      .collect();
+    const floorMap = new Map(floors.map((f: any) => [f._id, f]));
+
+    const rooms = await ctx.db
+      .query("rooms")
+      .withIndex("by_propertyId", (q: any) => q.eq("propertyId", booking.propertyId))
+      .collect();
+
+    return rooms.map((r: any) => ({
+      id: r._id,
+      roomNumber: r.roomNumber,
+      type: r.type,
+      capacity: r.capacity,
+      floorLabel: floorMap.get(r.floorId)?.short ?? floorMap.get(r.floorId)?.label ?? "?",
+      rent: r.rent,
+    }));
+  },
+});
+
+export const submitRoomChange = mutation({
+  args: {
+    preferredRoomNumber: v.optional(v.string()),
+    reason: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q: any) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier)
+      )
+      .unique();
+    if (!user) throw new Error("User not found");
+
+    const booking = await ctx.db
+      .query("bookingRequests")
+      .withIndex("by_userId", (q: any) => q.eq("userId", user._id))
+      .order("desc")
+      .first();
+    if (!booking) throw new Error("No booking found");
+    if (booking.status !== "accepted") throw new Error("Booking not accepted");
+
+    const property = await ctx.db.get(booking.propertyId);
+    if (!property) throw new Error("Property not found");
+
+    return await ctx.db.insert("roomChangeRequests", {
+      userId: user._id,
+      propertyId: booking.propertyId,
+      operatorId: property.operatorId,
+      preferredRoomNumber: args.preferredRoomNumber,
+      reason: args.reason,
+      status: "pending",
+      createdAt: Date.now(),
+    });
+  },
+});
+
+export const submitMoveOut = mutation({
+  args: {
+    moveOutDate: v.string(),
+    reason: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q: any) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier)
+      )
+      .unique();
+    if (!user) throw new Error("User not found");
+
+    const booking = await ctx.db
+      .query("bookingRequests")
+      .withIndex("by_userId", (q: any) => q.eq("userId", user._id))
+      .first();
+    if (!booking) throw new Error("No booking found");
+    if (booking.status !== "accepted") throw new Error("Booking not accepted");
+
+    const property = await ctx.db.get(booking.propertyId);
+    if (!property) throw new Error("Property not found");
+
+    return await ctx.db.insert("moveOutRequests", {
+      userId: user._id,
+      propertyId: booking.propertyId,
+      operatorId: property.operatorId,
+      moveOutDate: args.moveOutDate,
+      reason: args.reason,
+      status: "pending",
+      createdAt: Date.now(),
+    });
+  },
+});
+
+export const submitExtendStay = mutation({
+  args: {},
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q: any) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier)
+      )
+      .unique();
+    if (!user) throw new Error("User not found");
+
+    const booking = await ctx.db
+      .query("bookingRequests")
+      .withIndex("by_userId", (q: any) => q.eq("userId", user._id))
+      .first();
+    if (!booking) throw new Error("No booking found");
+    if (booking.status !== "accepted") throw new Error("Booking not accepted");
+
+    const property = await ctx.db.get(booking.propertyId);
+    if (!property) throw new Error("Property not found");
+
+    return await ctx.db.insert("extendStayRequests", {
+      userId: user._id,
+      propertyId: booking.propertyId,
+      operatorId: property.operatorId,
+      status: "pending",
+      createdAt: Date.now(),
+    });
+  },
+});

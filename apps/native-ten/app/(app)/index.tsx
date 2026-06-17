@@ -455,10 +455,10 @@ function StudentDashboard({
 
   // Quick requests grid — monochrome icons on surfaceGray
   const quickActions = [
-    { icon: "time-outline" as const,             label: "Late entry",   sub: "Notify the gate",       route: "/personal" },
-    { icon: "calendar-outline" as const,          label: "Extend stay",  sub: "Push your move-out",    route: "/personal" },
-    { icon: "swap-horizontal-outline" as const,   label: "Room change",  sub: "Request a new room",    route: "/personal" },
-    { icon: "log-out-outline" as const,           label: "Move out",     sub: "Start the process",     route: "/personal" },
+    { icon: "time-outline" as const,             label: "Late entry",   sub: "Notify the gate",       route: "/late-entry" },
+    { icon: "calendar-outline" as const,          label: "Extend stay",  sub: "Push your move-out",    route: "/extend-stay" },
+    { icon: "swap-horizontal-outline" as const,   label: "Room change",  sub: "Request a new room",    route: "/room-change" },
+    { icon: "log-out-outline" as const,           label: "Move out",     sub: "Start the process",     route: "/move-out" },
   ];
 
   return (

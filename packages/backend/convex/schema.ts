@@ -243,4 +243,55 @@ export default defineSchema({
   })
     .index("by_operatorId", ["operatorId"])
     .index("by_operatorId_status", ["operatorId", "status"]),
+
+  lateEntryRequests: defineTable({
+    userId: v.id("users"),
+    propertyId: v.id("properties"),
+    operatorId: v.id("users"),
+    date: v.string(),
+    time: v.string(),
+    reason: v.string(),
+    status: v.union(v.literal("pending"), v.literal("approved"), v.literal("rejected")),
+    createdAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_operatorId", ["operatorId"])
+    .index("by_propertyId", ["propertyId"]),
+
+  extendStayRequests: defineTable({
+    userId: v.id("users"),
+    propertyId: v.id("properties"),
+    operatorId: v.id("users"),
+    status: v.union(v.literal("pending"), v.literal("approved"), v.literal("rejected")),
+    createdAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_operatorId", ["operatorId"])
+    .index("by_propertyId", ["propertyId"]),
+
+  roomChangeRequests: defineTable({
+    userId: v.id("users"),
+    propertyId: v.id("properties"),
+    operatorId: v.id("users"),
+    preferredRoomNumber: v.optional(v.string()),
+    reason: v.string(),
+    status: v.union(v.literal("pending"), v.literal("approved"), v.literal("rejected")),
+    createdAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_operatorId", ["operatorId"])
+    .index("by_propertyId", ["propertyId"]),
+
+  moveOutRequests: defineTable({
+    userId: v.id("users"),
+    propertyId: v.id("properties"),
+    operatorId: v.id("users"),
+    moveOutDate: v.string(),
+    reason: v.string(),
+    status: v.union(v.literal("pending"), v.literal("approved"), v.literal("rejected")),
+    createdAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_operatorId", ["operatorId"])
+    .index("by_propertyId", ["propertyId"]),
 });
