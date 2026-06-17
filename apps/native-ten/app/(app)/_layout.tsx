@@ -65,7 +65,7 @@ function CustomTabBar({ state, navigation }: BottomTabBarProps) {
   const activeTab = state.index;
 
   const TAB_ROOTS = ["/favorites"];
-  const HIDDEN_PATHS = ["/kyc/"];
+  const HIDDEN_PATHS = ["/kyc/", "/late-entry", "/extend-stay", "/room-change", "/move-out"];
   const isNestedScreen =
     TAB_ROOTS.some((root) => pathname.startsWith(root + "/")) ||
     HIDDEN_PATHS.some((p) => pathname.startsWith(p));
