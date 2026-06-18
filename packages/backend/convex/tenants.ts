@@ -283,6 +283,14 @@ export const addTenant = mutation({
   },
 });
 
+async function getLatestBookingForUser(db: any, userId: any) {
+  return db
+    .query("bookingRequests")
+    .withIndex("by_userId", (q: any) => q.eq("userId", userId))
+    .order("desc")
+    .first();
+}
+
 export const submitLateEntry = mutation({
   args: {
     date: v.string(),
@@ -290,6 +298,10 @@ export const submitLateEntry = mutation({
     reason: v.string(),
   },
   handler: async (ctx, args) => {
+    if (!args.date.trim()) throw new Error("Date is required");
+    if (!args.time.trim()) throw new Error("Time is required");
+    if (!args.reason.trim()) throw new Error("Reason is required");
+
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
 
@@ -301,10 +313,7 @@ export const submitLateEntry = mutation({
       .unique();
     if (!user) throw new Error("User not found");
 
-    const booking = await ctx.db
-      .query("bookingRequests")
-      .withIndex("by_userId", (q: any) => q.eq("userId", user._id))
-      .first();
+    const booking = await getLatestBookingForUser(ctx.db, user._id);
     if (!booking) throw new Error("No booking found");
     if (booking.status !== "accepted") throw new Error("Booking not accepted");
 
@@ -338,11 +347,7 @@ export const getMyTenantDetails = query({
       .unique();
     if (!user) return null;
 
-    const booking = await ctx.db
-      .query("bookingRequests")
-      .withIndex("by_userId", (q: any) => q.eq("userId", user._id))
-      .order("desc")
-      .first();
+    const booking = await getLatestBookingForUser(ctx.db, user._id);
     if (!booking || booking.status !== "accepted") return null;
 
     const property = await ctx.db.get(booking.propertyId);
@@ -388,11 +393,7 @@ export const getAvailableRoomsForTenant = query({
       .unique();
     if (!user) return [];
 
-    const booking = await ctx.db
-      .query("bookingRequests")
-      .withIndex("by_userId", (q: any) => q.eq("userId", user._id))
-      .order("desc")
-      .first();
+    const booking = await getLatestBookingForUser(ctx.db, user._id);
     if (!booking || booking.status !== "accepted") return [];
 
     const floors = await ctx.db
@@ -423,6 +424,10 @@ export const submitRoomChange = mutation({
     reason: v.string(),
   },
   handler: async (ctx, args) => {
+    if (!args.reason.trim()) throw new Error("Reason is required");
+    if (args.preferredRoomNumber !== undefined && !args.preferredRoomNumber.trim())
+      throw new Error("Room number cannot be blank");
+
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
 
@@ -434,11 +439,7 @@ export const submitRoomChange = mutation({
       .unique();
     if (!user) throw new Error("User not found");
 
-    const booking = await ctx.db
-      .query("bookingRequests")
-      .withIndex("by_userId", (q: any) => q.eq("userId", user._id))
-      .order("desc")
-      .first();
+    const booking = await getLatestBookingForUser(ctx.db, user._id);
     if (!booking) throw new Error("No booking found");
     if (booking.status !== "accepted") throw new Error("Booking not accepted");
 
@@ -463,6 +464,9 @@ export const submitMoveOut = mutation({
     reason: v.string(),
   },
   handler: async (ctx, args) => {
+    if (!args.moveOutDate.trim()) throw new Error("Move-out date is required");
+    if (!args.reason.trim()) throw new Error("Reason is required");
+
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
 
@@ -474,10 +478,7 @@ export const submitMoveOut = mutation({
       .unique();
     if (!user) throw new Error("User not found");
 
-    const booking = await ctx.db
-      .query("bookingRequests")
-      .withIndex("by_userId", (q: any) => q.eq("userId", user._id))
-      .first();
+    const booking = await getLatestBookingForUser(ctx.db, user._id);
     if (!booking) throw new Error("No booking found");
     if (booking.status !== "accepted") throw new Error("Booking not accepted");
 
@@ -510,10 +511,7 @@ export const submitExtendStay = mutation({
       .unique();
     if (!user) throw new Error("User not found");
 
-    const booking = await ctx.db
-      .query("bookingRequests")
-      .withIndex("by_userId", (q: any) => q.eq("userId", user._id))
-      .first();
+    const booking = await getLatestBookingForUser(ctx.db, user._id);
     if (!booking) throw new Error("No booking found");
     if (booking.status !== "accepted") throw new Error("Booking not accepted");
 
@@ -527,5 +525,101 @@ export const submitExtendStay = mutation({
       status: "pending",
       createdAt: Date.now(),
     });
+  },
+});
+
+export const getMyEditableProfile = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q: any) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier)
+      )
+      .unique();
+    if (!user) return null;
+
+    const booking = await ctx.db
+      .query("bookingRequests")
+      .withIndex("by_userId", (q: any) => q.eq("userId", user._id))
+      .order("desc")
+      .first();
+    if (!booking || booking.status !== "accepted") return null;
+
+    const tenants = await ctx.db
+      .query("tenants")
+      .withIndex("by_propertyId", (q: any) => q.eq("propertyId", booking.propertyId))
+      .collect();
+    const tenant = tenants.find((t: any) => t.studentPhone === booking.studentPhone);
+
+    return {
+      studentName: tenant?.studentName ?? booking.studentName ?? "",
+      studentPhone: tenant?.studentPhone ?? booking.studentPhone ?? "",
+      studentEmail: tenant?.studentEmail ?? "",
+      course: tenant?.course ?? "",
+      parentName: tenant?.parentName ?? "",
+      parentPhone: tenant?.parentPhone ?? "",
+      parentEmail: tenant?.parentEmail ?? "",
+    };
+  },
+});
+
+export const updateTenantProfile = mutation({
+  args: {
+    studentName: v.string(),
+    studentPhone: v.string(),
+    studentEmail: v.optional(v.string()),
+    course: v.optional(v.string()),
+    parentName: v.optional(v.string()),
+    parentPhone: v.optional(v.string()),
+    parentEmail: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q: any) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier)
+      )
+      .unique();
+    if (!user) throw new Error("User not found");
+
+    // Update user table name and phone
+    await ctx.db.patch(user._id, {
+      name: args.studentName,
+      phone: args.studentPhone,
+    });
+
+    // Find tenant record via accepted booking
+    const booking = await ctx.db
+      .query("bookingRequests")
+      .withIndex("by_userId", (q: any) => q.eq("userId", user._id))
+      .order("desc")
+      .first();
+    if (!booking || booking.status !== "accepted") return;
+
+    const tenants = await ctx.db
+      .query("tenants")
+      .withIndex("by_propertyId", (q: any) => q.eq("propertyId", booking.propertyId))
+      .collect();
+    const tenant = tenants.find((t: any) => t.studentPhone === booking.studentPhone);
+    if (!tenant) return;
+
+    const patch: Record<string, unknown> = {
+      studentName: args.studentName,
+      studentPhone: args.studentPhone,
+    };
+    if (args.studentEmail !== undefined) patch.studentEmail = args.studentEmail;
+    if (args.course !== undefined) patch.course = args.course;
+    if (args.parentName !== undefined) patch.parentName = args.parentName;
+    if (args.parentPhone !== undefined) patch.parentPhone = args.parentPhone;
+    if (args.parentEmail !== undefined) patch.parentEmail = args.parentEmail;
+
+    await ctx.db.patch(tenant._id, patch);
   },
 });

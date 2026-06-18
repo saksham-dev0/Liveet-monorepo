@@ -14,11 +14,11 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useState } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { anyApi } from "convex/server";
+import { api } from "../../../../packages/backend/convex/_generated/api";
 import { colors, radii } from "@/constants/theme";
 
-const getMyTenantDetailsRef = anyApi.tenants.getMyTenantDetails;
-const submitMoveOutRef = anyApi.tenants.submitMoveOut;
+const getMyTenantDetailsRef = api.tenants.getMyTenantDetails;
+const submitMoveOutRef = api.tenants.submitMoveOut;
 
 export default function MoveOutScreen() {
   const insets = useSafeAreaInsets();

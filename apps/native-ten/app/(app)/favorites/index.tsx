@@ -12,10 +12,10 @@ import {
 import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery } from "convex/react";
-import { anyApi } from "convex/server";
+import { api } from "../../../../../packages/backend/convex/_generated/api";
 import { Ionicons } from "@expo/vector-icons";
 
-const getLikedPropertiesRef = anyApi.properties.getLikedProperties;
+const getLikedPropertiesRef = api.properties.getLikedProperties;
 import { useRouter } from "expo-router";
 import { colors, radii } from "../../../constants/theme";
 import LiveetTenantHero from "../../../assets/images/Liveet-tenant.png";
