@@ -14,10 +14,10 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useState } from "react";
 import { useMutation } from "convex/react";
-import { anyApi } from "convex/server";
+import { api } from "../../../../packages/backend/convex/_generated/api";
 import { colors, radii } from "@/constants/theme";
 
-const submitLateEntryRef = anyApi.tenants.submitLateEntry;
+const submitLateEntryRef = api.tenants.submitLateEntry;
 
 export default function LateEntryScreen() {
   const insets = useSafeAreaInsets();

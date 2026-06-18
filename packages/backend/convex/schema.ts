@@ -294,4 +294,27 @@ export default defineSchema({
     .index("by_userId", ["userId"])
     .index("by_operatorId", ["operatorId"])
     .index("by_propertyId", ["propertyId"]),
+
+  complaints: defineTable({
+    userId: v.id("users"),
+    propertyId: v.id("properties"),
+    operatorId: v.id("users"),
+    title: v.string(),
+    description: v.string(),
+    category: v.union(
+      v.literal("maintenance"),
+      v.literal("cleanliness"),
+      v.literal("security"),
+      v.literal("noise"),
+      v.literal("amenities"),
+      v.literal("other")
+    ),
+    urgency: v.union(v.literal("low"), v.literal("medium"), v.literal("high")),
+    imageStorageIds: v.optional(v.array(v.string())),
+    status: v.union(v.literal("open"), v.literal("in_progress"), v.literal("resolved")),
+    createdAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_operatorId", ["operatorId"])
+    .index("by_propertyId", ["propertyId"]),
 });

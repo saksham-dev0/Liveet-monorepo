@@ -18,15 +18,15 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { useMutation, useQuery } from "convex/react";
-import { anyApi } from "convex/server";
+import { api } from "../../../../../packages/backend/convex/_generated/api";
 import { colors, radii, cardShadow } from "../../../constants/theme";
 
-const generateUploadUrlRef = anyApi.kyc.generateUploadUrl;
-const submitIdProofRef = anyApi.kyc.submitIdProof;
-const submitProfilePhotoRef = anyApi.kyc.submitProfilePhoto;
-const submitAgreementSignRef = anyApi.kyc.submitAgreementSign;
-const getKycStatusRef = anyApi.kyc.getKycStatus;
-const getPropertyDetailsRef = anyApi.kyc.getPropertyDetailsForTenant;
+const generateUploadUrlRef = api.kyc.generateUploadUrl;
+const submitIdProofRef = api.kyc.submitIdProof;
+const submitProfilePhotoRef = api.kyc.submitProfilePhoto;
+const submitAgreementSignRef = api.kyc.submitAgreementSign;
+const getKycStatusRef = api.kyc.getKycStatus;
+const getPropertyDetailsRef = api.kyc.getPropertyDetailsForTenant;
 
 const ID_PROOF_TYPES = [
   { key: "aadhaar", label: "Aadhaar Card", placeholder: "Enter 12-digit Aadhaar number" },

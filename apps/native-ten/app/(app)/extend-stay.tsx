@@ -12,11 +12,11 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useState } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { anyApi } from "convex/server";
+import { api } from "../../../../packages/backend/convex/_generated/api";
 import { colors, radii } from "@/constants/theme";
 
-const getMyTenantDetailsRef = anyApi.tenants.getMyTenantDetails;
-const submitExtendStayRef = anyApi.tenants.submitExtendStay;
+const getMyTenantDetailsRef = api.tenants.getMyTenantDetails;
+const submitExtendStayRef = api.tenants.submitExtendStay;
 
 export default function ExtendStayScreen() {
   const insets = useSafeAreaInsets();
@@ -28,6 +28,7 @@ export default function ExtendStayScreen() {
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit() {
+    if (!details) return;
     setLoading(true);
     try {
       await submitExtendStay({});
@@ -88,7 +89,7 @@ export default function ExtendStayScreen() {
                     {details.room.roomNumber} · {details.room.type}
                   </Text>
                 </View>
-                {details.room.rent && (
+                {details.room.rent != null && (
                   <View style={s.detailRow}>
                     <Text style={s.detailLabel}>Monthly rent</Text>
                     <Text style={s.detailValue}>₹{details.room.rent.toLocaleString("en-IN")}</Text>
@@ -97,7 +98,7 @@ export default function ExtendStayScreen() {
               </>
             )}
 
-            {!details.room && details.rent && (
+            {!details.room && details.rent != null && (
               <View style={s.detailRow}>
                 <Text style={s.detailLabel}>Monthly rent</Text>
                 <Text style={s.detailValue}>₹{details.rent.toLocaleString("en-IN")}</Text>
@@ -147,7 +148,7 @@ export default function ExtendStayScreen() {
           style={[s.btn, loading && s.btnDisabled]}
           activeOpacity={0.8}
           onPress={handleSubmit}
-          disabled={loading}
+          disabled={loading || !details}
         >
           {loading ? (
             <ActivityIndicator color={colors.white} size="small" />

@@ -13,11 +13,11 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useState } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { anyApi } from "convex/server";
+import { api } from "../../../../packages/backend/convex/_generated/api";
 import { colors, radii } from "@/constants/theme";
 
-const getMyTenantDetailsRef = anyApi.tenants.getMyTenantDetails;
-const submitRoomChangeRef = anyApi.tenants.submitRoomChange;
+const getMyTenantDetailsRef = api.tenants.getMyTenantDetails;
+const submitRoomChangeRef = api.tenants.submitRoomChange;
 
 export default function RoomChangeScreen() {
   const insets = useSafeAreaInsets();
@@ -34,7 +34,7 @@ export default function RoomChangeScreen() {
   const canSubmit = (anyRoom || roomNumber.trim().length > 0) && reason.trim().length > 0;
 
   async function handleSubmit() {
-    if (!canSubmit) return;
+    if (!canSubmit || loading) return;
     setLoading(true);
     try {
       await submitRoomChange({
@@ -87,7 +87,7 @@ export default function RoomChangeScreen() {
                     {details.room.roomNumber} · {details.room.type}
                   </Text>
                 </View>
-                {details.room.rent && (
+                {details.room.rent != null && (
                   <View style={s.detailRow}>
                     <Text style={s.detailLabel}>Monthly rent</Text>
                     <Text style={s.detailValue}>₹{details.room.rent.toLocaleString("en-IN")}</Text>

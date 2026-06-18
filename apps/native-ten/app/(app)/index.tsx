@@ -12,11 +12,11 @@ import {
 import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useConvex, useConvexAuth, useMutation, useQuery } from "convex/react";
-import { anyApi } from "convex/server";
+import { api } from "../../../../packages/backend/convex/_generated/api";
 import { useSyncUserWithConvex } from "../hooks/useSyncUserWithConvex";
 
-const recordSwipeRef = anyApi.properties.recordSwipe;
-const getKycStatusRef = anyApi.kyc.getKycStatus;
+const recordSwipeRef = api.properties.recordSwipe;
+const getKycStatusRef = api.kyc.getKycStatus;
 import { GestureDetector, Gesture } from "react-native-gesture-handler";
 import Animated, {
   useSharedValue,
