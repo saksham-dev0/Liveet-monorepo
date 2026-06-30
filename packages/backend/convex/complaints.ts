@@ -1,5 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import type { Doc } from "./_generated/dataModel";
 
 async function getAuthedUser(ctx: any) {
   const identity = await ctx.auth.getUserIdentity();
@@ -58,7 +59,7 @@ export const submitComplaint = mutation({
   handler: async (ctx, args) => {
     const user = await getAuthedUser(ctx);
     const booking = await getAcceptedBooking(ctx, user._id);
-    const property = await ctx.db.get(booking.propertyId);
+    const property = await ctx.db.get(booking.propertyId) as Doc<"properties"> | null;
     if (!property) throw new Error("Property not found");
 
     return ctx.db.insert("complaints", {

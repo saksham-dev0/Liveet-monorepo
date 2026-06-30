@@ -1,5 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import type { Doc } from "./_generated/dataModel";
 
 async function resolveOperatorAndProperty(ctx: any) {
   const identity = await ctx.auth.getUserIdentity();
@@ -283,6 +284,63 @@ export const addTenant = mutation({
   },
 });
 
+export const getUnassignedPaidTenants = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q: any) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier)
+      )
+      .unique();
+    if (!user) return [];
+
+    const property = await ctx.db
+      .query("properties")
+      .withIndex("by_operatorId", (q: any) => q.eq("operatorId", user._id))
+      .first();
+    if (!property) return [];
+
+    const tenants = await ctx.db
+      .query("tenants")
+      .withIndex("by_propertyId", (q: any) => q.eq("propertyId", property._id))
+      .collect();
+
+    return tenants
+      .filter((t: any) => !t.roomId && (t.paymentStatus === "paid" || t.paymentStatus === "partial"))
+      .map((t: any) => ({
+        _id: t._id,
+        studentName: t.studentName,
+        studentPhone: t.studentPhone,
+        paymentStatus: t.paymentStatus,
+        moveInAmount: t.moveInAmount ?? 0,
+      }));
+  },
+});
+
+export const assignRoomToTenant = mutation({
+  args: {
+    tenantId: v.id("tenants"),
+    roomId: v.id("rooms"),
+  },
+  handler: async (ctx, args) => {
+    const { user, property } = await resolveOperatorAndProperty(ctx);
+
+    const tenant = await ctx.db.get(args.tenantId);
+    if (!tenant || tenant.propertyId !== property._id || tenant.operatorId !== user._id)
+      throw new Error("Tenant not found");
+
+    const room = await ctx.db.get(args.roomId);
+    if (!room || room.propertyId !== property._id)
+      throw new Error("Room not found");
+
+    await ctx.db.patch(args.tenantId, { roomId: args.roomId });
+  },
+});
+
 async function getLatestBookingForUser(db: any, userId: any) {
   return db
     .query("bookingRequests")
@@ -317,7 +375,7 @@ export const submitLateEntry = mutation({
     if (!booking) throw new Error("No booking found");
     if (booking.status !== "accepted") throw new Error("Booking not accepted");
 
-    const property = await ctx.db.get(booking.propertyId);
+    const property = await ctx.db.get(booking.propertyId) as Doc<"properties"> | null;
     if (!property) throw new Error("Property not found");
 
     return await ctx.db.insert("lateEntryRequests", {
@@ -350,7 +408,7 @@ export const getMyTenantDetails = query({
     const booking = await getLatestBookingForUser(ctx.db, user._id);
     if (!booking || booking.status !== "accepted") return null;
 
-    const property = await ctx.db.get(booking.propertyId);
+    const property = await ctx.db.get(booking.propertyId) as Doc<"properties"> | null;
     if (!property) return null;
 
     const tenants = await ctx.db
@@ -443,7 +501,7 @@ export const submitRoomChange = mutation({
     if (!booking) throw new Error("No booking found");
     if (booking.status !== "accepted") throw new Error("Booking not accepted");
 
-    const property = await ctx.db.get(booking.propertyId);
+    const property = await ctx.db.get(booking.propertyId) as Doc<"properties"> | null;
     if (!property) throw new Error("Property not found");
 
     return await ctx.db.insert("roomChangeRequests", {
@@ -482,7 +540,7 @@ export const submitMoveOut = mutation({
     if (!booking) throw new Error("No booking found");
     if (booking.status !== "accepted") throw new Error("Booking not accepted");
 
-    const property = await ctx.db.get(booking.propertyId);
+    const property = await ctx.db.get(booking.propertyId) as Doc<"properties"> | null;
     if (!property) throw new Error("Property not found");
 
     return await ctx.db.insert("moveOutRequests", {
@@ -515,7 +573,7 @@ export const submitExtendStay = mutation({
     if (!booking) throw new Error("No booking found");
     if (booking.status !== "accepted") throw new Error("Booking not accepted");
 
-    const property = await ctx.db.get(booking.propertyId);
+    const property = await ctx.db.get(booking.propertyId) as Doc<"properties"> | null;
     if (!property) throw new Error("Property not found");
 
     return await ctx.db.insert("extendStayRequests", {
