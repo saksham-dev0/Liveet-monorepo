@@ -51,13 +51,51 @@ export const getFloorsWithRooms = query({
 
     floors.sort((a, b) => a.order - b.order);
 
+    const tenants = await ctx.db
+      .query("tenants")
+      .withIndex("by_propertyId", (q) => q.eq("propertyId", property._id))
+      .collect();
+
+    const tenantsByRoom = new Map<string, typeof tenants>();
+    for (const t of tenants) {
+      if (t.roomId) {
+        const arr = tenantsByRoom.get(t.roomId) ?? [];
+        arr.push(t);
+        tenantsByRoom.set(t.roomId, arr);
+      }
+    }
+
     const floorsWithRooms = await Promise.all(
       floors.map(async (floor) => {
         const rooms = await ctx.db
           .query("rooms")
           .withIndex("by_floorId", (q) => q.eq("floorId", floor._id))
           .collect();
-        return { ...floor, rooms };
+        const roomsWithOccupants = rooms.map((r) => ({
+          ...r,
+          occupants: (tenantsByRoom.get(r._id) ?? []).map((t) => {
+            const totalCharged =
+              (t.rent ?? 0) +
+              (t.security ?? 0) +
+              (t.advance ?? 0) +
+              (t.booking ?? 0) +
+              (t.maintenance ?? 0) +
+              (t.customCharges ?? []).reduce((s: number, c: any) => s + c.amount, 0);
+            const totalPaid = t.moveInAmount ?? 0;
+            let amountDue = 0;
+            if (t.paymentStatus !== "paid") {
+              amountDue = Math.max(0, totalCharged - totalPaid);
+            }
+            return {
+              n: t.studentName,
+              i: t.studentName.charAt(0).toUpperCase(),
+              status: t.paymentStatus as "paid" | "partial" | "pending",
+              rent: t.rent ?? 0,
+              amountDue,
+            };
+          }),
+        }));
+        return { ...floor, rooms: roomsWithOccupants };
       })
     );
 

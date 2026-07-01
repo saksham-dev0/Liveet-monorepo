@@ -44,7 +44,7 @@ const RSTATUS = {
 };
 
 // ─── Types ───────────────────────────────────────────────────
-type Occupant = { n: string; i: string; status: keyof typeof RSTATUS; rent: number };
+type Occupant = { n: string; i: string; status: keyof typeof RSTATUS; rent: number; amountDue: number };
 type RoomDoc = {
   _id: string;
   roomNumber: string;
@@ -52,9 +52,11 @@ type RoomDoc = {
   capacity: number;
   rent?: number;
   deposit?: number;
+  occupants: Occupant[];
 };
 type Room = {
   id: string;
+  roomDocId: string;
   type: string;
   capacity: number;
   occupants: Occupant[];
@@ -112,6 +114,7 @@ function roomStatus(room: Room): keyof typeof RSTATUS {
   const statuses = room.occupants.map((o) => o.status);
   if (statuses.includes("overdue")) return "overdue";
   if (statuses.includes("pending")) return "pending";
+  if (statuses.includes("partial")) return "partial";
   if (room.occupants.length < room.capacity) return "partial";
   if (statuses.every((s) => s === "reserved")) return "reserved";
   return "paid";
@@ -124,7 +127,7 @@ function floorStats(floor: Floor) {
     taken += r.occupants.length;
     if (r.occupants.length === 0) vacantRooms++;
     r.occupants.forEach((o) => {
-      if (o.status === "pending" || o.status === "overdue") pendingAmt += o.rent;
+      pendingAmt += o.amountDue;
       if (o.status === "overdue") overdueCount++;
     });
   });
@@ -155,9 +158,10 @@ function docToFloor(doc: FloorDoc): Floor {
     short: doc.short,
     rooms: doc.rooms.map((r) => ({
       id: r.roomNumber,
+      roomDocId: r._id,
       type: r.type,
       capacity: r.capacity,
-      occupants: [],
+      occupants: r.occupants ?? [],
       rent: r.rent,
       deposit: r.deposit,
     })),
@@ -195,7 +199,7 @@ function BedDots({ capacity, occupants }: { capacity: number; occupants: Occupan
 }
 
 // ─── Room card ───────────────────────────────────────────────
-function RoomCard({ room, onDelete }: { room: Room; onDelete: () => void }) {
+function RoomCard({ room, onDelete, onAssign }: { room: Room; onDelete: () => void; onAssign: () => void }) {
   const status = roomStatus(room);
   const isVacant = status === "vacant";
   const isOverdue = status === "overdue";
@@ -208,9 +212,7 @@ function RoomCard({ room, onDelete }: { room: Room; onDelete: () => void }) {
   const statusKey = isOverdue ? "overdue" : isPending ? "pending" : isReserved ? "reserved" : "paid";
   const statusLabel = isPartial && !isOverdue && !isPending ? "PARTIAL" : isReserved ? "HELD" : isOverdue ? "OVERDUE" : isPending ? "DUE" : "PAID";
 
-  const dueAmt = room.occupants.reduce(
-    (s, o) => s + ((o.status === "pending" || o.status === "overdue") ? o.rent : 0), 0
-  );
+  const dueAmt = room.occupants.reduce((s, o) => s + o.amountDue, 0);
 
   return (
     <TouchableOpacity
@@ -242,10 +244,10 @@ function RoomCard({ room, onDelete }: { room: Room; onDelete: () => void }) {
       </View>
 
       {isVacant ? (
-        <View style={styles.assignRow}>
-          <Ionicons name="add" size={13} color={C.muted} />
-          <Text style={styles.assignText}>Assign tenant</Text>
-        </View>
+        <TouchableOpacity style={styles.assignRow} onPress={onAssign} activeOpacity={0.7}>
+          <Ionicons name="add" size={13} color={C.navy} />
+          <Text style={[styles.assignText, { color: C.navy, fontWeight: "600" }]}>Assign tenant</Text>
+        </TouchableOpacity>
       ) : (
         <View style={styles.avatarRow}>
           {room.occupants.slice(0, 3).map((o, i) => {
@@ -270,7 +272,19 @@ function RoomCard({ room, onDelete }: { room: Room; onDelete: () => void }) {
       <View style={[styles.roomCardBottom, { borderTopColor: borderColor }]}>
         <BedDots capacity={room.capacity} occupants={room.occupants} />
         <Text style={[styles.dueAmt, { color: dueAmt > 0 ? C.error : isVacant ? C.subtle : C.positive }]}>
-          {room.rent ? (isVacant ? fmtShort(room.rent) : dueAmt > 0 ? `−${fmtShort(dueAmt)}` : "Paid") : "—"}
+          {room.rent
+            ? isVacant
+              ? fmtShort(room.rent)
+              : dueAmt > 0
+              ? `−${fmtShort(dueAmt)}`
+              : isPartial
+              ? "Partial"
+              : "Paid"
+            : isVacant
+            ? "—"
+            : isPartial
+            ? "Partial"
+            : "Paid"}
         </Text>
       </View>
     </TouchableOpacity>
@@ -297,12 +311,14 @@ function FloorSection({
   onAddRoom,
   onDeleteFloor,
   onDeleteRoom,
+  onAssignRoom,
 }: {
   floor: Floor;
   filter: string;
   onAddRoom: (floorKey: string) => void;
   onDeleteFloor: (floorKey: string) => void;
   onDeleteRoom: (floorKey: string, roomId: string) => void;
+  onAssignRoom: (room: Room) => void;
 }) {
   const s = floorStats(floor);
   const filtered = floor.rooms.filter((r) => {
@@ -374,7 +390,7 @@ function FloorSection({
               <AddRoomTile onPress={() => onAddRoom(floor.key)} />
             ) : (
               <View style={{ flex: 1 }}>
-                <RoomCard room={pair[0]} onDelete={() => onDeleteRoom(floor.key, pair[0]!.id)} />
+                <RoomCard room={pair[0]} onDelete={() => onDeleteRoom(floor.key, pair[0]!.id)} onAssign={() => onAssignRoom(pair[0]!)} />
               </View>
             )}
             <View style={{ width: 8 }} />
@@ -386,13 +402,98 @@ function FloorSection({
               )
             ) : (
               <View style={{ flex: 1 }}>
-                <RoomCard room={pair[1]} onDelete={() => onDeleteRoom(floor.key, pair[1]!.id)} />
+                <RoomCard room={pair[1]} onDelete={() => onDeleteRoom(floor.key, pair[1]!.id)} onAssign={() => onAssignRoom(pair[1]!)} />
               </View>
             )}
           </View>
         ))
       )}
     </View>
+  );
+}
+
+// ─── Assign Tenant Modal ─────────────────────────────────────
+type UnassignedTenant = { _id: string; studentName: string; studentPhone: string; paymentStatus: string; moveInAmount: number };
+
+function AssignTenantModal({
+  visible,
+  room,
+  tenants,
+  loading,
+  onClose,
+  onAssign,
+}: {
+  visible: boolean;
+  room: Room | null;
+  tenants: UnassignedTenant[];
+  loading: boolean;
+  onClose: () => void;
+  onAssign: (tenantId: string) => void;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.45)", justifyContent: "flex-end" }}>
+        <View style={{ backgroundColor: C.white, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingBottom: 32 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 20, borderBottomWidth: 1, borderBottomColor: C.border }}>
+            <View>
+              <Text style={{ fontSize: 16, fontWeight: "700", color: C.navy }}>Assign to Room {room?.id}</Text>
+              <Text style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{room?.type} · {room?.capacity} bed{(room?.capacity ?? 1) > 1 ? "s" : ""}</Text>
+            </View>
+            <TouchableOpacity onPress={onClose} style={{ padding: 4 }}>
+              <Ionicons name="close" size={20} color={C.navy} />
+            </TouchableOpacity>
+          </View>
+
+          {loading ? (
+            <View style={{ padding: 40, alignItems: "center" }}>
+              <ActivityIndicator color={C.navy} />
+            </View>
+          ) : tenants.length === 0 ? (
+            <View style={{ padding: 32, alignItems: "center" }}>
+              <Ionicons name="person-outline" size={32} color={C.subtle} />
+              <Text style={{ color: C.muted, marginTop: 12, textAlign: "center", fontSize: 14 }}>No paid tenants awaiting room assignment</Text>
+            </View>
+          ) : (
+            <ScrollView style={{ maxHeight: 360 }} contentContainerStyle={{ padding: 16, gap: 10 }}>
+              {tenants.map((t) => (
+                <TouchableOpacity
+                  key={t._id}
+                  activeOpacity={0.75}
+                  onPress={() => onAssign(t._id)}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    backgroundColor: C.surfaceGray,
+                    borderRadius: 12,
+                    padding: 14,
+                    gap: 12,
+                  }}
+                >
+                  <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: C.navy, alignItems: "center", justifyContent: "center" }}>
+                    <Text style={{ color: C.white, fontWeight: "700", fontSize: 14 }}>{t.studentName.charAt(0).toUpperCase()}</Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 14, fontWeight: "600", color: C.navy }}>{t.studentName}</Text>
+                    <Text style={{ fontSize: 12, color: C.muted, marginTop: 1 }}>{t.studentPhone}</Text>
+                  </View>
+                  <View style={[
+                    { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+                    t.paymentStatus === "paid" ? { backgroundColor: RSTATUS.paid.bg } : { backgroundColor: RSTATUS.pending.bg },
+                  ]}>
+                    <Text style={[
+                      { fontSize: 11, fontWeight: "700" },
+                      t.paymentStatus === "paid" ? { color: RSTATUS.paid.fg } : { color: RSTATUS.pending.fg },
+                    ]}>
+                      {t.paymentStatus === "paid" ? "PAID" : "PARTIAL"}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          )}
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -702,6 +803,9 @@ export default function RoomsScreen() {
 
   const [showAddFloor, setShowAddFloor] = React.useState(false);
   const [addRoomTarget, setAddRoomTarget] = React.useState<{ floorKey: string; floorLabel: string; floorShort: string; count: number } | null>(null);
+  const [assignTarget, setAssignTarget] = React.useState<Room | null>(null);
+  const [unassignedTenants, setUnassignedTenants] = React.useState<UnassignedTenant[]>([]);
+  const [loadingTenants, setLoadingTenants] = React.useState(false);
 
   const fetchData = React.useCallback(async () => {
     try {
@@ -793,6 +897,34 @@ export default function RoomsScreen() {
       floorShort: floorDoc.short,
       count: floorDoc.rooms.length,
     });
+  }
+
+  async function openAssignModal(room: Room) {
+    if (room.occupants.length >= room.capacity) return;
+    setAssignTarget(room);
+    setLoadingTenants(true);
+    try {
+      const result = await (convex as any).query("tenants:getUnassignedPaidTenants", {});
+      setUnassignedTenants(result ?? []);
+    } catch {
+      setUnassignedTenants([]);
+    } finally {
+      setLoadingTenants(false);
+    }
+  }
+
+  async function handleAssignTenant(tenantId: string) {
+    if (!assignTarget) return;
+    try {
+      await (convex as any).mutation("tenants:assignRoomToTenant", {
+        tenantId,
+        roomId: assignTarget.roomDocId,
+      });
+      setAssignTarget(null);
+      await fetchData();
+    } catch {
+      Alert.alert("Error", "Could not assign tenant. Please try again.");
+    }
   }
 
   const usedFloorLabels = floorDocs.map((f) => f.label);
@@ -944,6 +1076,7 @@ export default function RoomsScreen() {
               onAddRoom={openAddRoom}
               onDeleteFloor={handleDeleteFloor}
               onDeleteRoom={handleDeleteRoom}
+              onAssignRoom={openAssignModal}
             />
           ))
         )}
@@ -991,6 +1124,16 @@ export default function RoomsScreen() {
           roomPricings={property?.roomPricings}
         />
       )}
+
+      {/* Assign Tenant modal */}
+      <AssignTenantModal
+        visible={!!assignTarget}
+        room={assignTarget}
+        tenants={unassignedTenants}
+        loading={loadingTenants}
+        onClose={() => setAssignTarget(null)}
+        onAssign={handleAssignTenant}
+      />
     </View>
   );
 }
